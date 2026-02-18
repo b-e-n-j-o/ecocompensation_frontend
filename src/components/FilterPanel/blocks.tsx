@@ -1,21 +1,105 @@
 // ─── Blocs du FilterPanel ────────────────────────────────────────────────────
+import { useEffect, useState } from "react";
 import { Slider, NumericInput, RadioGroup, SectionBlock, Badge } from "./primitives";
 import { ZDV_NATURES } from "../../types";
 import type { ZdvNature, HydroMode, FilterOptions } from "../../types";
 
-// ── 1. Exclusions automatiques ────────────────────────────────────────────────
-export function ExclusionsBlock() {
+// ── 1. Exclusions automatiques (par couche) ───────────────────────────────────
+interface ExclusionsBlockProps {
+  value: string[];                 // clés de couches exclues (ex: ["geomce", "patrimoine_naturel"])
+  onChange: (v: string[]) => void;
+}
+
+interface LayerInfo {
+  key: string;
+  label: string;
+  fast: boolean;
+}
+
+export function ExclusionsBlock({ value, onChange }: ExclusionsBlockProps) {
+  const [layers, setLayers] = useState<LayerInfo[]>([]);
+
+  useEffect(() => {
+    const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+    fetch(`${API}/api/layers`)
+      .then((res) => res.json())
+      .then((data: LayerInfo[]) => setLayers(data))
+      .catch((err) => {
+        console.warn("Erreur chargement /api/layers", err);
+      });
+  }, []);
+
+  function toggleLayer(key: string) {
+    if (value.includes(key)) {
+      onChange(value.filter((k) => k !== key));
+    } else {
+      onChange([...value, key]);
+    }
+  }
+
   return (
     <SectionBlock title="Exclusions automatiques" icon="⊘" accent="red" collapsible={false}>
+      <div className="exclusion-select-row">
+        <span className="exclusion-label">Ajouter une couche à exclure</span>
+        <select
+          className="exclusion-select"
+          value=""
+          onChange={(e) => {
+            const key = e.target.value;
+            if (!key) return;
+            toggleLayer(key);
+            e.target.value = "";
+          }}
+        >
+          <option value="">Choisir une couche…</option>
+          {layers
+            .filter((l) => !value.includes(l.key))
+            .map((layer) => (
+              <option key={layer.key} value={layer.key}>
+                {layer.label}
+              </option>
+            ))}
+        </select>
+      </div>
+
       <div className="exclusion-chips">
-        <div className="excl-chip">
-          <span className="excl-icon">✕</span>
-          <span>GEOMCE</span>
-        </div>
-        <div className="excl-chip">
-          <span className="excl-icon">✕</span>
-          <span>Patrimoine naturel</span>
-        </div>
+        {value.map((key) => {
+          const layer = layers.find((l) => l.key === key);
+          const label = layer?.label ?? key;
+          return (
+            <button
+              key={key}
+              type="button"
+              className="excl-chip selected"
+              onClick={() => toggleLayer(key)}
+              title={layer?.fast != null ? (layer.fast ? "Couche rapide" : "Couche longue / WFS") : ""}
+            >
+              <span className="excl-icon">✕</span>
+              <span>{label}</span>
+            </button>
+          );
+        })}
+
+        {layers.length === 0 && value.length === 0 && (
+          <>
+            <button
+              type="button"
+              className="excl-chip selected"
+              onClick={() => toggleLayer("geomce")}
+            >
+              <span className="excl-icon">✕</span>
+              <span>GEOMCE</span>
+            </button>
+            <button
+              type="button"
+              className="excl-chip selected"
+              onClick={() => toggleLayer("patrimoine_naturel")}
+            >
+              <span className="excl-icon">✕</span>
+              <span>Patrimoine naturel</span>
+            </button>
+          </>
+        )}
       </div>
     </SectionBlock>
   );

@@ -21,6 +21,9 @@ export interface FilterOptions {
   // ZDV
   zdv_natures: ZdvNature[];
 
+  // Exclusions de couches (par clé LAYER_REGISTRY)
+  excluded_layers: string[];
+
   // Hydrologie
   troncon_hydro_mode: HydroMode;
   troncon_hydro_radius_m: number;
@@ -54,6 +57,7 @@ export interface FilterOptions {
 
 export const DEFAULT_FILTER: FilterOptions = {
   zdv_natures: ["Forêt ouverte"],
+  excluded_layers: ["geomce", "patrimoine_naturel"],
   troncon_hydro_mode: "intersect",
   troncon_hydro_radius_m: 500,
   surface_hydro_mode: "within_radius",

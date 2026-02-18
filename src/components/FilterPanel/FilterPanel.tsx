@@ -41,7 +41,10 @@ export function FilterPanel({ onSubmit, isLoading = false, disabled = false }: F
       </div>
 
       <div className="filter-panel-body">
-        <ExclusionsBlock />
+        <ExclusionsBlock
+          value={opts.excluded_layers}
+          onChange={(v) => patch({ excluded_layers: v })}
+        />
         <ZdvBlock
           value={opts.zdv_natures}
           onChange={(v) => patch({ zdv_natures: v })}
