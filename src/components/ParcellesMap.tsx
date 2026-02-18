@@ -1,17 +1,16 @@
 import { useEffect, useRef } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import type { FeatureCollection, Geometry } from "geojson";
 
-type GeoJSONGeometry = { type: "Polygon"; coordinates: number[][][] } | { type: "MultiPolygon"; coordinates: number[][][][] };
+export type ParcelleProperties = {
+  idu?: string;
+  score?: number;
+  score_norm?: number;
+  [key: string]: unknown;
+};
 
-export interface ParcellesGeoJSON {
-  type: "FeatureCollection";
-  features: Array<{
-    type: "Feature";
-    geometry: GeoJSONGeometry;
-    properties?: { idu?: string; score?: number; score_norm?: number; [key: string]: unknown };
-  }>;
-}
+export type ParcellesGeoJSON = FeatureCollection<Geometry, ParcelleProperties>;
 
 /**
  * Couleur par score normalisé (0 = plus mauvais, 1 = meilleur).
@@ -94,9 +93,11 @@ export function ParcellesMap({ geojson, onParcelleDoubleClick }: ParcellesMapPro
 
         // Double-clic : aller à la ligne dans le tableau
         map.current.on("dblclick", "parcelles-fill", (e) => {
-          const idu = e.features?.[0]?.properties?.idu;
+          const props = e.features?.[0]?.properties as ParcelleProperties | undefined;
+          const idu = props?.idu;
           if (idu && typeof idu === "string") onDoubleClickRef.current?.(idu);
         });
+
         // Curseur pointeur sur les parcelles
         map.current.on("mouseenter", "parcelles-fill", () => {
           map.current?.getCanvas().style.setProperty("cursor", "pointer");
@@ -120,6 +121,7 @@ export function ParcellesMap({ geojson, onParcelleDoubleClick }: ParcellesMapPro
           );
         }
       });
+
       if (!bounds.isEmpty()) {
         map.current.fitBounds(bounds, { padding: 50 });
       }
