@@ -6,6 +6,8 @@ import { ParcellesMap } from "./components/ParcellesMap";
 import type { ParcellesGeoJSON } from "./components/ParcellesMap";
 import { runFilter, exportShp, exportCsv, fetchParcellesGeojson } from "./api";
 import type { FilterOptions, FilterResponse } from "./types";
+import { useFetchProgress } from "./hooks/useFetchProgress";
+import { SkeletonResults } from "./components/SkeletonResults";
 import "./App.css";
 import "./components/FilterPanel/filter-panel.css";
 import "./components/results.css";
@@ -23,6 +25,7 @@ export default function App() {
   const [geojson, setGeojson] = useState<ParcellesGeoJSON | null>(null);
   const [resultsView, setResultsView] = useState<ResultsView>("classement");
   const [scrollToIdu, setScrollToIdu] = useState<string | null>(null);
+  const { connected, progress } = useFetchProgress(PROJECT_ID);
 
   async function handleSubmit(opts: FilterOptions) {
     setLoading(true);
@@ -75,6 +78,25 @@ export default function App() {
     <div className="app-layout">
       <FilterPanel onSubmit={handleSubmit} isLoading={loading} />
       <main className="results-panel">
+        {!connected && (
+          <div style={{ padding: 10, color: "#888" }}>
+            Connexion au serveur...
+          </div>
+        )}
+
+        {progress?.status === "fetching" && (
+          <div style={{ padding: 10, color: "#f59e0b" }}>
+            Récupération des données en cours...
+          </div>
+        )}
+
+        {progress?.status === "ready" && (
+          <div style={{ padding: 10, color: "#3ecf8e" }}>
+            Données prêtes ✔
+          </div>
+        )}
+        {loading && <SkeletonResults />}
+
         {results ? (
           <>
             {results.funnel && (
@@ -140,7 +162,9 @@ export default function App() {
               )}
             </div>
           </>
-        ) : (
+        ) : null}
+
+        {!loading && !results && (
           <div className="empty-state">
             <span className="empty-icon">⬡</span>
             <span className="empty-text">Configurez et lancez le filtre</span>
