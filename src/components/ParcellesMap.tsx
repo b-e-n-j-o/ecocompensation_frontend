@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { FeatureCollection, Geometry } from "geojson";
+import type * as GeoJSON from "geojson";
 
 export type ParcelleProperties = {
   idu?: string;
@@ -108,13 +109,13 @@ export function ParcellesMap({ geojson, onParcelleDoubleClick }: ParcellesMapPro
       }
 
       const bounds = new maplibregl.LngLatBounds();
-      geojson.features.forEach((f) => {
+      geojson.features.forEach((f: GeoJSON.Feature) => {
         if (f.geometry.type === "Polygon") {
           f.geometry.coordinates[0].forEach((coord: number[]) =>
             bounds.extend(coord as [number, number])
           );
         } else if (f.geometry.type === "MultiPolygon") {
-          f.geometry.coordinates.forEach((ring) =>
+          (f.geometry.coordinates as number[][][][]).forEach((ring: number[][][]) =>
             ring[0].forEach((coord: number[]) =>
               bounds.extend(coord as [number, number])
             )
