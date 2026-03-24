@@ -5,6 +5,7 @@ export interface FetchProgressEvent {
   status?: string;
   layers_status?: Record<string, unknown>;
   message?: string;
+  layer_key?: string;
 }
 
 export function useFetchProgress(projectId: string | null) {

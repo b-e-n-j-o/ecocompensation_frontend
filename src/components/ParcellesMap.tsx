@@ -33,13 +33,36 @@ function scoreNormColorExpression(): unknown[] {
   ];
 }
 
+const SATELLITE_STYLE: maplibregl.StyleSpecification = {
+  version: 8,
+  sources: {
+    "esri-satellite": {
+      type: "raster",
+      tiles: [
+        "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      ],
+      tileSize: 256,
+      attribution:
+        "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
+    },
+  },
+  layers: [
+    {
+      id: "esri-satellite",
+      type: "raster",
+      source: "esri-satellite",
+    },
+  ],
+};
+
 interface ParcellesMapProps {
   geojson: ParcellesGeoJSON | null;
+  foncierGeojson?: any;
   /** Double-clic sur une parcelle : idu envoyé pour aller à la ligne dans le tableau */
   onParcelleDoubleClick?: (idu: string) => void;
 }
 
-export function ParcellesMap({ geojson, onParcelleDoubleClick }: ParcellesMapProps) {
+export function ParcellesMap({ geojson, foncierGeojson, onParcelleDoubleClick }: ParcellesMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const onDoubleClickRef = useRef(onParcelleDoubleClick);
@@ -50,7 +73,7 @@ export function ParcellesMap({ geojson, onParcelleDoubleClick }: ParcellesMapPro
 
     map.current = new maplibregl.Map({
       container: mapContainer.current,
-      style: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+      style: SATELLITE_STYLE,
       center: [0, 47],
       zoom: 8,
     });
@@ -67,6 +90,39 @@ export function ParcellesMap({ geojson, onParcelleDoubleClick }: ParcellesMapPro
     const onLoad = () => {
       if (!map.current) return;
 
+      // ------------------ FONCIER (rose) ------------------
+      if (foncierGeojson) {
+        if (map.current.getSource("foncier")) {
+          (map.current.getSource("foncier") as maplibregl.GeoJSONSource).setData(foncierGeojson);
+        } else {
+          map.current.addSource("foncier", {
+            type: "geojson",
+            data: foncierGeojson,
+          });
+
+          map.current.addLayer({
+            id: "foncier-fill",
+            type: "fill",
+            source: "foncier",
+            paint: {
+              "fill-color": "#ff4fa3",
+              "fill-opacity": 0.25,
+            },
+          });
+
+          map.current.addLayer({
+            id: "foncier-outline",
+            type: "line",
+            source: "foncier",
+            paint: {
+              "line-color": "#ff4fa3",
+              "line-width": 3,
+            },
+          });
+        }
+      }
+
+      // ------------------ PARCELLES ------------------
       if (map.current.getSource("parcelles")) {
         (map.current.getSource("parcelles") as maplibregl.GeoJSONSource).setData(geojson);
       } else {
@@ -133,7 +189,7 @@ export function ParcellesMap({ geojson, onParcelleDoubleClick }: ParcellesMapPro
     } else {
       map.current.once("load", onLoad);
     }
-  }, [geojson]);
+  }, [geojson, foncierGeojson]);
 
   return (
     <div

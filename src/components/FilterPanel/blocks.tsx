@@ -187,10 +187,12 @@ export function HydroBlock({ tronconMode, tronconRadius, surfaceMode, surfaceRad
 interface GeometryBlockProps {
   miller: number;
   minAreaHa: number;
+  /** Nombre max de parcelles / d’UF retournées après scoring (0 = illimité). */
+  maxResults: number;
   onChange: (patch: Partial<FilterOptions>) => void;
 }
 
-export function GeometryBlock({ miller, minAreaHa, onChange }: GeometryBlockProps) {
+export function GeometryBlock({ miller, minAreaHa, maxResults, onChange }: GeometryBlockProps) {
   return (
     <SectionBlock title="Géométrie" icon="⬡" accent="purple" collapsible defaultOpen>
       <Slider
@@ -211,31 +213,23 @@ export function GeometryBlock({ miller, minAreaHa, onChange }: GeometryBlockProp
         unit=" ha"
         onChange={(v) => onChange({ min_area_ha: v })}
       />
+      <NumericInput
+        label="Max. résultats"
+        value={maxResults}
+        min={0}
+        max={20000}
+        step={10}
+        onChange={(v) => onChange({ target_count: Math.round(v) })}
+      />
+      <p className="block-hint" style={{ marginTop: 6, marginBottom: 0 }}>
+        Limite les meilleures parcelles seules et les meilleures unités foncières après scoring.{" "}
+        <strong>0</strong> = pas de limite (tous les candidats).
+      </p>
     </SectionBlock>
   );
 }
 
-// ── 5. Distance & cible ───────────────────────────────────────────────────────
-interface DistanceBlockProps {
-  radiusStart: number;
-  radiusMin: number;
-  targetCount: number;
-  onChange: (patch: Partial<FilterOptions>) => void;
-}
-
-export function DistanceBlock({ radiusStart, radiusMin, targetCount, onChange }: DistanceBlockProps) {
-  return (
-    <SectionBlock title="Distance & cible" icon="⊙" accent="orange" collapsible defaultOpen>
-      <Slider label="Rayon départ" value={radiusStart} min={1} max={25} step={1} onChange={(v) => onChange({ radius_start_km: v })} unit=" km" />
-      <div className="distance-inputs">
-        <NumericInput label="Rayon min" value={radiusMin} min={1} max={radiusStart} step={1} unit=" km" onChange={(v) => onChange({ radius_min_km: v })} />
-        <NumericInput label="Cible max" value={targetCount} min={5} max={200} step={5} unit=" parc." onChange={(v) => onChange({ target_count: v })} />
-      </div>
-    </SectionBlock>
-  );
-}
-
-// ── 6. Poids du scoring ───────────────────────────────────────────────────────
+// ── 5. Poids du scoring ───────────────────────────────────────────────────────
 interface ScoringWeightsBlockProps {
   options: FilterOptions;
   onChange: (patch: Partial<FilterOptions>) => void;

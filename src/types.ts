@@ -114,3 +114,43 @@ export interface FilterResponse {
   parcelles: ParcelleResult[];
   funnel?: FunnelStep[];
 }
+
+// ─── Résultats UF (unités foncières / sous-ensembles) ───────────────────────
+
+export interface SousEnsembleResult {
+  subset_id: string;
+  k: number;
+  idus: string[];
+  surface_ha: number;
+  miller: number;
+  distance_centre_km: number;
+  dist_hydro_m: number | null;
+  /** Propriétaire personne morale (raison sociale) */
+  denomination?: string | null;
+  /** SIREN du propriétaire moral */
+  siren?: string | null;
+  score: number;
+  score_details: ScoreDetail[];
+}
+
+export interface UniteFoncieresResult {
+  rang: number;
+  uf_id: string;
+  nb_parcelles: number;
+  idus: string[];
+  best_score: number;
+  best_surface_ha: number;
+  best_miller: number;
+  distance_centre_km: number;
+  denomination?: string | null;
+  siren?: string | null;
+  sous_ensembles: SousEnsembleResult[];
+}
+
+export interface UfFilterResponse {
+  total_uf: number;
+  total_sous_ensembles: number;
+  unites_foncieres: UniteFoncieresResult[];
+  funnel?: FunnelStep[];
+  memory?: unknown;
+}

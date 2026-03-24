@@ -1,6 +1,8 @@
 // ─── RankingTable ─────────────────────────────────────────────────────────────
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import type { ParcelleResult, ScoreDetail } from "../types";
+
+const PAGE_SIZE = 50;
 
 interface RankingTableProps {
   parcelles: ParcelleResult[];
@@ -9,6 +11,25 @@ interface RankingTableProps {
   selectedIdu?: string | null;
   /** IDU à laquelle scroller (ex. après double-clic sur la carte) */
   scrollToIdu?: string | null;
+}
+
+type ParsedIdu = {
+  insee: string;
+  section: string;
+  numero: string;
+};
+
+function parseIdu(idu: string, codeInseeFallback?: string): ParsedIdu {
+  const raw = (idu ?? "").trim();
+  const inseeFromIdu = raw.slice(0, 5);
+  const section = raw.slice(8, 10);
+  const numero = raw.slice(-4); // conserver les zéros initiaux
+
+  return {
+    insee: codeInseeFallback?.trim() || inseeFromIdu || "—",
+    section: section || "—",
+    numero: numero || "—",
+  };
 }
 
 /** Même dégradé que la carte : 0 = plus mauvais, 1 = meilleur (adapté à tout barème de points). */
@@ -60,7 +81,7 @@ function ScorePopover({ details }: { details: ScoreDetail[] }) {
           <span className="sp-critere">{d.critere}</span>
           <span
             className="sp-pts"
-            style={{ color: d.points > 0 ? "var(--accent-green)" : "var(--text-muted)" }}
+            style={{ color: d.points > 0 ? "var(--accent-green)" : "#000000" }}
           >
             {d.points > 0 ? `+${d.points}` : "0"}
           </span>
@@ -80,15 +101,26 @@ export function RankingTable({
 }: RankingTableProps) {
   const [hoveredIdu, setHoveredIdu] = useState<string | null>(null);
   const [expandedIdu, setExpandedIdu] = useState<string | null>(null);
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
-  // Aller à la ligne correspondant à scrollToIdu (depuis la carte)
+  // Nouveau jeu de parcelles (filtre / curseur) : repartir sur les 50 premières
   useEffect(() => {
-    if (!scrollToIdu || !parcelles.some((p) => p.idu === scrollToIdu)) return;
+    setVisibleCount(PAGE_SIZE);
+  }, [parcelles]);
+
+  // Aller à la ligne correspondant à scrollToIdu (depuis la carte) : charger assez de lignes
+  useEffect(() => {
+    if (!scrollToIdu) return;
+    const idx = parcelles.findIndex((p) => p.idu === scrollToIdu);
+    if (idx === -1) return;
+    setVisibleCount((prev) => Math.max(prev, idx + 1));
     setExpandedIdu(scrollToIdu);
-    const el = document.getElementById(`row-parcelle-${scrollToIdu}`);
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    }
+    requestAnimationFrame(() => {
+      document.getElementById(`row-parcelle-${scrollToIdu}`)?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    });
   }, [scrollToIdu, parcelles]);
 
   function handleHover(idu: string | null) {
@@ -104,6 +136,9 @@ export function RankingTable({
 
   if (!parcelles.length) return null;
 
+  const visibleParcelles = parcelles.slice(0, visibleCount);
+  const hasMore = parcelles.length > visibleCount;
+
   const scores = parcelles.map((p) => p.score);
   const minScore = Math.min(...scores);
   const maxScore = Math.max(...scores);
@@ -117,7 +152,9 @@ export function RankingTable({
     <div className="ranking-wrap">
       <div className="ranking-header">
         <span className="ranking-title">Classement</span>
-        <span className="ranking-count mono">{parcelles.length} parcelles</span>
+        <span className="ranking-count mono">
+          {visibleParcelles.length} / {parcelles.length} parcelles
+        </span>
       </div>
 
       <div className="ranking-table-scroll">
@@ -125,6 +162,9 @@ export function RankingTable({
           <thead>
             <tr>
               <th className="col-rank">#</th>
+              <th className="col-insee">INSEE</th>
+              <th className="col-section">Section</th>
+              <th className="col-numero">Numéro</th>
               <th className="col-idu">IDU</th>
               <th className="col-score">Score</th>
               <th className="col-dist">Dist.</th>
@@ -134,16 +174,16 @@ export function RankingTable({
             </tr>
           </thead>
           <tbody>
-            {parcelles.map((p) => {
+            {visibleParcelles.map((p) => {
               const isHovered = hoveredIdu === p.idu;
               const isSelected = selectedIdu === p.idu || expandedIdu === p.idu;
               const scoreNorm = getScoreNorm(p.score);
               const color = scoreNormToColor(scoreNorm);
+              const ref = parseIdu(p.idu, p.code_insee);
 
               return (
-                <>
+                <Fragment key={p.idu}>
                   <tr
-                    key={p.idu}
                     id={`row-parcelle-${p.idu}`}
                     className={`ranking-row ${isHovered ? "hovered" : ""} ${isSelected ? "selected" : ""}`}
                     onMouseEnter={() => handleHover(p.idu)}
@@ -158,6 +198,9 @@ export function RankingTable({
                         {p.rank}
                       </span>
                     </td>
+                    <td className="col-insee mono">{ref.insee}</td>
+                    <td className="col-section mono">{ref.section}</td>
+                    <td className="col-numero mono">{ref.numero}</td>
                     <td className="col-idu">
                       <div className="idu-cell">
                         <span className="idu-main mono">{p.idu}</span>
@@ -192,17 +235,28 @@ export function RankingTable({
 
                   {/* Détail score (expand) */}
                   {expandedIdu === p.idu && (
-                    <tr key={`${p.idu}-detail`} className="detail-row">
+                    <tr className="detail-row">
                       <td colSpan={7}>
                         <ScorePopover details={p.score_details} />
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               );
             })}
           </tbody>
         </table>
+        {hasMore && (
+          <div className="ranking-load-more">
+            <button
+              type="button"
+              className="btn-load-more"
+              onClick={() => setVisibleCount((c) => Math.min(c + PAGE_SIZE, parcelles.length))}
+            >
+              Afficher plus (+{Math.min(PAGE_SIZE, parcelles.length - visibleCount)})
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

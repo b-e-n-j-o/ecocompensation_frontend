@@ -6,9 +6,19 @@ interface FunnelDisplayProps {
   steps: FunnelStep[];
   finalRadiusKm: number;
   total: number;
+  /** Libellé de l’entité comptée (ex. « parcelles », « sous-ensembles »). */
+  entityLabel?: string;
+  /** Texte optionnel après « dans l’AOI » (ex. « 12 UF »). */
+  extraSummary?: string | null;
 }
 
-export function FunnelDisplay({ steps, finalRadiusKm, total }: FunnelDisplayProps) {
+export function FunnelDisplay({
+  steps,
+  finalRadiusKm,
+  total,
+  entityLabel = "parcelles",
+  extraSummary = null,
+}: FunnelDisplayProps) {
   const [visible, setVisible] = useState(0);
 
   // Animation d'apparition séquentielle
@@ -34,7 +44,12 @@ export function FunnelDisplay({ steps, finalRadiusKm, total }: FunnelDisplayProp
         <span className="funnel-title">Entonnoir de filtre</span>
         <span className="funnel-result">
           <span className="funnel-count">{total}</span>
-          <span className="funnel-sub"> parcelles · rayon {finalRadiusKm} km</span>
+          <span className="funnel-sub">
+            {" "}
+            {entityLabel} ·{" "}
+            {finalRadiusKm > 0 ? `rayon ${finalRadiusKm} km` : "dans l'AOI"}
+            {extraSummary ? ` · ${extraSummary}` : ""}
+          </span>
         </span>
       </div>
 
