@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Routes, Route, Link, useNavigate, useParams } from "react-router-dom";
+import { Routes, Route, Link, Navigate, useNavigate, useParams } from "react-router-dom";
 
 import { FilterPanel } from "./components/FilterPanel/FilterPanel";
 import { FunnelDisplay } from "./components/FunnelDisplay";
@@ -621,8 +621,9 @@ export default function App() {
 
       <div style={{ flex: 1, overflow: "hidden" }}>
         <Routes>
-          <Route path="/" element={<StudyHomeRoutePage />} />
+          <Route path="/" element={<Navigate to="/create-aoi" replace />} />
           <Route path="/create-aoi" element={<CreateAoiRoutePage />} />
+          <Route path="/etude" element={<StudyHomeRoutePage />} />
           <Route path="/projects/:projectId/filter" element={<ProjectFilterRoutePage />} />
           <Route path="/ideco" element={<AnalyseEcologiquePage />} />
           <Route path="/bancarisation" element={<Bancarisation />} />
