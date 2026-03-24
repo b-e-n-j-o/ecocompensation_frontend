@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { createStudyFromParcelle, type StudyFromParcelleResponse } from '../../api';
 import MapView from './MapView';
 

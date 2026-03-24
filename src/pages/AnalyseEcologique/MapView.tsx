@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import { useEffect, useRef, type FC } from 'react';
 import maplibregl, { Map } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
@@ -62,23 +62,7 @@ const INITIAL_ZOOM = 14;
 /* ─── Données locales Latresne ─── */
 const PARCELLES_LATRESNE_URL = new URL('./parcelles_latresne.geojson', import.meta.url).href;
 
-/* ─── Mock parcelle geometry (pour démo) ─── */
-const MOCK_PARCELLE_GEOM: GeoJSON.Feature = {
-  type: 'Feature',
-  properties: {},
-  geometry: {
-    type: 'Polygon',
-    coordinates: [[
-      [-0.4725, 44.7855],
-      [-0.4705, 44.7855],
-      [-0.4705, 44.7835],
-      [-0.4725, 44.7835],
-      [-0.4725, 44.7855],
-    ]],
-  },
-};
-
-const IDECOMapView: React.FC<Props> = ({ parcelleRef, bufferM, visibleLayers, activeTab, onParcelleSelect }) => {
+const IDECOMapView: FC<Props> = ({ parcelleRef, bufferM, onParcelleSelect }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
   const selectedFeatureRef = useRef<GeoJSON.Feature | null>(null);

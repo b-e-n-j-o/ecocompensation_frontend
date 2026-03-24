@@ -1,9 +1,9 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import dayjs from 'dayjs';
 import MapView from './MapView';
 import TableView from './TableView';
 import ProjectView from './ProjectView';
-import { useSQLite } from '../../hooks/useSqlite';
+import { useSQLite } from '../../hooks/useSQLite';
 import type { Mesure, Departement } from './types';
 
 const FONT_LINK = `@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');`;

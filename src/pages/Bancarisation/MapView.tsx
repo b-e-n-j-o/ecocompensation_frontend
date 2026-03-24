@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import { useEffect, useRef, type FC } from 'react';
 import maplibregl, { Map, GeoJSONSource } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
@@ -44,7 +44,7 @@ function simplifyFC(fc: GeoJSON.FeatureCollection, tol: number): GeoJSON.Feature
   return {...fc, features: fc.features.map(f => ({...f, geometry: simplifyGeom(f.geometry, tol)}))};
 }
 // Plus de simplification : on renvoie toujours 0 pour garder la géométrie complète
-function tolForZoom(z: number) {
+function tolForZoom(_z: number) {
   return 0;
 }
 
@@ -72,7 +72,7 @@ interface Props {
   onBackToFrance: () => void;
 }
 
-const MapView: React.FC<Props> = ({ deptsFC, mesuresFC, selectedDept, activeId, onSelectDept, onSelectFeature, onBackToFrance }) => {
+const MapView: FC<Props> = ({ deptsFC, mesuresFC, selectedDept, activeId, onSelectDept, onSelectFeature, onBackToFrance }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef       = useRef<Map | null>(null);
   const rawMesuresRef = useRef<GeoJSON.FeatureCollection | null>(null);
