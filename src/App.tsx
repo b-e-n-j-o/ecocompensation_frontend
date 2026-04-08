@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Routes, Route, Link, Navigate, useNavigate, useParams } from "react-router-dom";
 
 import { FilterPanel } from "./components/FilterPanel/FilterPanel";
-import { FunnelDisplay } from "./components/FunnelDisplay";
-import { RankingTable } from "./components/RankingTable";
-import { UnitesFoncieresTable } from "./components/UnitesFoncieresTable";
-import { ParcellesMap } from "./components/ParcellesMap";
-import { SousEnsemblesMap } from "./components/SousEnsemblesMap";
-import type { ParcellesGeoJSON } from "./components/ParcellesMap";
+import { FunnelDisplay } from "./components/ResultPanel/FunnelDisplay";
+import { RankingTable } from "./components/ResultPanel/RankingTable";
+import { UnitesFoncieresTable } from "./components/ResultPanel/UnitesFoncieresTable";
+import { ParcellesMap } from "./components/ResultPanel/MapResults/ParcellesMap";
+import { SousEnsemblesMap } from "./components/ResultPanel/MapResults/SousEnsemblesMap";
+import type { ParcellesGeoJSON } from "./components/ResultPanel/MapResults/ParcellesMap";
 import {
   runFilter,
   runFilterUF,
@@ -18,10 +18,12 @@ import {
   fetchFoncierGeojson,
   fetchUfSubsetsGeojson,
   fetchSousEnsemblesStatus,
+  prefetchAllResultsThematicLayers,
 } from "./api";
+import type { ResultsThematicPreload } from "./components/ResultPanel/MapResults/cartoCouchesRegistry";
 import type { FilterOptions, FilterResponse, UfFilterResponse } from "./types";
 import { useFetchProgress } from "./hooks/useFetchProgress";
-import { SkeletonResults } from "./components/SkeletonResults";
+import { SkeletonResults } from "./components/ResultPanel/SkeletonResults";
 import { CreateAoiPage } from "./pages/FiltreEcologique/CreateAoiPage";
 import { ProjectContextMap } from "./components/ProjectContextMap";
 import Bancarisation from "./pages/Bancarisation/page";
@@ -29,7 +31,7 @@ import AnalyseEcologiquePage from "./pages/AnalyseEcologique/page";
 
 import "./App.css";
 import "./components/FilterPanel/filter-panel.css";
-import "./components/results.css";
+import "./components/ResultPanel/results.css";
 import type { FeatureCollection, GeoJsonProperties, Geometry } from "geojson";
 
 /** Onglets principaux : Parcelles | Unités foncières */
@@ -65,11 +67,25 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
   /** Sous-onglets Entonnoir / Classement / Carte pour Unités foncières */
   const [ufSubView, setUfSubView] = useState<ResultsSubView>("classement");
   const [scrollToIdu, setScrollToIdu] = useState<string | null>(null);
+  const [mapFocusIdu, setMapFocusIdu] = useState<string | null>(null);
   const [distanceMaxKm, setDistanceMaxKm] = useState<number>(0);
   const [distanceCursorKm, setDistanceCursorKm] = useState<number>(0);
+  const [surfaceMinHa, setSurfaceMinHa] = useState<number>(0);
+  const [surfaceMaxHa, setSurfaceMaxHa] = useState<number>(0);
   const [sousEnsemblesStatus, setSousEnsemblesStatus] = useState<SousEnsemblesStatus>("idle");
   const [contextGeom, setContextGeom] = useState<Awaited<ReturnType<typeof fetchProjectContextGeometry>> | null>(null);
   const { connected, progress } = useFetchProgress(projectId ?? "");
+  const projectIdRef = useRef<string | null>(null);
+  const thematicPrefetchSeqRef = useRef(0);
+  const [thematicPreload, setThematicPreload] = useState<ResultsThematicPreload | null>(null);
+  /** True tant que le prefetch des couches thématiques (ZDV, CESBIO, …) n’est pas terminé après un filtre. */
+  const [thematicPreloadLoading, setThematicPreloadLoading] = useState(false);
+  const hasParcellesFunnel = (results?.funnel ?? []).some((s) => s.count >= 0);
+  const hasUfFunnel = (ufResults?.funnel ?? []).some((s) => s.count >= 0);
+
+  useEffect(() => {
+    projectIdRef.current = projectId;
+  }, [projectId]);
 
   useEffect(() => {
     setProjectId(fixedProjectId ?? null);
@@ -103,12 +119,18 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
     setGeojson(null);
     setFoncierGeojson(null);
     setScrollToIdu(null);
+    setMapFocusIdu(null);
     setDistanceMaxKm(0);
     setDistanceCursorKm(0);
+    setSurfaceMinHa(0);
+    setSurfaceMaxHa(0);
     setMainResultsTab("parcelles");
     setParcelSubView("classement");
     setUfSubView("classement");
     setContextGeom(null);
+    thematicPrefetchSeqRef.current += 1;
+    setThematicPreloadLoading(false);
+    setThematicPreload(null);
   }
 
   useEffect(() => {
@@ -132,6 +154,9 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
   async function handleSubmit(opts: FilterOptions) {
     if (!projectId) return;
     setLoading(true);
+    thematicPrefetchSeqRef.current += 1;
+    setThematicPreloadLoading(false);
+    setThematicPreload(null);
     setGeojson(null);
     setFoncierGeojson(null);
     setUfResults(null);
@@ -186,6 +211,20 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
           }
         }
       }
+
+      // Couches thématiques (ZDV, faune, CESBIO, …) en arrière-plan — prêtes au toggle carte sans attente
+      const pid = projectId;
+      const prefetchSeq = thematicPrefetchSeqRef.current;
+      setThematicPreloadLoading(true);
+      void prefetchAllResultsThematicLayers(pid)
+        .then((data) => {
+          if (projectIdRef.current !== pid) return;
+          setThematicPreload(data);
+        })
+        .finally(() => {
+          if (thematicPrefetchSeqRef.current !== prefetchSeq) return;
+          setThematicPreloadLoading(false);
+        });
     } catch (err) {
       console.error("Erreur filtre:", err);
       alert("Erreur lors du filtrage. Voir console.");
@@ -218,6 +257,12 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
     setScrollToIdu(idu);
   }
 
+  function handleTableRowDoubleClick(idu: string) {
+    setMainResultsTab("parcelles");
+    setParcelSubView("carte");
+    setMapFocusIdu(idu);
+  }
+
   /** Scroll interne entonnoir (liste d’étapes longue) */
   const isEntonnoirScroll =
     (mainResultsTab === "parcelles" && parcelSubView === "entonnoir") ||
@@ -245,8 +290,10 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
     if (!ufResults) return null;
     const m: Record<string, number> = {};
     for (const uf of ufResults.unites_foncieres ?? []) {
-      for (const ss of uf.sous_ensembles ?? []) {
-        m[ss.subset_id] = ss.score;
+      const n = (uf.sous_ensembles ?? []).length;
+      for (const [idx, ss] of (uf.sous_ensembles ?? []).entries()) {
+        // Valeur de "qualité" dérivée du rang local : le 1er sous-ensemble est le meilleur.
+        m[ss.subset_id] = Math.max(1, n - idx);
       }
     }
     return m;
@@ -268,13 +315,22 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
     const safeMax = Math.max(1, maxVal || 1);
     setDistanceMaxKm(safeMax);
     setDistanceCursorKm(safeMax); // par défaut : afficher toutes les parcelles retournées
+
+    const maxSurface = Math.max(
+      0,
+      ...parcelles.map((p) => (Number.isFinite(p.surface_ha) ? p.surface_ha : 0)),
+    );
+    setSurfaceMaxHa(maxSurface);
+    setSurfaceMinHa(0);
   }, [results?.parcelles]);
 
   const displayedParcelles = useMemo(() => {
     if (!results?.parcelles?.length) return [];
     const cap = Math.max(1, distanceCursorKm);
-    return results.parcelles.filter((p) => (p.distance_km ?? 0) <= cap);
-  }, [results?.parcelles, distanceCursorKm]);
+    return results.parcelles.filter(
+      (p) => (p.distance_km ?? 0) <= cap && (p.surface_ha ?? 0) >= surfaceMinHa,
+    );
+  }, [results?.parcelles, distanceCursorKm, surfaceMinHa]);
 
   return (
     <div className="app-layout">
@@ -387,8 +443,8 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
                   type="button"
                   className={`results-tab ${parcelSubView === "entonnoir" ? "active" : ""}`}
                   onClick={() => setParcelSubView("entonnoir")}
-                  disabled={!results.funnel?.length}
-                  title={!results.funnel?.length ? "Aucun entonnoir disponible" : ""}
+                  disabled={!hasParcellesFunnel}
+                  title={!hasParcellesFunnel ? "Aucun entonnoir disponible" : ""}
                 >
                   Entonnoir
                 </button>
@@ -414,8 +470,8 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
                   type="button"
                   className={`results-tab ${ufSubView === "entonnoir" ? "active" : ""}`}
                   onClick={() => setUfSubView("entonnoir")}
-                  disabled={!ufResults.funnel?.length}
-                  title={!ufResults.funnel?.length ? "Aucun entonnoir disponible" : ""}
+                  disabled={!hasUfFunnel}
+                  title={!hasUfFunnel ? "Aucun entonnoir disponible" : ""}
                 >
                   Entonnoir
                 </button>
@@ -439,29 +495,29 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
             <div
               className={`results-content${isEntonnoirScroll ? " results-content--entonnoir" : ""}`}
             >
-              {mainResultsTab === "parcelles" && parcelSubView === "entonnoir" && results.funnel && results.funnel.length > 0 && (
+              {mainResultsTab === "parcelles" && parcelSubView === "entonnoir" && hasParcellesFunnel && (
                 <FunnelDisplay
-                  steps={results.funnel}
+                  steps={results.funnel ?? []}
                   finalRadiusKm={results.final_radius_km}
                   total={results.total}
                 />
               )}
-              {mainResultsTab === "parcelles" && parcelSubView === "entonnoir" && (!results.funnel || results.funnel.length === 0) && (
+              {mainResultsTab === "parcelles" && parcelSubView === "entonnoir" && !hasParcellesFunnel && (
                 <div style={{ padding: 12, color: "#000000", fontSize: 13 }}>
                   Aucune donnée d&apos;entonnoir pour ce filtre.
                 </div>
               )}
 
-              {mainResultsTab === "unites" && ufResults && ufSubView === "entonnoir" && ufResults.funnel && ufResults.funnel.length > 0 && (
+              {mainResultsTab === "unites" && ufResults && ufSubView === "entonnoir" && hasUfFunnel && (
                 <FunnelDisplay
-                  steps={ufResults.funnel}
+                  steps={ufResults.funnel ?? []}
                   finalRadiusKm={0}
                   total={ufResults.total_sous_ensembles}
                   entityLabel="sous-ensembles candidats"
                   extraSummary={`${ufResults.total_uf} UF`}
                 />
               )}
-              {mainResultsTab === "unites" && ufResults && ufSubView === "entonnoir" && (!ufResults.funnel || ufResults.funnel.length === 0) && (
+              {mainResultsTab === "unites" && ufResults && ufSubView === "entonnoir" && !hasUfFunnel && (
                 <div style={{ padding: 12, color: "#000000", fontSize: 13 }}>
                   Aucune donnée d&apos;entonnoir pour ce filtre UF.
                 </div>
@@ -497,12 +553,33 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
                         <span>1 km</span>
                         <span>{distanceMaxKm.toFixed(1)} km</span>
                       </div>
+                      <div style={{ fontSize: 13, color: "#000000", marginTop: 6 }}>
+                        Surface minimale :{" "}
+                        <span style={{ color: "#166534", fontWeight: 600 }}>
+                          {surfaceMinHa.toFixed(1)} ha
+                        </span>{" "}
+                        (curseur)
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={Math.max(1, surfaceMaxHa)}
+                        step={0.1}
+                        value={Math.min(Math.max(surfaceMinHa, 0), Math.max(1, surfaceMaxHa))}
+                        onChange={(e) => setSurfaceMinHa(parseFloat(e.target.value))}
+                        style={{ accentColor: "#16a34a" }}
+                      />
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#000000" }}>
+                        <span>0 ha</span>
+                        <span>{Math.max(1, surfaceMaxHa).toFixed(1)} ha</span>
+                      </div>
                     </div>
                   )}
                   <RankingTable
                     parcelles={displayedParcelles}
                     scrollToIdu={scrollToIdu}
                     selectedIdu={scrollToIdu}
+                    onRowDoubleClick={handleTableRowDoubleClick}
                   />
                 </>
               )}
@@ -511,6 +588,9 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
                 <ParcellesMap
                   geojson={geojson}
                   foncierGeojson={foncierGeojson}
+                  projectId={projectId}
+                  preloadedThematic={thematicPreload}
+                  thematicPreloadLoading={thematicPreloadLoading}
                   onParcelleDoubleClick={handleParcelleDoubleClickFromMap}
                 />
               )}
@@ -537,7 +617,13 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
                 </div>
               )}
               {mainResultsTab === "unites" && ufResults && ufSubView === "carte" && ufGeojson && (
-                <SousEnsemblesMap geojson={ufGeojson} subsetScores={subsetScores} />
+                <SousEnsemblesMap
+                  geojson={ufGeojson as FeatureCollection<Geometry, Record<string, unknown>>}
+                  subsetScores={subsetScores}
+                  projectId={projectId}
+                  preloadedThematic={thematicPreload}
+                  thematicPreloadLoading={thematicPreloadLoading}
+                />
               )}
               {mainResultsTab === "unites" && ufResults && ufSubView === "carte" && !ufGeojson && (
                 <div style={{ padding: 12, color: "#000000", fontSize: 13 }}>

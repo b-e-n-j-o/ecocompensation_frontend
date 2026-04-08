@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { UfFilterResponse } from "../types";
+import type { UfFilterResponse } from "../../types";
 
 const UF_PAGE_SIZE = 50;
 
@@ -67,8 +67,7 @@ export function UnitesFoncieresTable({ ufResults }: UnitesFoncieresTableProps) {
                       UF #{uf.rang} · {uf.uf_id}
                     </div>
                     <div className="uf-foncier-meta">
-                      {uf.nb_parcelles} parcelles · meilleur score {uf.best_score} · dist centre{" "}
-                      {uf.distance_centre_km.toFixed(3)} km
+                      {uf.nb_parcelles} parcelles · dist centre {uf.distance_centre_km.toFixed(3)} km
                     </div>
                     {(uf.siren || uf.denomination) && (
                       <div className="uf-foncier-pm" title={[uf.denomination, uf.siren].filter(Boolean).join(" · ")}>
@@ -92,7 +91,6 @@ export function UnitesFoncieresTable({ ufResults }: UnitesFoncieresTableProps) {
                           <th className="col-idu">subset_id</th>
                           <th className="col-uf-siren">SIREN</th>
                           <th className="col-uf-denom">Dénomination</th>
-                          <th className="col-score">Score</th>
                           <th className="col-dist">Dist.</th>
                           <th className="col-surf">Surface</th>
                           <th className="col-miller">Miller</th>
@@ -115,11 +113,6 @@ export function UnitesFoncieresTable({ ufResults }: UnitesFoncieresTableProps) {
                             </td>
                             <td className="col-uf-denom" title={ss.denomination ?? undefined}>
                               {ss.denomination ?? "—"}
-                            </td>
-                            <td className="col-score">
-                              <span className="score-num mono" style={{ color: "var(--accent-orange)" }}>
-                                {ss.score}
-                              </span>
                             </td>
                             <td className="col-dist mono">
                               {ss.distance_centre_km.toFixed(3)}<span className="unit"> km</span>

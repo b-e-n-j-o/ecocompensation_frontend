@@ -1,6 +1,6 @@
 // ─── FunnelDisplay ───────────────────────────────────────────────────────────
-import { useEffect, useState } from "react";
-import type { FunnelStep } from "../types";
+import { useEffect, useMemo, useState } from "react";
+import type { FunnelStep } from "../../types";
 
 interface FunnelDisplayProps {
   steps: FunnelStep[];
@@ -19,24 +19,25 @@ export function FunnelDisplay({
   entityLabel = "parcelles",
   extraSummary = null,
 }: FunnelDisplayProps) {
+  const validSteps = useMemo(() => steps.filter((s) => s.count >= 0), [steps]);
   const [visible, setVisible] = useState(0);
 
   // Animation d'apparition séquentielle
   useEffect(() => {
     setVisible(0);
-    if (!steps.length) return;
+    if (!validSteps.length) return;
     let i = 0;
     const timer = setInterval(() => {
       i++;
       setVisible(i);
-      if (i >= steps.length) clearInterval(timer);
+      if (i >= validSteps.length) clearInterval(timer);
     }, 80);
     return () => clearInterval(timer);
   }, [steps]);
 
-  if (!steps.length) return null;
+  if (!validSteps.length) return null;
 
-  const maxCount = steps[0]?.count ?? 1;
+  const maxCount = validSteps[0]?.count ?? 1;
 
   return (
     <div className="funnel-wrap">
@@ -54,9 +55,9 @@ export function FunnelDisplay({
       </div>
 
       <div className="funnel-steps">
-        {steps.map((step, idx) => {
+        {validSteps.map((step, idx) => {
           const pct = maxCount > 0 ? (step.count / maxCount) * 100 : 0;
-          const isLast = idx === steps.length - 1;
+          const isLast = idx === validSteps.length - 1;
           const show = idx < visible;
 
           return (

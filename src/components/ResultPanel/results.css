@@ -422,7 +422,7 @@
   transition: background-color 0.12s ease, color 0.12s ease;
 }
 
-/* Survol : fond bleu foncé + texte blanc (les inline couleur score sont écrasés avec !important) */
+/* Survol : fond bleu foncé + texte blanc */
 .ranking-row:hover,
 .ranking-row.hovered {
   background: #1e3a8a;
@@ -451,16 +451,6 @@
   background: rgba(255, 255, 255, 0.12) !important;
 }
 
-.ranking-row:hover .score-num,
-.ranking-row.hovered .score-num {
-  color: #ffffff !important;
-}
-
-.ranking-row:hover .score-pip,
-.ranking-row.hovered .score-pip {
-  background: rgba(255, 255, 255, 0.22) !important;
-}
-
 .ranking-row:hover .col-hydro span,
 .ranking-row.hovered .col-hydro span {
   color: #ffffff !important;
@@ -479,7 +469,6 @@
 /* Colonnes */
 .col-rank { width: 50px; text-align: center; }
 .col-idu { min-width: 120px; }
-.col-score { width: 140px; }
 .col-dist, .col-surf, .col-miller, .col-hydro { width: 80px; text-align: right; }
 
 .rank-badge {
@@ -512,31 +501,6 @@
   color: #000000;
 }
 
-.score-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.score-num {
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.score-bar-wrap {
-  display: flex;
-  gap: 2px;
-  height: 6px;
-}
-
-.score-pip {
-  flex: 1;
-  height: 100%;
-  background: var(--border, #e2e8f0);
-  border-radius: 2px;
-  transition: background 0.15s;
-}
-
 .unit {
   color: #000000;
   font-size: 10px;
@@ -545,52 +509,6 @@
 .na {
   color: #000000;
 }
-
-/* Detail row */
-.detail-row {
-  background: var(--bg-input, #f8fafc);
-}
-
-.detail-row td {
-  padding: 0;
-}
-
-.score-popover {
-  padding: 14px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.sp-row {
-  display: grid;
-  grid-template-columns: 100px 50px 1fr;
-  gap: 12px;
-  align-items: center;
-  padding: 6px 10px;
-  background: var(--bg-card, #ffffff);
-  border: 1px solid var(--border, #e2e8f0);
-  border-radius: 6px;
-  font-size: 11px;
-}
-
-.sp-critere {
-  font-weight: 600;
-  color: #000000;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-
-.sp-pts {
-  font-family: 'IBM Plex Mono', monospace;
-  font-weight: 700;
-  text-align: center;
-}
-
-.sp-raison {
-  color: #000000;
-}
-
 
 /* ─── ParcellesMap ─────────────────────────────────────────────────────────── */
 

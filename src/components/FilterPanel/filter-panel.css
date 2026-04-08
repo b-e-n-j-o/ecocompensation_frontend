@@ -250,6 +250,121 @@
 
 .hydro-slider { margin-top: 8px; }
 
+/* Faune */
+.faune-add-row {
+  display: flex;
+  gap: 8px;
+}
+
+.faune-select {
+  flex: 1;
+  padding: 7px 10px;
+  background: #1a1d24;
+  border: 1px solid #2a2f3d;
+  border-radius: 4px;
+  color: #e5e7eb;
+  font-size: 12px;
+}
+
+.faune-select:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+.faune-add-btn {
+  padding: 7px 10px;
+  background: #262b36;
+  border: 1px solid #3b82f6;
+  border-radius: 4px;
+  color: #93c5fd;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.faune-add-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.faune-error {
+  font-size: 11px;
+  color: #fca5a5;
+}
+
+.faune-criteria-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.faune-criterion-card {
+  background: #1a1d24;
+  border: 1px solid #2a2f3d;
+  border-radius: 6px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.faune-criterion-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.faune-criterion-title {
+  font-size: 12px;
+  color: #e5e7eb;
+  font-weight: 500;
+}
+
+.faune-remove-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: 1px solid #7f1d1d;
+  color: #fca5a5;
+  background: transparent;
+  cursor: pointer;
+}
+
+.faune-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.faune-sources-title {
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+.faune-sources-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.faune-source-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid #2a2f3d;
+  border-radius: 4px;
+  font-size: 11px;
+  color: #d1d5db;
+  background: #161a21;
+}
+
+.faune-source-opt.selected {
+  border-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.12);
+  color: #bfdbfe;
+}
+
 /* Radio */
 .radio-group {
   display: flex;
@@ -914,4 +1029,131 @@
   line-height: 1.5;
   color: #9ca3af;
   margin: 0;
+}
+
+/* Pré-analyse parcelle × couches */
+.create-aoi-preanalyze {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.create-aoi-preanalyze-btn {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.create-aoi-preanalyze-hint {
+  margin: 0 0 8px 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #94a3b8;
+}
+
+.create-aoi-preanalyze-report {
+  margin-top: 10px;
+}
+
+.create-aoi-preanalyze-meta {
+  font-size: 11px;
+  color: #a5b4fc;
+  margin-bottom: 8px;
+}
+
+.create-aoi-preanalyze-parcel-meta {
+  font-size: 12px;
+  color: #cbd5e1;
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.create-aoi-preanalyze-parcel-line {
+  margin: 0 0 4px 0;
+}
+
+.create-aoi-preanalyze-parcel-line strong {
+  color: #e2e8f0;
+  font-weight: 600;
+}
+
+.create-aoi-preanalyze-duration {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.create-aoi-preanalyze-th-nb {
+  white-space: nowrap;
+  width: 1%;
+}
+
+.create-aoi-preanalyze-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.create-aoi-preanalyze-count--has {
+  color: #22c55e;
+  font-weight: 600;
+}
+
+.create-aoi-preanalyze-count--zero {
+  color: #94a3b8;
+}
+
+.create-aoi-preanalyze-count--muted {
+  color: #64748b;
+}
+
+.create-aoi-preanalyze-infos--error {
+  color: #f87171 !important;
+}
+
+.create-aoi-preanalyze-table-wrap {
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid rgba(71, 85, 105, 0.5);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.5);
+}
+
+.create-aoi-preanalyze-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.create-aoi-preanalyze-table th,
+.create-aoi-preanalyze-table td {
+  padding: 6px 8px;
+  text-align: left;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.6);
+  vertical-align: top;
+}
+
+.create-aoi-preanalyze-table th {
+  position: sticky;
+  top: 0;
+  background: #1e293b;
+  color: #cbd5e1;
+  z-index: 1;
+}
+
+.create-aoi-preanalyze-infos {
+  max-width: min(420px, 55vw);
+  word-break: break-word;
+  color: #94a3b8;
+}
+
+.create-aoi-preanalyze-connecting {
+  margin: 8px 0 0 0;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.create-aoi-preanalyze-tr--running {
+  background: rgba(99, 102, 241, 0.12);
+}
+
+.create-aoi-preanalyze-tr--running td {
+  color: #c7d2fe;
 }

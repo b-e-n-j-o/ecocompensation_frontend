@@ -1,40 +1,22 @@
 import { useEffect, useRef, useState } from "react";
-import { createProjectFromParcelle, startFetch } from "../../api";
-import type { FromParcelleBody } from "../../api";
+import {
+  createProjectFromFoncierUpload,
+  createProjectFromParcelle,
+  fetchLayers,
+  previewFoncierUpload,
+  startFetch,
+} from "../../api";
+import type { FromParcelleBody, LayerInfo } from "../../api";
 import type { Feature, MultiPolygon, Polygon } from "geojson";
-import { Slider } from "../../components/FilterPanel/primitives";
+import { SliderField } from "../../components/FilterPanel/shared";
 import { CartoAoi } from "./CartoAoi";
+import { buildFetchLayerKeys, isOptionalLayerKey } from "./aoiLayerKeys";
+import { PreanalyzeParcelle } from "./PreanalyzeParcelle";
+import { SelectAoiLayers } from "./SelectAoiLayers";
 import "../../components/FilterPanel/filter-panel.css";
+import { FaunaSpeciesPicker } from "../../components/FilterPanel/FaunaSpeciesPicker";
 
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
-
-// Ordre et libellés des couches
-const LAYER_ORDER = [
-  "unites_foncieres", "sous_ensembles",
-  "parcelles", "geomce", "zone_de_vegetation", "zone_humide", "troncons_hydro",
-  "routes", "voies_ferrees", "fragmentation", "zones_humides_probables", "surfaces_hydro",
-  "ebc", "patrimoine_naturel", "znieff", "frayeres", "arrachage_vignes",
-] as const;
-
-const LAYER_LABELS: Record<string, string> = {
-  unites_foncieres: "Unités foncières (personnes morales)",
-  sous_ensembles: "Sous-ensembles UF (k=2..5)",
-  parcelles: "Parcelles cadastrales",
-  geomce: "Mesures compensatoires GEOMCE",
-  zone_de_vegetation: "Zone de végétation",
-  zone_humide: "Zone humide",
-  troncons_hydro: "Tronçons hydrographiques",
-  routes: "Tronçons de route",
-  voies_ferrees: "Tronçons de voie ferrée",
-  fragmentation: "Fragmentation (polygones)",
-  zones_humides_probables: "Zones humides probables",
-  surfaces_hydro: "Surfaces hydrographiques",
-  ebc: "Espaces Boisés Classés",
-  patrimoine_naturel: "Patrimoine naturel",
-  znieff: "ZNIEFF",
-  frayeres: "Frayères",
-  arrachage_vignes: "Arrachage de vignes",
-};
 
 type LayerStatus = "pending" | "running" | "done" | "skipped" | "error";
 type ParcelleFeature = Feature<Polygon | MultiPolygon>;
@@ -43,8 +25,8 @@ type LayerState = { status: LayerStatus; n_inserted?: number; message?: string }
 
 type SummaryState = { n_ok: number; n_skip: number; n_err: number; total_s: number } | null;
 
-function initialLayerResults(): Record<string, LayerState> {
-  return Object.fromEntries(LAYER_ORDER.map((k) => [k, { status: "pending" }]));
+function labelForKey(registry: LayerInfo[], key: string): string {
+  return registry.find((l) => l.key === key)?.label ?? key;
 }
 
 interface CreateAoiPageProps {
@@ -61,12 +43,58 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
   const [step, setStep] = useState<"form" | "creating" | "fetching" | "done" | "error">("form");
   const [error, setError] = useState<string | null>(null);
   const [projectId, setProjectId] = useState<string | null>(null);
-  const [layerResults, setLayerResults] = useState<Record<string, LayerState>>(initialLayerResults());
+  const [layerResults, setLayerResults] = useState<Record<string, LayerState>>({});
   const [summary, setSummary] = useState<SummaryState>(null);
   const [parcelFeature, setParcelFeature] = useState<ParcelleFeature | null>(null);
   const [isSearchingParcel, setIsSearchingParcel] = useState(false);
+  const [sourceMode, setSourceMode] = useState<"parcelle" | "fichier">("parcelle");
+  const [fileFormat, setFileFormat] = useState<"gpkg" | "shp_zip">("gpkg");
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [uploadedFeature, setUploadedFeature] = useState<ParcelleFeature | null>(null);
+  const [isUploadingGeom, setIsUploadingGeom] = useState(false);
+  const [registryLayers, setRegistryLayers] = useState<LayerInfo[]>([]);
+  const [layersLoadError, setLayersLoadError] = useState<string | null>(null);
+  const [faunaSpecies, setFaunaSpecies] = useState<string[]>([]);
+  /** Couches optionnelles cochées (hors parcelles, GEOMCE, UF — ces dernières via ufEnabled). */
+  const [selectedLayerKeys, setSelectedLayerKeys] = useState<string[]>([]);
+  const [ufEnabled, setUfEnabled] = useState(false);
+  const [ufMaxParcelles, setUfMaxParcelles] = useState(5);
+  const [ufMinAreaHa, setUfMinAreaHa] = useState(7);
+  /** Couches du dernier fetch (ordre serveur) — alimente le tableau de suivi. */
+  const [activeFetchKeys, setActiveFetchKeys] = useState<string[]>([]);
+  const lastFetchLayerKeysRef = useRef<string[]>([]);
   const logEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const faunaLayerSelected = selectedLayerKeys.includes("fauna");
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchLayers()
+      .then((layers) => {
+        if (cancelled) return;
+        setRegistryLayers(layers);
+        setSelectedLayerKeys(layers.map((l) => l.key).filter((k) => isOptionalLayerKey(k)));
+        setLayersLoadError(null);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setLayersLoadError(e instanceof Error ? e.message : "Impossible de charger la liste des couches");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (bufferKm > 5) setUfEnabled(false);
+  }, [bufferKm]);
+
+  useEffect(() => {
+    if (!faunaLayerSelected && faunaSpecies.length > 0) {
+      setFaunaSpecies([]);
+    }
+  }, [faunaLayerSelected, faunaSpecies.length]);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -74,7 +102,8 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
 
   useEffect(() => {
     if (step !== "fetching" || !projectId) return;
-    setLayerResults(initialLayerResults());
+    const keys = lastFetchLayerKeysRef.current;
+    setLayerResults(Object.fromEntries(keys.map((k) => [k, { status: "pending" as const }])));
     setSummary(null);
     const WS = API.replace(/^http/, "ws");
     const ws = new WebSocket(`${WS}/ws/projects/${projectId}/fetch-progress`);
@@ -150,33 +179,71 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    setLayerResults(initialLayerResults());
+
+    const ufActive = ufEnabled && bufferKm <= 5;
+    const orderedKeys = buildFetchLayerKeys(
+      registryLayers,
+      new Set(selectedLayerKeys),
+      ufActive,
+    );
+    if (orderedKeys.length === 0) {
+      setError("Aucune couche à récupérer (vérifiez la sélection).");
+      return;
+    }
+
+    const projectName =
+      name.trim() || (sourceMode === "parcelle" ? `PARCELLE_${codeInsee}_${section}_${numero}` : "FONCIER_UPLOAD");
+
+    if (sourceMode === "parcelle") {
+      if (!codeInsee.trim() || !section.trim() || !numero.trim()) {
+        setError("Renseignez INSEE, section et numéro.");
+        return;
+      }
+      if (!parcelFeature) {
+        setError("Recherchez d'abord la parcelle pour vérifier la géométrie sur la carte.");
+        return;
+      }
+    } else {
+      if (!uploadedFile) {
+        setError("Déposez un fichier ZIP (shapefile) ou GPKG avant de créer l'AOI.");
+        return;
+      }
+      if (!uploadedFeature) {
+        setError("Prévisualisez d'abord la géométrie du fichier sur la carte.");
+        return;
+      }
+    }
+
+    lastFetchLayerKeysRef.current = orderedKeys;
+    setActiveFetchKeys(orderedKeys);
+    setLayerResults(Object.fromEntries(orderedKeys.map((k) => [k, { status: "pending" }])));
     setSummary(null);
-
-    const body: FromParcelleBody = {
-      code_insee: codeInsee.trim(),
-      section: section.trim(),
-      numero: numero.trim(),
-      name: name.trim() || `PARCELLE_${codeInsee}_${section}_${numero}`,
-      buffer_km: bufferKm,
-    };
-
-    if (!body.code_insee || !body.section || !body.numero) {
-      setError("Renseignez INSEE, section et numéro.");
-      return;
-    }
-    if (!parcelFeature) {
-      setError("Recherchez d'abord la parcelle pour vérifier la géométrie sur la carte.");
-      return;
-    }
 
     setStep("creating");
 
     try {
-      const res = await createProjectFromParcelle(body);
+      const res =
+        sourceMode === "parcelle"
+          ? await createProjectFromParcelle({
+              code_insee: codeInsee.trim(),
+              section: section.trim(),
+              numero: numero.trim(),
+              name: projectName,
+              buffer_km: bufferKm,
+            } satisfies FromParcelleBody)
+          : await createProjectFromFoncierUpload({
+              name: projectName,
+              buffer_km: bufferKm,
+              file: uploadedFile as File,
+            });
       setProjectId(res.project_id);
       setStep("fetching");
-      await startFetch(res.project_id);
+      await startFetch(res.project_id, {
+        layers: orderedKeys,
+        uf_max_parcelles: ufMaxParcelles,
+        uf_min_area_ha: ufMinAreaHa,
+        fauna_species: faunaLayerSelected && faunaSpecies.length ? faunaSpecies : null,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur création projet");
       setStep("error");
@@ -188,8 +255,18 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
     if (projectId) onDone(projectId);
   }
 
+  const layersReady = registryLayers.length > 0 && !layersLoadError;
+  const sourceFeature = sourceMode === "parcelle" ? parcelFeature : uploadedFeature;
+  const expectedFileLabel = fileFormat === "gpkg" ? "GeoPackage (.gpkg)" : "Shapefile zippé (.zip)";
+  const fileInputAccept = fileFormat === "gpkg" ? ".gpkg" : ".zip";
   const canCreateAoi =
-    step === "form" && !isSearchingParcel && !!parcelFeature && !!codeInsee.trim() && !!section.trim() && !!numero.trim();
+    step === "form" &&
+    !isSearchingParcel &&
+    !isUploadingGeom &&
+    !!sourceFeature &&
+    (sourceMode === "parcelle" ? !!codeInsee.trim() && !!section.trim() && !!numero.trim() : !!uploadedFile) &&
+    layersReady;
+  const willSkipUfLayers = bufferKm > 5;
 
   async function handleSearchParcelle() {
     setError(null);
@@ -231,6 +308,28 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
     }
   }
 
+  async function handleUploadGeometry(file: File) {
+    setError(null);
+    setIsUploadingGeom(true);
+    try {
+      const preview = await previewFoncierUpload(file);
+      const geometryType = preview.feature.geometry?.type;
+      if (geometryType !== "Polygon" && geometryType !== "MultiPolygon") {
+        throw new Error("La géométrie d'emprise doit être de type Polygon/MultiPolygon.");
+      }
+      setUploadedFile(file);
+      setUploadedFeature(preview.feature as ParcelleFeature);
+    } catch (err) {
+      setUploadedFile(null);
+      setUploadedFeature(null);
+      setError(err instanceof Error ? err.message : "Erreur lecture du fichier géographique");
+    } finally {
+      setIsUploadingGeom(false);
+    }
+  }
+
+  const progressKeys = activeFetchKeys.length > 0 ? activeFetchKeys : [];
+
   return (
     <div className="create-aoi-page">
       <div className="create-aoi-layout">
@@ -247,15 +346,40 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
 
         <div className="filter-panel-body">
           <p className="create-aoi-intro">
-            Saisissez la référence cadastrale et le buffer. La carte (vue satellite, Gironde) servira
-            bientôt à visualiser la parcelle cible et le périmètre d’étude.
+            Choisissez une source (référence cadastrale ou fichier ZIP/GPKG), puis définissez le buffer AOI.
+            La carte affiche la géométrie source et le périmètre bufferisé.
           </p>
           <form id="create-aoi-form" onSubmit={handleSubmit} className="create-aoi-form">
             <div className="section-block create-aoi-block">
               <div className="section-header">
-                <span className="section-title">Référence parcellaire</span>
+                <span className="section-title">Source géométrique</span>
               </div>
               <div className="section-body">
+                <div className="create-aoi-row">
+                  <label className="create-aoi-label">Mode d'entrée</label>
+                  <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                    <label>
+                      <input
+                        type="radio"
+                        checked={sourceMode === "parcelle"}
+                        disabled={step === "creating" || step === "fetching"}
+                        onChange={() => setSourceMode("parcelle")}
+                      />{" "}
+                      Référence cadastrale
+                    </label>
+                    <label>
+                      <input
+                        type="radio"
+                        checked={sourceMode === "fichier"}
+                        disabled={step === "creating" || step === "fetching"}
+                        onChange={() => setSourceMode("fichier")}
+                      />{" "}
+                      Fichier géographique
+                    </label>
+                  </div>
+                </div>
+                {sourceMode === "parcelle" ? (
+                  <>
                 <div className="create-aoi-row">
                   <label className="create-aoi-label">Code INSEE</label>
                   <input
@@ -301,6 +425,76 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
                 <div className={`create-aoi-parcel-status ${parcelFeature ? "is-found" : "is-missing"}`}>
                   {parcelFeature ? "Parcelle trouvée et affichée sur la carte." : "Parcelle non recherchée."}
                 </div>
+                <PreanalyzeParcelle
+                  codeInsee={codeInsee}
+                  section={section}
+                  numero={numero}
+                  aoiFlowBusy={step === "creating" || step === "fetching"}
+                />
+                  </>
+                ) : (
+                  <>
+                    <div className="create-aoi-row">
+                      <label className="create-aoi-label">Format du fichier</label>
+                      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                        <label>
+                          <input
+                            type="radio"
+                            checked={fileFormat === "gpkg"}
+                            disabled={step === "creating" || step === "fetching" || isUploadingGeom}
+                            onChange={() => {
+                              setFileFormat("gpkg");
+                              setUploadedFile(null);
+                              setUploadedFeature(null);
+                            }}
+                          />{" "}
+                          GeoPackage (.gpkg)
+                        </label>
+                        <label>
+                          <input
+                            type="radio"
+                            checked={fileFormat === "shp_zip"}
+                            disabled={step === "creating" || step === "fetching" || isUploadingGeom}
+                            onChange={() => {
+                              setFileFormat("shp_zip");
+                              setUploadedFile(null);
+                              setUploadedFeature(null);
+                            }}
+                          />{" "}
+                          Shapefile zippé (.zip)
+                        </label>
+                      </div>
+                    </div>
+                    <div className="create-aoi-row">
+                      <label className="create-aoi-label">Fichier source</label>
+                      <input
+                        type="file"
+                        className="create-aoi-input"
+                        accept={fileInputAccept}
+                        disabled={step === "creating" || step === "fetching" || isUploadingGeom}
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) {
+                            void handleUploadGeometry(f);
+                          }
+                        }}
+                      />
+                    </div>
+                    <div className="create-aoi-parcel-status is-missing">
+                      Format attendu : <strong>{expectedFileLabel}</strong>
+                      {fileFormat === "shp_zip"
+                        ? " (inclure au minimum .shp, .dbf, .shx, .prj dans le zip)"
+                        : ""}
+                    </div>
+                    <div className={`create-aoi-parcel-status ${uploadedFeature ? "is-found" : "is-missing"}`}>
+                      {isUploadingGeom
+                        ? "Analyse du fichier en cours..."
+                        : uploadedFeature
+                          ? `Emprise chargée : ${uploadedFile?.name ?? "fichier"}`
+                          : "Aucun fichier analysé."}
+                    </div>
+                  </>
+                )}
                 <div className="create-aoi-row">
                   <label className="create-aoi-label">Nom du projet</label>
                   <input
@@ -312,7 +506,7 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
                     disabled={step === "creating" || step === "fetching"}
                   />
                 </div>
-                <Slider
+                <SliderField
                   label="Buffer AOI"
                   value={bufferKm}
                   min={0}
@@ -322,11 +516,46 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
                   unit=" km"
                   onChange={setBufferKm}
                 />
+                {willSkipUfLayers && (
+                  <div className="create-aoi-parcel-status is-missing">
+                    Buffer &gt; 5 km : les couches "Unités foncières" et "Sous-ensembles UF" seront ignorées.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="section-block create-aoi-block">
+              {layersLoadError && (
+                <div className="create-aoi-error" style={{ marginBottom: 8 }}>
+                  Couches : {layersLoadError}
+                </div>
+              )}
+              {registryLayers.length > 0 && (
+                <SelectAoiLayers
+                  layers={registryLayers}
+                  selectedKeys={selectedLayerKeys}
+                  onSelectedKeysChange={setSelectedLayerKeys}
+                  bufferKm={bufferKm}
+                  ufEnabled={ufEnabled}
+                  onUfEnabledChange={setUfEnabled}
+                  ufMaxParcelles={ufMaxParcelles}
+                  onUfMaxParcellesChange={setUfMaxParcelles}
+                  ufMinAreaHa={ufMinAreaHa}
+                  onUfMinAreaHaChange={setUfMinAreaHa}
+                  disabled={step === "creating" || step === "fetching"}
+                />
+              )}
+            </div>
+
+            {faunaLayerSelected && (
+              <div className="section-block create-aoi-block">
+                <FaunaSpeciesPicker selectedSpecies={faunaSpecies} onChange={setFaunaSpecies} />
+              </div>
+            )}
+
                 <button type="submit" className="btn-run create-aoi-submit-inline" disabled={!canCreateAoi}>
                   Créer AOI (buffer) et lancer les couches
                 </button>
-              </div>
-            </div>
 
             {error && (
               <div className="create-aoi-error">
@@ -340,9 +569,9 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
                   {step === "creating" ? "Création du projet…" : "Résultats par couche"}
                 </div>
                 <div className="create-aoi-layers-list">
-                  {LAYER_ORDER.map((key) => {
+                  {progressKeys.map((key) => {
                     const state = layerResults[key] ?? { status: "pending" };
-                    const label = LAYER_LABELS[key] ?? key;
+                    const label = labelForKey(registryLayers, key);
                     let cell: string;
                     if (state.status === "pending") cell = "—";
                     else if (state.status === "running") cell = "…";
@@ -364,7 +593,7 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
                       <strong>Réussies : {summary.n_ok}</strong>
                       {summary.n_ok > 0 && (
                         <span className="create-aoi-summary-list">
-                          {LAYER_ORDER.filter((k) => layerResults[k]?.status === "done").map((k) => LAYER_LABELS[k] ?? k).join(", ")}
+                          {progressKeys.filter((k) => layerResults[k]?.status === "done").map((k) => labelForKey(registryLayers, k)).join(", ")}
                         </span>
                       )}
                     </div>
@@ -372,7 +601,7 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
                       <strong>Ignorées : {summary.n_skip}</strong>
                       {summary.n_skip > 0 && (
                         <span className="create-aoi-summary-list">
-                          {LAYER_ORDER.filter((k) => layerResults[k]?.status === "skipped").map((k) => LAYER_LABELS[k] ?? k).join(", ")}
+                          {progressKeys.filter((k) => layerResults[k]?.status === "skipped").map((k) => labelForKey(registryLayers, k)).join(", ")}
                         </span>
                       )}
                     </div>
@@ -380,7 +609,7 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
                       <strong>Erreurs : {summary.n_err}</strong>
                       {summary.n_err > 0 && (
                         <span className="create-aoi-summary-list">
-                          {LAYER_ORDER.filter((k) => layerResults[k]?.status === "error").map((k) => LAYER_LABELS[k] ?? k).join(", ")}
+                          {progressKeys.filter((k) => layerResults[k]?.status === "error").map((k) => labelForKey(registryLayers, k)).join(", ")}
                         </span>
                       )}
                     </div>
@@ -405,7 +634,7 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
         </div>
 
         <div className="filter-panel-footer">
-          {step === "form" && <div className="create-aoi-footer-hint">1) Rechercher parcelle → 2) Créer AOI</div>}
+          {step === "form" && <div className="create-aoi-footer-hint">1) Rechercher parcelle → 2) Choisir les couches → 3) Créer AOI</div>}
           {(step === "creating" || step === "fetching") && (
             <div className="create-aoi-loading">
               <span className="spinner" />
@@ -421,7 +650,7 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
         </aside>
 
         <div className="create-aoi-map-wrap">
-          <CartoAoi parcelFeature={parcelFeature} bufferKm={bufferKm} />
+          <CartoAoi parcelFeature={sourceFeature} bufferKm={bufferKm} />
         </div>
       </div>
     </div>
