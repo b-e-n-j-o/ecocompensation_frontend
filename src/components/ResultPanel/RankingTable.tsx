@@ -1,11 +1,22 @@
 // ─── RankingTable ─────────────────────────────────────────────────────────────
-import { Fragment, useEffect, useState } from "react";
-import type { ParcelleResult } from "../../types";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import type { ParcelleResult, ParcelPoolMetricRow, RankingSortKey } from "../../types";
+import { RankingLine } from "./RankingLine";
 
 const PAGE_SIZE = 50;
 
+/** Nombre de colonnes du tableau principal (ligne de détail en dessous). */
+const RANKING_COL_COUNT = 8;
+
 interface RankingTableProps {
   parcelles: ParcelleResult[];
+  /** Run renvoyé par le dernier filtre (`pool_run_id`). */
+  poolRunId?: string | null;
+  /** Métriques pool préchargées après filtrage (`null` = chargement bulk en cours). */
+  poolMetricsByIdu: Record<string, ParcelPoolMetricRow[]> | null;
+  poolMetricsLoading: boolean;
+  rankingSortKey: RankingSortKey;
+  onRankingSortChange: (k: RankingSortKey) => void;
   onHover?: (idu: string | null) => void;
   onSelect?: (idu: string | null) => void;
   onRowDoubleClick?: (idu: string) => void;
@@ -35,6 +46,11 @@ function parseIdu(idu: string, codeInseeFallback?: string): ParsedIdu {
 
 export function RankingTable({
   parcelles,
+  poolRunId,
+  poolMetricsByIdu,
+  poolMetricsLoading,
+  rankingSortKey,
+  onRankingSortChange,
   onHover,
   onSelect,
   onRowDoubleClick,
@@ -42,13 +58,21 @@ export function RankingTable({
   scrollToIdu,
 }: RankingTableProps) {
   const [hoveredIdu, setHoveredIdu] = useState<string | null>(null);
-  const [expandedIdu, setExpandedIdu] = useState<string | null>(null);
+  /** Plusieurs lignes peuvent rester dépliées pour comparer les métriques. */
+  const [expandedIdus, setExpandedIdus] = useState<Set<string>>(() => new Set());
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
-  // Nouveau jeu de parcelles (filtre / curseur) : repartir sur les 50 premières
+  /** Identifiant stable du jeu de parcelles affiché (ordre ignoré) — pour ne pas fermer les déploiements au seul changement de tri. */
+  const parcellesIdentity = useMemo(
+    () => [...parcelles].map((p) => p.idu).sort().join("|"),
+    [parcelles],
+  );
+
+  // Nouveau jeu de parcelles (filtre / curseur) : repartir sur les 50 premières ; fermer les déploiements si l’ensemble d’IDU change (pas au seul tri).
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
-  }, [parcelles]);
+    setExpandedIdus(new Set());
+  }, [parcellesIdentity]);
 
   // Aller à la ligne correspondant à scrollToIdu (depuis la carte) : charger assez de lignes
   useEffect(() => {
@@ -56,7 +80,7 @@ export function RankingTable({
     const idx = parcelles.findIndex((p) => p.idu === scrollToIdu);
     if (idx === -1) return;
     setVisibleCount((prev) => Math.max(prev, idx + 1));
-    setExpandedIdu(scrollToIdu);
+    setExpandedIdus((prev) => new Set(prev).add(scrollToIdu));
     requestAnimationFrame(() => {
       document.getElementById(`row-parcelle-${scrollToIdu}`)?.scrollIntoView({
         behavior: "smooth",
@@ -71,9 +95,14 @@ export function RankingTable({
   }
 
   function handleClick(idu: string) {
-    const next = expandedIdu === idu ? null : idu;
-    setExpandedIdu(next);
-    onSelect?.(next);
+    const wasExpanded = expandedIdus.has(idu);
+    setExpandedIdus((prev) => {
+      const next = new Set(prev);
+      if (next.has(idu)) next.delete(idu);
+      else next.add(idu);
+      return next;
+    });
+    onSelect?.(!wasExpanded ? idu : null);
   }
 
   if (!parcelles.length) return null;
@@ -85,9 +114,42 @@ export function RankingTable({
     <div className="ranking-wrap">
       <div className="ranking-header">
         <span className="ranking-title">Classement</span>
-        <span className="ranking-count mono">
-          {visibleParcelles.length} / {parcelles.length} parcelles
-        </span>
+        <div className="ranking-header-actions">
+          <label className="ranking-sort-label">
+            Trier par
+            <select
+              value={rankingSortKey}
+              onChange={(e) => onRankingSortChange(e.target.value as RankingSortKey)}
+              onClick={(ev) => ev.stopPropagation()}
+            >
+              <option value="rank">Rang (score)</option>
+              <option value="distance">Distance</option>
+              <option value="surface">Surface</option>
+              <option value="miller">Miller</option>
+              <option value="veg_dominant">Part dominante (zonage hybride)</option>
+              <option
+                value="veg_priority"
+                title="Tri par surfaces m² d’intersection par classe (ordre de priorité), pas par % seuls"
+              >
+                Priorité filtre végétation (BD TOPO → CESBIO)
+              </option>
+            </select>
+          </label>
+          {poolMetricsLoading && (
+            <span className="ranking-pool-loading" title="Chargement des métriques du pool">
+              Métriques…
+            </span>
+          )}
+          <span className="ranking-count mono">
+            {visibleParcelles.length} / {parcelles.length} parcelles
+            {poolRunId && (
+              <span className="ranking-pool-hint" title="Run du pool de métriques">
+                {" "}
+                · run {poolRunId.slice(0, 8)}…
+              </span>
+            )}
+          </span>
+        </div>
       </div>
 
       <div className="ranking-table-scroll">
@@ -102,13 +164,12 @@ export function RankingTable({
               <th className="col-dist">Dist.</th>
               <th className="col-surf">Surface</th>
               <th className="col-miller">Miller</th>
-              <th className="col-hydro">Hydro</th>
             </tr>
           </thead>
           <tbody>
             {visibleParcelles.map((p) => {
               const isHovered = hoveredIdu === p.idu;
-              const isSelected = selectedIdu === p.idu || expandedIdu === p.idu;
+              const isSelected = selectedIdu === p.idu || expandedIdus.has(p.idu);
               const ref = parseIdu(p.idu, p.code_insee);
 
               return (
@@ -142,14 +203,22 @@ export function RankingTable({
                     <td className="col-miller mono">
                       {p.miller.toFixed(2)}
                     </td>
-                    <td className="col-hydro mono">
-                      {p.dist_hydro_m !== null
-                        ? p.dist_hydro_m < 1
-                          ? <span style={{ color: "var(--accent-green)" }}>0 m</span>
-                          : `${Math.round(p.dist_hydro_m)} m`
-                        : <span className="na">—</span>}
-                    </td>
                   </tr>
+                  {expandedIdus.has(p.idu) && (
+                    <tr className="ranking-row-detail">
+                      <td colSpan={RANKING_COL_COUNT} className="ranking-cell-detail">
+                        <RankingLine
+                          idu={p.idu}
+                          expanded={expandedIdus.has(p.idu)}
+                          metrics={
+                            poolMetricsByIdu != null ? (poolMetricsByIdu[p.idu] ?? []) : []
+                          }
+                          metricsLoading={poolMetricsLoading}
+                          noPoolRun={!poolRunId}
+                        />
+                      </td>
+                    </tr>
+                  )}
 
                 </Fragment>
               );

@@ -1,4 +1,10 @@
-import type { FilterOptions, FilterResponse, UfFilterResponse } from "./types";
+import type {
+  FilterOptions,
+  FilterResponse,
+  ParcelPoolMetricRow,
+  PoolMetricsBulkResponse,
+  UfFilterResponse,
+} from "./types";
 import type { FeatureCollection, Geometry, GeoJsonProperties } from "geojson";
 import {
   RESULTS_LAYERS,
@@ -80,6 +86,18 @@ export type FromParcelleBody = {
   code_insee: string;
   section: string;
   numero: string;
+  name: string;
+  buffer_km: number;
+};
+
+export type ParcelleRef = {
+  code_insee: string;
+  section: string;
+  numero: string;
+};
+
+export type FromParcellesBody = {
+  parcelles: ParcelleRef[];
   name: string;
   buffer_km: number;
 };
@@ -290,6 +308,18 @@ export async function createProjectFromParcelle(
   return res.json();
 }
 
+export async function createProjectFromParcelles(
+  body: FromParcellesBody
+): Promise<FromParcelleResponse> {
+  const res = await fetch(`${API}/api/projects/from-parcelles`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 export async function previewFoncierUpload(file: File): Promise<FoncierUploadPreviewResponse> {
   const form = new FormData();
   form.append("file", file);
@@ -392,6 +422,40 @@ export async function runFilter(
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
+}
+
+/** Métriques détaillées du pool pour une parcelle (run de filtre donné). */
+export async function fetchPoolParcelMetrics(
+  projectId: string,
+  runId: string,
+  idu: string,
+): Promise<{ run_id: string; idu: string; metrics: ParcelPoolMetricRow[] }> {
+  const q = new URLSearchParams({ run_id: runId });
+  const res = await fetch(
+    `${API}/api/projects/${projectId}/pool/${encodeURIComponent(idu)}/metrics?${q}`,
+  );
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+/** Toutes les métriques du run (préchargement après filtrage). */
+export async function fetchPoolRunMetricsBulk(
+  projectId: string,
+  runId: string,
+): Promise<PoolMetricsBulkResponse> {
+  const q = new URLSearchParams({ run_id: runId });
+  const res = await fetch(`${API}/api/projects/${projectId}/pool/metrics?${q}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+/** Lance le calcul des profilers (COSIA, CARHAB, végétation hybride, …) pour le run pool. Appelé après le filtre. */
+export async function computePoolRunMetrics(projectId: string, runId: string): Promise<void> {
+  const res = await fetch(
+    `${API}/api/projects/${projectId}/pool/runs/${runId}/recompute-metrics`,
+    { method: "POST" },
+  );
+  if (!res.ok) throw new Error(await res.text());
 }
 
 export async function runFilterUF(

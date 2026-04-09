@@ -17,7 +17,9 @@ export const filterTheme = {
   danger: "#fca5a5",
 } as const;
 
-const accentBorder: Record<NonNullable<SectionCardProps["accent"]>, string> = {
+export type SectionAccent = "green" | "blue" | "orange" | "red" | "purple" | "muted";
+
+const accentBorder: Record<SectionAccent, string> = {
   green: filterTheme.accentGreen,
   blue: filterTheme.accentBlue,
   orange: filterTheme.accentOrange,
@@ -25,8 +27,6 @@ const accentBorder: Record<NonNullable<SectionCardProps["accent"]>, string> = {
   purple: filterTheme.accentPurple,
   muted: "#6b7280",
 };
-
-export type SectionAccent = keyof typeof accentBorder;
 
 interface SectionCardProps {
   title: string;

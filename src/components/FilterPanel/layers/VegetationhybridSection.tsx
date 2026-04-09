@@ -103,7 +103,10 @@ export function VegetationHybrideSection({ value, onChange }: Props) {
         Sans sélection, ce critère est ignoré.
       </Hint>
       <Hint>
-        L'ordre de clic définit la priorité : la 1re valeur cochée = rang 1, puis rang 2, etc.
+        L&apos;ordre de clic définit la priorité : la 1re valeur cochée = rang 1, puis rang 2, etc. (BD TOPO
+        puis CESBIO). Cette ordre est enregistré dans le filtre du projet et sert au tri « Priorité filtre
+        végétation » dans le classement (surfaces d&apos;intersection en m² par classe, pas seulement les
+        pourcentages).
       </Hint>
 
       {/* ── BD TOPO : natures ── */}

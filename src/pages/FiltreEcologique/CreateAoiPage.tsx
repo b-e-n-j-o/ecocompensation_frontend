@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  createProjectFromParcelles,
   createProjectFromFoncierUpload,
   createProjectFromParcelle,
   fetchLayers,
   previewFoncierUpload,
   startFetch,
 } from "../../api";
-import type { FromParcelleBody, LayerInfo } from "../../api";
+import type { FromParcelleBody, LayerInfo, ParcelleRef } from "../../api";
 import type { Feature, MultiPolygon, Polygon } from "geojson";
 import { SliderField } from "../../components/FilterPanel/shared";
 import { CartoAoi } from "./CartoAoi";
-import { buildFetchLayerKeys, isOptionalLayerKey } from "./aoiLayerKeys";
-import { PreanalyzeParcelle } from "./PreanalyzeParcelle";
+import { buildFetchLayerKeys, getDefaultOptionalLayerKeys } from "./aoiLayerKeys";
 import { SelectAoiLayers } from "./SelectAoiLayers";
 import "../../components/FilterPanel/filter-panel.css";
 import { FaunaSpeciesPicker } from "../../components/FilterPanel/FaunaSpeciesPicker";
@@ -55,6 +55,8 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
   const [registryLayers, setRegistryLayers] = useState<LayerInfo[]>([]);
   const [layersLoadError, setLayersLoadError] = useState<string | null>(null);
   const [faunaSpecies, setFaunaSpecies] = useState<string[]>([]);
+  const [ufParcelles, setUfParcelles] = useState<ParcelleRef[]>([]);
+  const [nameTouched, setNameTouched] = useState(false);
   /** Couches optionnelles cochées (hors parcelles, GEOMCE, UF — ces dernières via ufEnabled). */
   const [selectedLayerKeys, setSelectedLayerKeys] = useState<string[]>([]);
   const [ufEnabled, setUfEnabled] = useState(false);
@@ -73,7 +75,7 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
       .then((layers) => {
         if (cancelled) return;
         setRegistryLayers(layers);
-        setSelectedLayerKeys(layers.map((l) => l.key).filter((k) => isOptionalLayerKey(k)));
+        setSelectedLayerKeys(getDefaultOptionalLayerKeys(layers));
         setLayersLoadError(null);
       })
       .catch((e) => {
@@ -95,6 +97,19 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
       setFaunaSpecies([]);
     }
   }, [faunaLayerSelected, faunaSpecies.length]);
+
+  const currentRefLabel = `${codeInsee.trim()}_${section.trim().toUpperCase()}_${numero.trim()}`.replace(/^_+|_+$/g, "");
+  const firstUfRef = ufParcelles[0];
+  const suggestedName = sourceMode === "fichier"
+    ? (uploadedFile ? uploadedFile.name.replace(/\.(gpkg|zip)$/i, "") : "")
+    : (ufParcelles.length > 1
+        ? (firstUfRef ? `UF_${firstUfRef.code_insee}_${firstUfRef.section}_${firstUfRef.numero}` : "")
+        : (currentRefLabel ? `PARCELLE_${currentRefLabel}` : ""));
+
+  useEffect(() => {
+    if (nameTouched) return;
+    setName(suggestedName);
+  }, [suggestedName, nameTouched]);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -191,16 +206,16 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
       return;
     }
 
-    const projectName =
-      name.trim() || (sourceMode === "parcelle" ? `PARCELLE_${codeInsee}_${section}_${numero}` : "FONCIER_UPLOAD");
+    const projectName = name.trim() || (suggestedName || "FONCIER_UPLOAD");
 
     if (sourceMode === "parcelle") {
-      if (!codeInsee.trim() || !section.trim() || !numero.trim()) {
-        setError("Renseignez INSEE, section et numéro.");
+      const hasUfRefs = ufParcelles.length > 0;
+      if (!hasUfRefs && (!codeInsee.trim() || !section.trim() || !numero.trim())) {
+        setError("Renseignez INSEE, section et numéro (ou composez une UF).");
         return;
       }
       if (!parcelFeature) {
-        setError("Recherchez d'abord la parcelle pour vérifier la géométrie sur la carte.");
+        setError("Recherchez d'abord la géométrie source (parcelle ou UF) sur la carte.");
         return;
       }
     } else {
@@ -222,15 +237,31 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
     setStep("creating");
 
     try {
+      const parcellesForProject =
+        ufParcelles.length > 0
+          ? ufParcelles
+          : [{
+              code_insee: codeInsee.trim(),
+              section: section.trim().toUpperCase(),
+              numero: numero.trim(),
+            }];
       const res =
         sourceMode === "parcelle"
-          ? await createProjectFromParcelle({
-              code_insee: codeInsee.trim(),
-              section: section.trim(),
-              numero: numero.trim(),
-              name: projectName,
-              buffer_km: bufferKm,
-            } satisfies FromParcelleBody)
+          ? (
+            parcellesForProject.length > 1
+              ? await createProjectFromParcelles({
+                  parcelles: parcellesForProject,
+                  name: projectName,
+                  buffer_km: bufferKm,
+                })
+              : await createProjectFromParcelle({
+                  code_insee: parcellesForProject[0].code_insee,
+                  section: parcellesForProject[0].section,
+                  numero: parcellesForProject[0].numero,
+                  name: projectName,
+                  buffer_km: bufferKm,
+                } satisfies FromParcelleBody)
+          )
           : await createProjectFromFoncierUpload({
               name: projectName,
               buffer_km: bufferKm,
@@ -264,7 +295,7 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
     !isSearchingParcel &&
     !isUploadingGeom &&
     !!sourceFeature &&
-    (sourceMode === "parcelle" ? !!codeInsee.trim() && !!section.trim() && !!numero.trim() : !!uploadedFile) &&
+    (sourceMode === "parcelle" ? (ufParcelles.length > 0 || (!!codeInsee.trim() && !!section.trim() && !!numero.trim())) : !!uploadedFile) &&
     layersReady;
   const willSkipUfLayers = bufferKm > 5;
 
@@ -273,39 +304,70 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
     const insee = codeInsee.trim();
     const sec = section.trim().toUpperCase();
     const num = numero.trim();
+    const refs: ParcelleRef[] =
+      ufParcelles.length > 0
+        ? ufParcelles
+        : [{ code_insee: insee, section: sec, numero: num }];
 
-    if (!insee || !sec || !num) {
-      setError("Renseignez INSEE, section et numéro avant la recherche parcellaire.");
+    if (!refs.length || (!ufParcelles.length && (!insee || !sec || !num))) {
+      setError("Renseignez INSEE/section/numéro ou ajoutez des parcelles à l'UF avant recherche.");
       return;
     }
 
     setIsSearchingParcel(true);
     try {
-      const url = new URL("https://apicarto.ign.fr/api/cadastre/parcelle");
-      url.searchParams.set("code_insee", insee);
-      url.searchParams.set("section", sec);
-      url.searchParams.set("numero", num);
-
-      const res = await fetch(url.toString());
-      if (!res.ok) {
-        throw new Error(`IGN a répondu ${res.status}`);
+      const fetched: ParcelleFeature[] = [];
+      for (const ref of refs) {
+        const url = new URL("https://apicarto.ign.fr/api/cadastre/parcelle");
+        url.searchParams.set("code_insee", ref.code_insee);
+        url.searchParams.set("section", ref.section);
+        url.searchParams.set("numero", ref.numero);
+        const res = await fetch(url.toString());
+        if (!res.ok) {
+          throw new Error(`IGN a répondu ${res.status} pour ${ref.code_insee}/${ref.section}/${ref.numero}`);
+        }
+        const data = (await res.json()) as { features?: Array<Feature> };
+        const feature = data.features?.[0];
+        if (!feature || (feature.geometry?.type !== "Polygon" && feature.geometry?.type !== "MultiPolygon")) {
+          throw new Error(`Parcelle introuvable: ${ref.code_insee}/${ref.section}/${ref.numero}`);
+        }
+        fetched.push(feature as ParcelleFeature);
       }
-
-      const data = (await res.json()) as {
-        features?: Array<Feature>;
-      };
-      const feature = data.features?.[0];
-      if (!feature || (feature.geometry?.type !== "Polygon" && feature.geometry?.type !== "MultiPolygon")) {
-        throw new Error("Parcelle introuvable pour cette référence.");
+      const multiCoords: number[][][][] = [];
+      for (const f of fetched) {
+        if (f.geometry.type === "Polygon") multiCoords.push(f.geometry.coordinates);
+        else multiCoords.push(...f.geometry.coordinates);
       }
-
-      setParcelFeature(feature as ParcelleFeature);
+      setParcelFeature({
+        type: "Feature",
+        geometry: { type: "MultiPolygon", coordinates: multiCoords },
+        properties: {
+          count: fetched.length,
+          refs: refs.map((r) => `${r.code_insee}/${r.section}/${r.numero}`).join(", "),
+        },
+      } as ParcelleFeature);
     } catch (err) {
       setParcelFeature(null);
       setError(err instanceof Error ? err.message : "Erreur recherche parcellaire IGN");
     } finally {
       setIsSearchingParcel(false);
     }
+  }
+
+  function handleAddParcelleToUf() {
+    setError(null);
+    const insee = codeInsee.trim();
+    const sec = section.trim().toUpperCase();
+    const num = numero.trim();
+    if (!insee || !sec || !num) {
+      setError("Renseignez INSEE, section et numéro avant ajout à l'UF.");
+      return;
+    }
+    const exists = ufParcelles.some(
+      (p) => p.code_insee === insee && p.section === sec && p.numero === num
+    );
+    if (exists) return;
+    setUfParcelles((prev) => [...prev, { code_insee: insee, section: sec, numero: num }]);
   }
 
   async function handleUploadGeometry(file: File) {
@@ -420,17 +482,25 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
                   onClick={handleSearchParcelle}
                   disabled={isSearchingParcel || step === "creating" || step === "fetching"}
                 >
-                  {isSearchingParcel ? "Recherche parcelle..." : "Rechercher parcelle (IGN)"}
+                  {isSearchingParcel ? "Recherche parcelle(s)..." : "Rechercher parcelle(s) (IGN)"}
                 </button>
+                <button
+                  type="button"
+                  className="btn-run create-aoi-search-btn"
+                  onClick={handleAddParcelleToUf}
+                  disabled={step === "creating" || step === "fetching"}
+                >
+                  Ajouter à l'unité foncière
+                </button>
+                {ufParcelles.length > 0 && (
+                  <div className="create-aoi-parcel-status is-found">
+                    UF composée ({ufParcelles.length}) :{" "}
+                    {ufParcelles.map((p) => `${p.code_insee}/${p.section}/${p.numero}`).join(" · ")}
+                  </div>
+                )}
                 <div className={`create-aoi-parcel-status ${parcelFeature ? "is-found" : "is-missing"}`}>
-                  {parcelFeature ? "Parcelle trouvée et affichée sur la carte." : "Parcelle non recherchée."}
+                  {parcelFeature ? "Géométrie source trouvée et affichée sur la carte." : "Parcelle/UF non recherchée."}
                 </div>
-                <PreanalyzeParcelle
-                  codeInsee={codeInsee}
-                  section={section}
-                  numero={numero}
-                  aoiFlowBusy={step === "creating" || step === "fetching"}
-                />
                   </>
                 ) : (
                   <>
@@ -501,7 +571,10 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
                     type="text"
                     className="create-aoi-input"
                     value={name}
-                    onChange={(e) => setName(e.target.value)}
+                    onChange={(e) => {
+                      setName(e.target.value);
+                      setNameTouched(true);
+                    }}
                     placeholder="ex. PARCELLE_33274_0D_0962"
                     disabled={step === "creating" || step === "fetching"}
                   />

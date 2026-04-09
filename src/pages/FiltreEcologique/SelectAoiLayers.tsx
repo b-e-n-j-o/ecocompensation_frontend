@@ -1,5 +1,5 @@
 import type { LayerInfo } from "../../api";
-import { isOptionalLayerKey } from "./aoiLayerKeys";
+import { isOptionalLayerKey, splitOptionalLayersByGroup } from "./aoiLayerKeys";
 import "./SelectAoiLayers.css";
 
 export interface SelectAoiLayersProps {
@@ -37,6 +37,7 @@ export function SelectAoiLayers({
   disabled = false,
 }: SelectAoiLayersProps) {
   const optionalLayers = layers.filter((l) => isOptionalLayerKey(l.key));
+  const grouped = splitOptionalLayersByGroup(optionalLayers);
   const selectedSet = new Set(selectedKeys);
   const allKeys = optionalLayers.map((l) => l.key);
   const allSelected = allKeys.length > 0 && allKeys.every((k) => selectedSet.has(k));
@@ -79,21 +80,44 @@ export function SelectAoiLayers({
         </button>
       </div>
 
-      <div className="select-aoi-layers__list" role="list">
-        {optionalLayers.map((layer) => {
-          const checked = selectedSet.has(layer.key);
-          return (
-            <label key={layer.key} className="select-aoi-layers__row">
-              <input
-                type="checkbox"
-                checked={checked}
-                disabled={disabled}
-                onChange={() => toggleKey(layer.key)}
-              />
-              <span className="select-aoi-layers__row-label">{layer.label}</span>
-            </label>
-          );
-        })}
+      <div className="select-aoi-layers__group">
+        <div className="select-aoi-layers__group-title">Couches primaires (cochées par défaut)</div>
+        <div className="select-aoi-layers__list" role="list">
+          {grouped.primary.map((layer) => {
+            const checked = selectedSet.has(layer.key);
+            return (
+              <label key={layer.key} className="select-aoi-layers__row">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={disabled}
+                  onChange={() => toggleKey(layer.key)}
+                />
+                <span className="select-aoi-layers__row-label">{layer.label}</span>
+              </label>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="select-aoi-layers__group">
+        <div className="select-aoi-layers__group-title">Couches secondaires (décochées par défaut)</div>
+        <div className="select-aoi-layers__list" role="list">
+          {grouped.secondary.map((layer) => {
+            const checked = selectedSet.has(layer.key);
+            return (
+              <label key={layer.key} className="select-aoi-layers__row">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={disabled}
+                  onChange={() => toggleKey(layer.key)}
+                />
+                <span className="select-aoi-layers__row-label">{layer.label}</span>
+              </label>
+            );
+          })}
+        </div>
       </div>
 
       <div className={`select-aoi-layers__uf-block ${ufBlockedByBuffer ? "select-aoi-layers__uf-block--blocked" : ""}`}>

@@ -13,11 +13,11 @@ interface GeometrySectionProps {
 
 export function GeometrySection({ miller, minAreaHa, maxResults, onChange }: GeometrySectionProps) {
   return (
-    <SectionCard title="Géométrie & classement" icon="⬡" accent="purple" collapsible>
+    <SectionCard title="Géométrie & classement" icon="⬡" accent="purple" collapsible defaultOpen>
       <SliderField
         label="Miller minimum"
         value={miller}
-        min={0.1}
+        min={0.4}
         max={0.9}
         step={0.01}
         format={(v) => v.toFixed(2)}
@@ -26,9 +26,9 @@ export function GeometrySection({ miller, minAreaHa, maxResults, onChange }: Geo
       <NumericField
         label="Surface minimale"
         value={minAreaHa}
-        min={0.5}
+        min={1}
         max={100}
-        step={0.5}
+        step={1}
         unit=" ha"
         onChange={(v) => onChange({ min_area_ha: v })}
       />

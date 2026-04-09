@@ -14,6 +14,8 @@ import {
   exportShp,
   exportCsv,
   fetchParcellesGeojson,
+  fetchPoolRunMetricsBulk,
+  computePoolRunMetrics,
   fetchProjectContextGeometry,
   fetchFoncierGeojson,
   fetchUfSubsetsGeojson,
@@ -21,9 +23,19 @@ import {
   prefetchAllResultsThematicLayers,
 } from "./api";
 import type { ResultsThematicPreload } from "./components/ResultPanel/MapResults/cartoCouchesRegistry";
-import type { FilterOptions, FilterResponse, UfFilterResponse } from "./types";
+import type {
+  FilterOptions,
+  FilterResponse,
+  ParcelPoolMetricRow,
+  RankingSortKey,
+  UfFilterResponse,
+} from "./types";
+import {
+  buildVegetationPriorityChain,
+  compareByVegetationPriority,
+  getDominantVegetationRatio,
+} from "./utils/poolMetrics";
 import { useFetchProgress } from "./hooks/useFetchProgress";
-import { SkeletonResults } from "./components/ResultPanel/SkeletonResults";
 import { CreateAoiPage } from "./pages/FiltreEcologique/CreateAoiPage";
 import { ProjectContextMap } from "./components/ProjectContextMap";
 import Bancarisation from "./pages/Bancarisation/page";
@@ -38,6 +50,7 @@ import type { FeatureCollection, GeoJsonProperties, Geometry } from "geojson";
 type MainResultsTab = "parcelles" | "unites";
 /** Sous-vues : entonnoir | tableau | carte */
 type ResultsSubView = "entonnoir" | "classement" | "carte";
+type FilterLoadingStage = "idle" | "filtering" | "profiling" | "metrics_loading";
 
 /** Présence de lignes dans ecocompensation_results.sous_ensembles pour le projet (filtre UF possible). */
 type SousEnsemblesStatus = "idle" | "loading" | "yes" | "no";
@@ -54,6 +67,7 @@ interface EcoCompensationAppProps {
 function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCompensationAppProps) {
   const [projectId, setProjectId] = useState<string | null>(fixedProjectId);
   const [loading, setLoading] = useState(false);
+  const [filterLoadingStage, setFilterLoadingStage] = useState<FilterLoadingStage>("idle");
   const [ufResults, setUfResults] = useState<UfFilterResponse | null>(null);
   const [ufGeojson, setUfGeojson] = useState<FeatureCollection<Geometry, GeoJsonProperties> | null>(null);
   const [exportingShp, setExportingShp] = useState(false);
@@ -67,7 +81,7 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
   /** Sous-onglets Entonnoir / Classement / Carte pour Unités foncières */
   const [ufSubView, setUfSubView] = useState<ResultsSubView>("classement");
   const [scrollToIdu, setScrollToIdu] = useState<string | null>(null);
-  const [mapFocusIdu, setMapFocusIdu] = useState<string | null>(null);
+  const [, setMapFocusIdu] = useState<string | null>(null);
   const [distanceMaxKm, setDistanceMaxKm] = useState<number>(0);
   const [distanceCursorKm, setDistanceCursorKm] = useState<number>(0);
   const [surfaceMinHa, setSurfaceMinHa] = useState<number>(0);
@@ -80,6 +94,11 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
   const [thematicPreload, setThematicPreload] = useState<ResultsThematicPreload | null>(null);
   /** True tant que le prefetch des couches thématiques (ZDV, CESBIO, …) n’est pas terminé après un filtre. */
   const [thematicPreloadLoading, setThematicPreloadLoading] = useState(false);
+  /** Métriques pool (bulk après filtrage) ; null = chargement en cours ou pas encore de filtre. */
+  const [poolMetricsByIdu, setPoolMetricsByIdu] = useState<Record<string, ParcelPoolMetricRow[]> | null>(null);
+  /** Options du dernier filtre réussi (pour tri priorité végétation = même ordre que `last_filter` en base). */
+  const [lastFilterOptions, setLastFilterOptions] = useState<FilterOptions | null>(null);
+  const [rankingSortKey, setRankingSortKey] = useState<RankingSortKey>("rank");
   const hasParcellesFunnel = (results?.funnel ?? []).some((s) => s.count >= 0);
   const hasUfFunnel = (ufResults?.funnel ?? []).some((s) => s.count >= 0);
 
@@ -131,6 +150,9 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
     thematicPrefetchSeqRef.current += 1;
     setThematicPreloadLoading(false);
     setThematicPreload(null);
+    setPoolMetricsByIdu(null);
+    setLastFilterOptions(null);
+    setRankingSortKey("rank");
   }
 
   useEffect(() => {
@@ -154,13 +176,15 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
   async function handleSubmit(opts: FilterOptions) {
     if (!projectId) return;
     setLoading(true);
+    setFilterLoadingStage("filtering");
     thematicPrefetchSeqRef.current += 1;
     setThematicPreloadLoading(false);
     setThematicPreload(null);
-    setGeojson(null);
-    setFoncierGeojson(null);
     setUfResults(null);
     setUfGeojson(null);
+    setPoolMetricsByIdu(null);
+    setLastFilterOptions(null);
+    setRankingSortKey("rank");
     try {
       let runUf = false;
       if (sousEnsemblesStatus === "yes") {
@@ -173,6 +197,26 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
 
       const data = await runFilter(projectId, opts);
       setResults(data);
+      setLastFilterOptions(opts);
+
+      if (data.pool_run_id) {
+        setFilterLoadingStage("profiling");
+        try {
+          await computePoolRunMetrics(projectId, data.pool_run_id);
+        } catch (e) {
+          console.warn("Calcul métriques pool):", e);
+        }
+        setFilterLoadingStage("metrics_loading");
+        try {
+          const bulk = await fetchPoolRunMetricsBulk(projectId, data.pool_run_id);
+          setPoolMetricsByIdu(bulk.by_idu);
+        } catch (e) {
+          console.warn("Métriques pool (bulk):", e);
+          setPoolMetricsByIdu({});
+        }
+      } else {
+        setPoolMetricsByIdu({});
+      }
 
       // GeoJSON seulement si des parcelles sont présentes
       if (data.parcelles?.length) {
@@ -229,9 +273,21 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
       console.error("Erreur filtre:", err);
       alert("Erreur lors du filtrage. Voir console.");
     } finally {
+      setFilterLoadingStage("idle");
       setLoading(false);
     }
   }
+
+  const loadingStatusText = useMemo(() => {
+    if (!loading) return null;
+    if (filterLoadingStage === "profiling") {
+      return "Filtrage terminé. Calcul des métriques des parcelles du pool en cours…";
+    }
+    if (filterLoadingStage === "metrics_loading") {
+      return "Récupération des métriques…";
+    }
+    return "Filtrage en cours…";
+  }, [loading, filterLoadingStage]);
 
   async function handleExportShp() {
     if (!projectId) return;
@@ -327,10 +383,44 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
   const displayedParcelles = useMemo(() => {
     if (!results?.parcelles?.length) return [];
     const cap = Math.max(1, distanceCursorKm);
-    return results.parcelles.filter(
+    let list = results.parcelles.filter(
       (p) => (p.distance_km ?? 0) <= cap && (p.surface_ha ?? 0) >= surfaceMinHa,
     );
-  }, [results?.parcelles, distanceCursorKm, surfaceMinHa]);
+    if (rankingSortKey === "rank") {
+      list = [...list].sort((a, b) => a.rank - b.rank);
+    } else if (rankingSortKey === "distance") {
+      list = [...list].sort((a, b) => a.distance_km - b.distance_km);
+    } else if (rankingSortKey === "surface") {
+      list = [...list].sort((a, b) => b.surface_ha - a.surface_ha);
+    } else if (rankingSortKey === "miller") {
+      list = [...list].sort((a, b) => b.miller - a.miller);
+    } else if (rankingSortKey === "veg_dominant") {
+      list = [...list].sort((a, b) => {
+        const ra = poolMetricsByIdu ? getDominantVegetationRatio(poolMetricsByIdu[a.idu]) : 0;
+        const rb = poolMetricsByIdu ? getDominantVegetationRatio(poolMetricsByIdu[b.idu]) : 0;
+        return rb - ra;
+      });
+    } else if (rankingSortKey === "veg_priority") {
+      const chain = buildVegetationPriorityChain(lastFilterOptions?.vegetation_hybride);
+      if (!chain.length) {
+        list = [...list].sort((a, b) => a.rank - b.rank);
+      } else {
+        list = [...list].sort((a, b) =>
+          compareByVegetationPriority(a.idu, b.idu, chain, poolMetricsByIdu),
+        );
+      }
+    }
+    return list;
+  }, [
+    results?.parcelles,
+    distanceCursorKm,
+    surfaceMinHa,
+    rankingSortKey,
+    poolMetricsByIdu,
+    lastFilterOptions,
+  ]);
+  const isPoolMetricsPending =
+    !!results?.pool_run_id && loading && (filterLoadingStage === "profiling" || filterLoadingStage === "metrics_loading");
 
   return (
     <div className="app-layout">
@@ -340,6 +430,7 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
         onSubmit={handleSubmit}
         onNavigateToCreate={onNavigateToCreate}
         isLoading={loading}
+        loadingText={loadingStatusText}
         disabled={!projectId}
       />
 
@@ -363,7 +454,9 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
           </div>
         )}
 
-        {loading && <SkeletonResults />}
+        {loadingStatusText && (
+          <div className="loading-status-banner loading-text-breathe">{loadingStatusText}</div>
+        )}
 
         {results ? (
           <>
@@ -575,12 +668,29 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
                       </div>
                     </div>
                   )}
-                  <RankingTable
-                    parcelles={displayedParcelles}
-                    scrollToIdu={scrollToIdu}
-                    selectedIdu={scrollToIdu}
-                    onRowDoubleClick={handleTableRowDoubleClick}
-                  />
+                  <div className={`ranking-table-shell${isPoolMetricsPending ? " ranking-table-shell--loading" : ""}`}>
+                    <RankingTable
+                      parcelles={displayedParcelles}
+                      poolRunId={results.pool_run_id ?? null}
+                      poolMetricsByIdu={poolMetricsByIdu}
+                      poolMetricsLoading={!!results.pool_run_id && poolMetricsByIdu === null}
+                      rankingSortKey={rankingSortKey}
+                      onRankingSortChange={setRankingSortKey}
+                      scrollToIdu={scrollToIdu}
+                      selectedIdu={scrollToIdu}
+                      onRowDoubleClick={handleTableRowDoubleClick}
+                    />
+                    {isPoolMetricsPending && (
+                      <div className="ranking-table-loading-overlay" aria-live="polite">
+                        <div className="ranking-table-loading-card">
+                          <span className="parcelles-map-spinner" />
+                          <span className="loading-text-breathe">
+                            {loadingStatusText ?? "Calcul des métriques en cours…"}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </>
               )}
 
@@ -591,6 +701,7 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
                   projectId={projectId}
                   preloadedThematic={thematicPreload}
                   thematicPreloadLoading={thematicPreloadLoading}
+                  loadingMessage={loadingStatusText}
                   onParcelleDoubleClick={handleParcelleDoubleClickFromMap}
                 />
               )}

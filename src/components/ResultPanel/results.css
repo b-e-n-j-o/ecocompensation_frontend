@@ -287,9 +287,44 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
   padding: 14px 16px;
   background: var(--bg-card, #ffffff);
   border-bottom: 1px solid var(--border, #e2e8f0);
+}
+
+.ranking-header-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  justify-content: flex-end;
+}
+
+.ranking-sort-label {
+  font-size: 11px;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.ranking-sort-label select {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #e2e8f0);
+  color: #0f172a;
+  background: #ffffff;
+  max-width: min(240px, 55vw);
+}
+
+.ranking-pool-loading {
+  font-size: 11px;
+  color: #64748b;
+  font-style: italic;
 }
 
 .ranking-title {
@@ -471,6 +506,271 @@
 .col-idu { min-width: 120px; }
 .col-dist, .col-surf, .col-miller, .col-hydro { width: 80px; text-align: right; }
 
+.ranking-pool-hint {
+  font-weight: 500;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.ranking-row-detail {
+  background: #f8fafc;
+}
+
+.ranking-row-detail td {
+  cursor: default;
+  vertical-align: top;
+}
+
+.ranking-cell-detail {
+  padding: 0 12px 14px !important;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+}
+
+.ranking-line-detail {
+  padding: 12px 4px 4px;
+  font-size: 12px;
+  color: #0f172a;
+}
+
+.ranking-line-status {
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.ranking-line-error {
+  margin: 0;
+  color: #b91c1c;
+  font-size: 12px;
+}
+
+.ranking-line-empty {
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ranking-metrics-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ranking-metric-block {
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #ffffff;
+}
+
+.ranking-metric-title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.ranking-metric-sub {
+  margin: 0 0 10px;
+  font-size: 11px;
+  color: #475569;
+}
+
+/* CARHAB : histogramme de barres indépendantes (échelle = % de la parcelle par classe) */
+.veg-carhab-histo {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.veg-carhab-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(80px, 2fr) auto;
+  gap: 8px 10px;
+  align-items: start;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+@media (max-width: 520px) {
+  .veg-carhab-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .veg-carhab-stats {
+    justify-self: start;
+  }
+}
+
+.veg-carhab-label {
+  color: #334155;
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  hyphens: auto;
+  line-height: 1.4;
+}
+
+.veg-carhab-track-wrap {
+  min-width: 0;
+  /* Aligne visuellement la barre avec la 1ʳᵉ ligne du libellé quand il est multi-lignes */
+  margin-top: 1px;
+}
+
+.veg-carhab-track {
+  height: 14px;
+  border-radius: 7px;
+  background: #e2e8f0;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
+  overflow: hidden;
+}
+
+.veg-carhab-fill {
+  height: 100%;
+  min-width: 0;
+  border-radius: 7px;
+  transition: width 0.2s ease;
+}
+
+.veg-carhab-stats {
+  color: #0f172a;
+  font-size: 11px;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.veg-carhab-pct {
+  font-weight: 600;
+}
+
+.veg-carhab-m2 {
+  font-weight: 500;
+  color: #475569;
+}
+
+/* Zonage hybride : une seule barre empilée + légende compacte */
+.ranking-metric-vegetation {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.veg-zonage-head {
+  min-height: 0;
+}
+
+.veg-zonage-total {
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.35;
+}
+
+.veg-stack-bar {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  height: 12px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #e2e8f0;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
+}
+
+.veg-stack-segment {
+  min-width: 0;
+  height: 100%;
+  flex-shrink: 0;
+  transition: filter 0.15s ease;
+}
+
+.veg-stack-bar:hover .veg-stack-segment {
+  filter: brightness(1.06);
+}
+
+.veg-legend {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px 12px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .veg-legend {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .veg-legend {
+    grid-template-columns: 1fr;
+  }
+}
+
+.veg-legend-item {
+  display: grid;
+  grid-template-columns: 9px minmax(0, 1fr) auto;
+  gap: 6px 8px;
+  align-items: baseline;
+  font-size: 11px;
+  line-height: 1.3;
+  color: #334155;
+}
+
+.veg-legend-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.veg-legend-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.veg-legend-stats {
+  text-align: right;
+  font-size: 10px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.veg-legend-pct {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.veg-legend-sep {
+  color: #94a3b8;
+  font-weight: 400;
+}
+
+.veg-legend-m2 {
+  font-weight: 500;
+  color: #475569;
+}
+
+.ranking-metric-raw {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #334155;
+  max-height: 200px;
+  overflow: auto;
+}
+
 .rank-badge {
   display: inline-flex;
   align-items: center;
@@ -510,6 +810,44 @@
   color: #000000;
 }
 
+/* ─── RankingTable loading veil ────────────────────────────────────────────── */
+
+.ranking-table-shell {
+  position: relative;
+}
+
+.ranking-table-shell--loading {
+  pointer-events: none;
+}
+
+.ranking-table-shell--loading .ranking-table {
+  opacity: 0.48;
+  filter: grayscale(0.22) saturate(0.7);
+  transition: opacity 0.25s ease, filter 0.25s ease;
+}
+
+.ranking-table-loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.ranking-table-loading-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 /* ─── ParcellesMap ─────────────────────────────────────────────────────────── */
 
 .parcelles-map {
@@ -517,6 +855,73 @@
   border: 1px solid var(--border, #e2e8f0);
   overflow: hidden;
   box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+
+.parcelles-map--loading {
+  opacity: 0.52;
+  filter: grayscale(0.35) saturate(0.65);
+  transition: opacity 0.35s ease, filter 0.35s ease;
+}
+
+.parcelles-map-loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.parcelles-map-loading-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.75);
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.parcelles-map-loading-card .loading-text-breathe {
+  display: inline-block;
+}
+
+@keyframes loading-text-breathe {
+  0%,
+  100% {
+    opacity: 0.42;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.loading-text-breathe {
+  animation: loading-text-breathe 1.85s ease-in-out infinite;
+}
+
+.loading-status-banner {
+  padding: 10px;
+  color: #0f766e;
+  font-weight: 600;
+}
+
+.parcelles-map-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #ffffff;
+  animation: parcelles-spin 0.8s linear infinite;
+}
+
+@keyframes parcelles-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .maplibregl-ctrl-group {
@@ -533,30 +938,4 @@
 
 .maplibregl-ctrl-group button + button {
   border-top: 1px solid var(--border, #e2e8f0) !important;
-}
-
-/* ─── Skeleton Results ─────────────────────────────────────────────────────── */
-.skeleton-title {
-  height: 24px;
-  width: 220px;
-  background: linear-gradient(90deg,#2a2f3a 25%,#3a4150 37%,#2a2f3a 63%);
-  background-size: 400% 100%;
-  animation: skeleton 1.4s ease infinite;
-  margin-bottom: 20px;
-  border-radius: 6px;
-}
-
-.skeleton-row {
-  height: 18px;
-  width: 100%;
-  background: linear-gradient(90deg,#2a2f3a 25%,#3a4150 37%,#2a2f3a 63%);
-  background-size: 400% 100%;
-  animation: skeleton 1.4s ease infinite;
-  margin-bottom: 12px;
-  border-radius: 4px;
-}
-
-@keyframes skeleton {
-  0% { background-position: 100% 0 }
-  100% { background-position: 0 0 }
 }

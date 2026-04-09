@@ -45,6 +45,7 @@ interface FilterPanelProps {
   onSubmit: (options: FilterOptions) => void;
   onNavigateToCreate?: () => void;
   isLoading?: boolean;
+  loadingText?: string | null;
   disabled?: boolean;
 }
 
@@ -54,6 +55,7 @@ export function FilterPanel({
   onSubmit,
   onNavigateToCreate,
   isLoading = false,
+  loadingText = null,
   disabled = false,
 }: FilterPanelProps) {
   const [opts, setOpts] = useState<FilterOptions>(DEFAULT_FILTER);
@@ -62,22 +64,19 @@ export function FilterPanel({
     setOpts((prev) => ({ ...prev, ...p }));
   }
 
-  function reset() {
-    setOpts(DEFAULT_FILTER);
-  }
-
   const runBtn = (
     <button
       type="button"
       onClick={() => onSubmit(opts)}
       disabled={disabled || isLoading}
       style={{
-        width: "100%",
-        height: 40,
+        width: 220,
+        height: 34,
         background: isLoading ? "#262b36" : "#10b981",
         color: isLoading ? "#9ca3af" : "#fff",
         border: isLoading ? "1px solid #2a2f3d" : "none",
         borderRadius: 4,
+        padding: "0 14px",
         fontWeight: 600,
         fontSize: 13,
         cursor: disabled || isLoading ? "not-allowed" : "pointer",
@@ -89,7 +88,9 @@ export function FilterPanel({
       }}
     >
       {isLoading ? (
-        <>⏳ Filtrage en cours…</>
+        <span className="loading-text-breathe" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          ⏳ {loadingText ?? "Filtrage en cours…"}
+        </span>
       ) : (
         <>
           <span>▶</span>
@@ -106,50 +107,37 @@ export function FilterPanel({
           padding: 16,
           borderBottom: "1px solid #2a2f3d",
           display: "flex",
-          justifyContent: "space-between",
+          flexDirection: "column",
           alignItems: "center",
+          gap: 10,
         }}
       >
         <div style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", color: "#9ca3af" }}>
           <span style={{ marginRight: 6 }}>⧖</span>
           Filtre
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, width: "100%" }}>
           {onNavigateToCreate && (
             <button
               type="button"
               onClick={onNavigateToCreate}
-              title="Créer une AOI à partir d'une parcelle"
+              title="Nouvelle étude"
               style={{
                 background: "#2a2f3d",
                 border: "1px solid #3b82f6",
                 color: "#93c5fd",
                 borderRadius: 4,
-                padding: "4px 10px",
-                fontSize: 11,
+                width: 220,
+                height: 32,
+                fontSize: 12,
+                fontWeight: 500,
                 cursor: "pointer",
                 whiteSpace: "nowrap",
               }}
             >
-              ◇ Créer une AOI
+              ◇ Créer une nouvelle étude
             </button>
           )}
-          <button
-            type="button"
-            onClick={reset}
-            title="Réinitialiser"
-            style={{
-              background: "#262b36",
-              border: "1px solid #2a2f3d",
-              color: "#9ca3af",
-              borderRadius: 4,
-              width: 28,
-              height: 28,
-              cursor: "pointer",
-            }}
-          >
-            ↺
-          </button>
           {runBtn}
         </div>
       </div>
@@ -241,7 +229,7 @@ export function FilterPanel({
         <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#9ca3af", cursor: "pointer" }}>
           <input
             type="checkbox"
-            checked={opts.funnel_mode}
+            checked={opts.funnel_mode !== false}
             onChange={(e) => patch({ funnel_mode: e.target.checked })}
           />
           Détail de filtrage (entonnoir)
@@ -249,7 +237,6 @@ export function FilterPanel({
 
       </div>
 
-      <div style={{ padding: 12, borderTop: "1px solid #2a2f3d" }}>{runBtn}</div>
     </aside>
   );
 }

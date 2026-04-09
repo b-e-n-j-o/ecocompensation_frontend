@@ -40,6 +40,7 @@ interface ParcellesMapProps {
   foncierGeojson?: unknown;
   projectId?: string | null;
   onParcelleDoubleClick?: (idu: string) => void;
+  loadingMessage?: string | null;
   /** Préchargement après filtrage — affichage carte instantané au toggle (couches restent masquées). */
   preloadedThematic?: ResultsThematicPreload | null;
   /** Tant que le prefetch global des couches thématiques est en cours (légende). */
@@ -80,6 +81,7 @@ export function ParcellesMap({
   foncierGeojson,
   projectId,
   onParcelleDoubleClick,
+  loadingMessage = null,
   preloadedThematic,
   thematicPreloadLoading = false,
 }: ParcellesMapProps) {
@@ -386,10 +388,18 @@ export function ParcellesMap({
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <div
         ref={mapContainer}
-        className="parcelles-map"
+        className={`parcelles-map${loadingMessage ? " parcelles-map--loading" : ""}`}
         style={{ width: "100%", height: "100%" }}
         title="Double-cliquez sur une parcelle pour afficher sa ligne dans le classement"
       />
+      {loadingMessage && (
+        <div className="parcelles-map-loading-overlay" aria-live="polite">
+          <div className="parcelles-map-loading-card">
+            <span className="parcelles-map-spinner" />
+            <span className="loading-text-breathe">{loadingMessage}</span>
+          </div>
+        </div>
+      )}
       <LegendeMapResultats
         layers={RESULTS_LAYERS}
         layersState={thematicState}

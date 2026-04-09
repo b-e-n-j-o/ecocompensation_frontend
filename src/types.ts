@@ -60,6 +60,10 @@ export type CesbioLibelle = (typeof CESBIO_LIBELLES)[number];
 
 export type VegetationHybrideMode = "OR" | "AND";
 
+/**
+ * Ordre dans `zdv_natures` puis `cesbio_libelles` = priorité (rang 1, 2…) pour scoring / tri résultats.
+ * Persisté tel quel dans `last_filter` (JSON) côté projet.
+ */
 export interface VegetationHybrideValue {
   zdv_natures: ZdvNature[];
   cesbio_libelles: CesbioLibelle[];
@@ -209,8 +213,8 @@ export const DEFAULT_FILTER: FilterOptions = {
   surface_hydro_mode: "none",
   surface_hydro_radius_m: 500,
   faune_criteria: [],
-  miller_threshold: 0,
-  min_area_ha: 0,
+  miller_threshold: 0.4,
+  min_area_ha: 1,
   radius_start_km: 10,
   radius_min_km: 1,
   target_count: 50,
@@ -241,7 +245,44 @@ export interface FilterResponse {
   final_radius_km: number;
   parcelles: ParcelleResult[];
   funnel?: FunnelStep[];
+  /** Run du pool persisté en base (métriques par parcelle). */
+  pool_run_id?: string | null;
 }
+
+/** Ligne renvoyée par GET /pool/{idu}/metrics */
+export interface ParcelPoolMetricRow {
+  metric_key: string;
+  metric_value_jsonb: Record<string, unknown>;
+  updated_at?: string | null;
+}
+
+/**
+ * Charge utile métrique `vegetation_hybride_ratio` (zonage relatif sur la parcelle).
+ * Même forme pour `cosia_zonage_ratio` (COSIA / parcelle).
+ * Pour `carhab_eunis_ratio` : `ratios` = part de la surface parcelle couverte par chaque
+ * classe (recouvrements possibles) ; `total_intersection_area_m2` = surface parcelle (référence).
+ */
+export interface VegetationHybridePoolMetricPayload {
+  ratios: Record<string, number>;
+  total_intersection_area_m2: number;
+}
+
+/** Réponse GET /pool/metrics?run_id= (toutes les parcelles du run). */
+export interface PoolMetricsBulkResponse {
+  run_id: string;
+  by_idu: Record<string, ParcelPoolMetricRow[]>;
+  total_parcelles: number;
+}
+
+/** Tri du tableau de classement (parcelles). */
+export type RankingSortKey =
+  | "rank"
+  | "distance"
+  | "surface"
+  | "miller"
+  | "veg_dominant"
+  /** Ordre décroissant des parts `libelle_prio` selon la chaîne BD TOPO puis CESBIO du dernier filtre. */
+  | "veg_priority";
 
 // ─── Résultats UF (unités foncières / sous-ensembles) ───────────────────────
 

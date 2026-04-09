@@ -6,9 +6,59 @@ export const ALWAYS_FETCH_KEYS = new Set(["parcelles", "geomce"]);
 /** Liées : une seule option pour les deux. */
 export const UF_BUNDLE_KEYS = ["unites_foncieres", "sous_ensembles"] as const;
 
+export const PRIMARY_OPTIONAL_LAYER_KEYS = [
+  "fauna",
+  "bd_topo_et_cesbio",
+  "zone_humide",
+  "ebc",
+  "natura2000",
+  "znieff",
+  "reserves_naturelles",
+] as const;
+
+export const SECONDARY_OPTIONAL_LAYER_KEYS = [
+  "remontee_de_nappes",
+  "troncons_hydro",
+  "routes",
+  "voies_ferrees",
+  "zone_de_vegetation",
+  "cesbio",
+  "carhab",
+  "sites_classes",
+  "arrachage_vignes",
+  "fragmentation",
+  "zones_humides_probables",
+  "surfaces_hydro",
+] as const;
+
+const PRIMARY_SET = new Set<string>(PRIMARY_OPTIONAL_LAYER_KEYS);
+const SECONDARY_SET = new Set<string>(SECONDARY_OPTIONAL_LAYER_KEYS);
+
 export function isOptionalLayerKey(key: string): boolean {
   if (ALWAYS_FETCH_KEYS.has(key)) return false;
   return !(UF_BUNDLE_KEYS as readonly string[]).includes(key);
+}
+
+export function getDefaultOptionalLayerKeys(registryLayers: LayerInfo[]): string[] {
+  const available = new Set(registryLayers.map((l) => l.key));
+  return PRIMARY_OPTIONAL_LAYER_KEYS.filter((k) => available.has(k));
+}
+
+export function splitOptionalLayersByGroup(optionalLayers: LayerInfo[]): {
+  primary: LayerInfo[];
+  secondary: LayerInfo[];
+} {
+  const byKey = new Map(optionalLayers.map((l) => [l.key, l]));
+  const primary: LayerInfo[] = PRIMARY_OPTIONAL_LAYER_KEYS
+    .map((key) => byKey.get(key))
+    .filter((l): l is LayerInfo => Boolean(l));
+  const secondary: LayerInfo[] = SECONDARY_OPTIONAL_LAYER_KEYS
+    .map((key) => byKey.get(key))
+    .filter((l): l is LayerInfo => Boolean(l));
+
+  // Garde-fou: si une couche optionnelle n'est pas listée, elle est affichée en secondaire.
+  const remaining = optionalLayers.filter((l) => !PRIMARY_SET.has(l.key) && !SECONDARY_SET.has(l.key));
+  return { primary, secondary: [...secondary, ...remaining] };
 }
 
 /**
