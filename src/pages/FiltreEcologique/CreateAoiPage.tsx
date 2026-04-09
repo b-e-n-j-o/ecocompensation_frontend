@@ -18,6 +18,9 @@ import { FaunaSpeciesPicker } from "../../components/FilterPanel/FaunaSpeciesPic
 
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
+/** Encart « UF personnes morales » : affiché mais désactivé tant que la fonctionnalité n’est pas prête. */
+const CREATE_AOI_UF_COMING_SOON = true;
+
 type LayerStatus = "pending" | "running" | "done" | "skipped" | "error";
 type ParcelleFeature = Feature<Polygon | MultiPolygon>;
 
@@ -91,6 +94,10 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
   useEffect(() => {
     if (bufferKm > 5) setUfEnabled(false);
   }, [bufferKm]);
+
+  useEffect(() => {
+    if (CREATE_AOI_UF_COMING_SOON) setUfEnabled(false);
+  }, []);
 
   useEffect(() => {
     if (!faunaLayerSelected && faunaSpecies.length > 0) {
@@ -195,7 +202,7 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
     e.preventDefault();
     setError(null);
 
-    const ufActive = ufEnabled && bufferKm <= 5;
+    const ufActive = !CREATE_AOI_UF_COMING_SOON && ufEnabled && bufferKm <= 5;
     const orderedKeys = buildFetchLayerKeys(
       registryLayers,
       new Set(selectedLayerKeys),
@@ -616,6 +623,7 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
                   ufMinAreaHa={ufMinAreaHa}
                   onUfMinAreaHaChange={setUfMinAreaHa}
                   disabled={step === "creating" || step === "fetching"}
+                  ufComingSoon={CREATE_AOI_UF_COMING_SOON}
                 />
               )}
             </div>

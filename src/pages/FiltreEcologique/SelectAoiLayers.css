@@ -106,6 +106,35 @@
   border-color: #475569;
 }
 
+.select-aoi-layers__uf-block--coming-soon {
+  opacity: 0.52;
+  filter: grayscale(0.35);
+  border-color: #3f3f46;
+  background: linear-gradient(135deg, rgba(24, 24, 27, 0.75) 0%, rgba(9, 9, 11, 0.92) 100%);
+}
+
+.select-aoi-layers__uf-block--coming-soon input,
+.select-aoi-layers__uf-block--coming-soon label {
+  cursor: not-allowed;
+}
+
+.select-aoi-layers__uf-coming-soon-badge {
+  margin: 0 0 10px 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #a1a1aa;
+  background: rgba(39, 39, 42, 0.9);
+  border: 1px solid #52525b;
+}
+
+.select-aoi-layers__uf-row--locked {
+  cursor: not-allowed;
+}
+
 .select-aoi-layers__uf-title {
   font-size: 11px;
   font-weight: 600;
