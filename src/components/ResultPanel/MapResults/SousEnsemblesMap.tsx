@@ -35,7 +35,7 @@ function scoreNormColorExpression(): unknown[] {
   ];
 }
 
-const SATELLITE_STYLE: maplibregl.StyleSpecification = {
+const BASE_STYLE: maplibregl.StyleSpecification = {
   version: 8,
   sources: {
     "esri-satellite": {
@@ -44,8 +44,17 @@ const SATELLITE_STYLE: maplibregl.StyleSpecification = {
       tileSize: 256,
       attribution: "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
     },
+    "osm-standard": {
+      type: "raster",
+      tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+      tileSize: 256,
+      attribution: "© OpenStreetMap contributors",
+    },
   },
-  layers: [{ id: "esri-satellite", type: "raster", source: "esri-satellite" }],
+  layers: [
+    { id: "basemap-satellite", type: "raster", source: "esri-satellite", layout: { visibility: "visible" } },
+    { id: "basemap-plan", type: "raster", source: "osm-standard", layout: { visibility: "none" } },
+  ],
 };
 
 function emptyFC(): FeatureCollection { return { type: "FeatureCollection", features: [] }; }
@@ -60,6 +69,7 @@ interface SousEnsemblesMapProps {
   preloadedThematic?: ResultsThematicPreload | null;
   thematicPreloadLoading?: boolean;
 }
+type BaseMapMode = "satellite" | "plan";
 
 // ─── Composant ────────────────────────────────────────────────────────────────
 
@@ -69,6 +79,7 @@ export function SousEnsemblesMap({ geojson, subsetScores, projectId, preloadedTh
   const fetchedRef   = useRef<Set<string>>(new Set());
 
   const [thematicState, setThematicState] = useState<Record<string, ThematicLayerState>>(buildInitialThematic);
+  const [baseMapMode, setBaseMapMode] = useState<BaseMapMode>("satellite");
 
   // Reset au changement de projet
   useEffect(() => {
@@ -135,7 +146,7 @@ export function SousEnsemblesMap({ geojson, subsetScores, projectId, preloadedTh
     if (!mapContainer.current || map.current) return;
     map.current = new maplibregl.Map({
       container: mapContainer.current,
-      style: SATELLITE_STYLE,
+      style: BASE_STYLE,
       center: [0, 47],
       zoom: 8,
     });
@@ -194,10 +205,9 @@ export function SousEnsemblesMap({ geojson, subsetScores, projectId, preloadedTh
           const visible = thematicFillIds.filter((id) => {
             try { return map.current!.getLayoutProperty(id, "visibility") === "visible"; } catch { return false; }
           });
-          if (!visible.length) { map.current.getCanvas().style.cursor = ""; popup.remove(); return; }
+          if (!visible.length) { popup.remove(); return; }
           const features = map.current.queryRenderedFeatures(e.point, { layers: visible });
-          if (!features.length) { map.current.getCanvas().style.cursor = ""; popup.remove(); return; }
-          map.current.getCanvas().style.cursor = "pointer";
+          if (!features.length) { popup.remove(); return; }
           const f = features[0];
           const def = RESULTS_LAYERS.find((d) => thematicLayerIds(d.key).fillId === f.layer?.id);
           if (!def) return;
@@ -210,10 +220,36 @@ export function SousEnsemblesMap({ geojson, subsetScores, projectId, preloadedTh
             .setHTML(`<div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px">${def.label}</div><table style="font-size:12px;border-collapse:collapse">${rows}</table>`)
             .addTo(map.current);
         });
-        map.current.on("mouseleave", () => { map.current?.getCanvas().style.removeProperty("cursor"); popup.remove(); });
+        map.current.on("mouseleave", () => { popup.remove(); });
 
+        const subsetPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, maxWidth: "340px" });
+        map.current.on("mousemove", "uf-subsets-fill", (e) => {
+          if (!map.current) return;
+          const props = (e.features?.[0]?.properties ?? {}) as Record<string, unknown>;
+          const subsetId = props.subset_id ? String(props.subset_id) : "—";
+          const siren = props.siren ? String(props.siren) : "—";
+          const denomination = props.denomination ? String(props.denomination) : "—";
+          const score = typeof props.score === "number" ? props.score : Number(props.score ?? NaN);
+          const scoreNorm = typeof props.score_norm === "number" ? props.score_norm : Number(props.score_norm ?? NaN);
+
+          const rows = [
+            `<tr><th style="color:#64748b;padding-right:8px;font-weight:500;white-space:nowrap">subset_id</th><td class="mono">${subsetId}</td></tr>`,
+            `<tr><th style="color:#64748b;padding-right:8px;font-weight:500;white-space:nowrap">SIREN</th><td class="mono">${siren}</td></tr>`,
+            `<tr><th style="color:#64748b;padding-right:8px;font-weight:500;white-space:nowrap">Dénomination</th><td>${denomination}</td></tr>`,
+            `<tr><th style="color:#64748b;padding-right:8px;font-weight:500;white-space:nowrap">Score</th><td>${Number.isFinite(score) ? score.toFixed(4) : "—"}</td></tr>`,
+            `<tr><th style="color:#64748b;padding-right:8px;font-weight:500;white-space:nowrap">Score norm.</th><td>${Number.isFinite(scoreNorm) ? scoreNorm.toFixed(4) : "—"}</td></tr>`,
+          ].join("");
+
+          subsetPopup
+            .setLngLat(e.lngLat)
+            .setHTML(`<div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px">Sous-ensemble UF</div><table style="font-size:12px;border-collapse:collapse">${rows}</table>`)
+            .addTo(map.current);
+        });
         map.current.on("mouseenter", "uf-subsets-fill", () => map.current?.getCanvas().style.setProperty("cursor", "pointer"));
-        map.current.on("mouseleave", "uf-subsets-fill", () => map.current?.getCanvas().style.removeProperty("cursor"));
+        map.current.on("mouseleave", "uf-subsets-fill", () => {
+          map.current?.getCanvas().style.removeProperty("cursor");
+          subsetPopup.remove();
+        });
       }
 
       // Fit bounds
@@ -233,6 +269,19 @@ export function SousEnsemblesMap({ geojson, subsetScores, projectId, preloadedTh
 
     if (map.current.isStyleLoaded()) apply(); else map.current.once("load", apply);
   }, [coloredGeojson]);
+
+  // ── Fond de carte (satellite/plan) ────────────────────────────────────────
+  useEffect(() => {
+    if (!map.current || !map.current.isStyleLoaded()) return;
+    const satVis = baseMapMode === "satellite" ? "visible" : "none";
+    const planVis = baseMapMode === "plan" ? "visible" : "none";
+    try {
+      map.current.setLayoutProperty("basemap-satellite", "visibility", satVis);
+      map.current.setLayoutProperty("basemap-plan", "visibility", planVis);
+    } catch {
+      /* layers pas encore montées */
+    }
+  }, [baseMapMode]);
 
   // ── Sync couches thématiques ──────────────────────────────────────────────
   useEffect(() => {
@@ -322,6 +371,51 @@ export function SousEnsemblesMap({ geojson, subsetScores, projectId, preloadedTh
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
+      <div
+        style={{
+          position: "absolute",
+          top: 10,
+          left: 10,
+          zIndex: 5,
+          display: "flex",
+          gap: 6,
+          background: "rgba(15, 23, 42, 0.78)",
+          border: "1px solid #334155",
+          borderRadius: 6,
+          padding: 4,
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setBaseMapMode("satellite")}
+          style={{
+            border: "1px solid #475569",
+            background: baseMapMode === "satellite" ? "#1d4ed8" : "#1f2937",
+            color: "#e2e8f0",
+            borderRadius: 4,
+            padding: "4px 8px",
+            fontSize: 11,
+            cursor: "pointer",
+          }}
+        >
+          Satellite
+        </button>
+        <button
+          type="button"
+          onClick={() => setBaseMapMode("plan")}
+          style={{
+            border: "1px solid #475569",
+            background: baseMapMode === "plan" ? "#1d4ed8" : "#1f2937",
+            color: "#e2e8f0",
+            borderRadius: 4,
+            padding: "4px 8px",
+            fontSize: 11,
+            cursor: "pointer",
+          }}
+        >
+          Plan
+        </button>
+      </div>
       <div
         ref={mapContainer}
         className="parcelles-map"

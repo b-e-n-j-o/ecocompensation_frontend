@@ -14,12 +14,8 @@ import { CartoAoi } from "./CartoAoi";
 import { buildFetchLayerKeys, getDefaultOptionalLayerKeys } from "./aoiLayerKeys";
 import { SelectAoiLayers } from "./SelectAoiLayers";
 import "../../components/FilterPanel/filter-panel.css";
-import { FaunaSpeciesPicker } from "../../components/FilterPanel/FaunaSpeciesPicker";
 
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
-
-/** Encart « UF personnes morales » : affiché mais désactivé tant que la fonctionnalité n’est pas prête. */
-const CREATE_AOI_UF_COMING_SOON = true;
 
 type LayerStatus = "pending" | "running" | "done" | "skipped" | "error";
 type ParcelleFeature = Feature<Polygon | MultiPolygon>;
@@ -96,10 +92,6 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
   }, [bufferKm]);
 
   useEffect(() => {
-    if (CREATE_AOI_UF_COMING_SOON) setUfEnabled(false);
-  }, []);
-
-  useEffect(() => {
     if (!faunaLayerSelected && faunaSpecies.length > 0) {
       setFaunaSpecies([]);
     }
@@ -136,6 +128,7 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
+        console.log("WS event:", data.event, data.layer_key, data.message?.slice(0, 80));
         const ev = data.event;
         const layerKey = data.layer_key ?? "";
         const msg = data.message ?? "";
@@ -148,6 +141,25 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
             ...prev,
             [layerKey]: { ...prev[layerKey], status: "running" },
           }));
+          return;
+        }
+        if (ev === "progress" && layerKey === "parcelles") {
+          const raw: string = data.message ?? "";
+          const match = raw.match(/^TILE_PROGRESS:(\d+)\/(\d+):(\d+)/);
+          if (match) {
+            const tile = parseInt(match[1], 10);
+            const totalTiles = parseInt(match[2], 10);
+            const n_inserted = parseInt(match[3], 10);
+            const pct = totalTiles > 0 ? Math.min(100, Math.round((tile / totalTiles) * 100)) : 0;
+            setLayerResults((prev) => ({
+              ...prev,
+              parcelles: {
+                ...prev.parcelles,
+                status: "running",
+                message: `⟳ ${n_inserted.toLocaleString("fr-FR")} parcelles — ${pct}%`,
+              },
+            }));
+          }
           return;
         }
         if (ev === "done" && layerKey) {
@@ -202,7 +214,12 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
     e.preventDefault();
     setError(null);
 
-    const ufActive = !CREATE_AOI_UF_COMING_SOON && ufEnabled && bufferKm <= 5;
+    if (faunaLayerSelected && faunaSpecies.length === 0) {
+      setError("Sélectionnez au moins une espèce si la couche Faune est cochée.");
+      return;
+    }
+
+    const ufActive = ufEnabled && bufferKm <= 5;
     const orderedKeys = buildFetchLayerKeys(
       registryLayers,
       new Set(selectedLayerKeys),
@@ -302,6 +319,7 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
     !isSearchingParcel &&
     !isUploadingGeom &&
     !!sourceFeature &&
+    (!faunaLayerSelected || faunaSpecies.length > 0) &&
     (sourceMode === "parcelle" ? (ufParcelles.length > 0 || (!!codeInsee.trim() && !!section.trim() && !!numero.trim())) : !!uploadedFile) &&
     layersReady;
   const willSkipUfLayers = bufferKm > 5;
@@ -590,7 +608,7 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
                   label="Buffer AOI"
                   value={bufferKm}
                   min={0}
-                  max={10}
+                  max={20}
                   step={0.5}
                   format={(v) => v.toFixed(1)}
                   unit=" km"
@@ -622,17 +640,12 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
                   onUfMaxParcellesChange={setUfMaxParcelles}
                   ufMinAreaHa={ufMinAreaHa}
                   onUfMinAreaHaChange={setUfMinAreaHa}
+                  faunaSpecies={faunaSpecies}
+                  onFaunaSpeciesChange={setFaunaSpecies}
                   disabled={step === "creating" || step === "fetching"}
-                  ufComingSoon={CREATE_AOI_UF_COMING_SOON}
                 />
               )}
             </div>
-
-            {faunaLayerSelected && (
-              <div className="section-block create-aoi-block">
-                <FaunaSpeciesPicker selectedSpecies={faunaSpecies} onChange={setFaunaSpecies} />
-              </div>
-            )}
 
                 <button type="submit" className="btn-run create-aoi-submit-inline" disabled={!canCreateAoi}>
                   Créer AOI (buffer) et lancer les couches
@@ -655,7 +668,7 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
                     const label = labelForKey(registryLayers, key);
                     let cell: string;
                     if (state.status === "pending") cell = "—";
-                    else if (state.status === "running") cell = "…";
+                    else if (state.status === "running") cell = state.message ?? "…";
                     else if (state.status === "done") cell = `${state.n_inserted?.toLocaleString("fr-FR") ?? 0} entité(s)`;
                     else if (state.status === "skipped") cell = "0 (ignorée)";
                     else cell = "Erreur";
@@ -719,7 +732,7 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
           {(step === "creating" || step === "fetching") && (
             <div className="create-aoi-loading">
               <span className="spinner" />
-              {step === "creating" ? "Création du projet…" : "Intersection des couches en cours, le processus peut prendre jusqu'à 10 minutes"}
+              {step === "creating" ? "Création du projet…" : "Intersection des couches en cours, le processus peut prendre jusqu'à 15 minutes"}
             </div>
           )}
           {step === "error" && (

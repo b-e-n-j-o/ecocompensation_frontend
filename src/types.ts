@@ -247,6 +247,24 @@ export interface FilterResponse {
   funnel?: FunnelStep[];
   /** Run du pool persisté en base (métriques par parcelle). */
   pool_run_id?: string | null;
+  /** Présent quand les résultats sont chargés depuis un run historique (GET snapshot). */
+  run_created_at?: string | null;
+}
+
+/** Ligne de liste GET /pool/runs */
+export interface PoolRunListItem {
+  id: string;
+  project_id: string;
+  scope: string;
+  options_json: Record<string, unknown>;
+  total_count: number;
+  created_at: string;
+}
+
+/** GET …/pool/runs/{run_id}/snapshot — reconstitue un filtre + résultats parcelles. */
+export interface PoolRunSnapshot extends FilterResponse {
+  filter_options: FilterOptions;
+  run_created_at: string | null;
 }
 
 /** Ligne renvoyée par GET /pool/{idu}/metrics */
@@ -277,6 +295,8 @@ export interface PoolMetricsBulkResponse {
 /** Tri du tableau de classement (parcelles). */
 export type RankingSortKey =
   | "rank"
+  | "composite_score"
+  | "durete_score"
   | "distance"
   | "surface"
   | "miller"

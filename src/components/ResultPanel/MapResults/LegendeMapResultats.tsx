@@ -6,7 +6,7 @@
  * - Sous-légende dépliable par valeur de discriminantField
  */
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   DISCRIMINANT_PALETTE,
   extractDistinctValues,
@@ -23,6 +23,8 @@ interface LegendeMapResultatsProps {
     label: string;
     visible: boolean;
     onToggle: () => void;
+    /** Sous-texte sous la ligne principale (ex. légende parcelles indésirables). */
+    footnote?: ReactNode;
   };
   /** Préchargement global des couches après filtre — message + spinner dans la légende. */
   bulkLoading?: boolean;
@@ -132,6 +134,19 @@ export function LegendeMapResultats({
                 {primaryLayer.label}
               </span>
             </button>
+            {primaryLayer.footnote ? (
+              <div
+                style={{
+                  padding: "4px 10px 8px",
+                  fontSize: 10,
+                  color: "#64748b",
+                  lineHeight: 1.35,
+                  borderTop: "1px solid #f1f5f9",
+                }}
+              >
+                {primaryLayer.footnote}
+              </div>
+            ) : null}
           </li>
         )}
         {layers.map((def) => {

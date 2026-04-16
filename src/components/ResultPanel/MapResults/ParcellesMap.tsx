@@ -3,16 +3,17 @@
  * ─────────────────
  * Carte MapLibre satellite affichant :
  *   1. Le foncier source (emprise projet, contour rose)
- *   2. Les parcelles résultats du filtre (colorées par score_norm)
+ *   2. Les parcelles résultats du filtre (colorées par score_norm : score parcelle v1 si dispo, sinon rang distance)
  *   3. Les couches thématiques de résultats (lazy, toggle légende)
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { FeatureCollection, Geometry } from "geojson";
 import type * as GeoJSON from "geojson";
 import { fetchResultsLayerGeojson } from "../../../api";
+import type { ParcelPoolMetricRow } from "../../../types";
 import {
   RESULTS_LAYERS,
   buildInitialThematic,
@@ -23,6 +24,7 @@ import {
   type ThematicLayerState,
 } from "./cartoCouchesRegistry";
 import { LegendeMapResultats } from "./LegendeMapResultats";
+import { buildParcelHoverHtml } from "./ParcelHoverData";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -45,21 +47,51 @@ interface ParcellesMapProps {
   preloadedThematic?: ResultsThematicPreload | null;
   /** Tant que le prefetch global des couches thématiques est en cours (légende). */
   thematicPreloadLoading?: boolean;
+  /** Métriques pool préchargées, utilisées pour le détail score au hover. */
+  poolMetricsByIdu?: Record<string, ParcelPoolMetricRow[]> | null;
+  /** Nombre de parcelles indésirables (légende carte). */
+  indesirableCount?: number;
 }
+type BaseMapMode = "satellite" | "plan";
+type ScoreColorMode = "ecologique" | "foncier";
 
 // ─── Helpers MapLibre ─────────────────────────────────────────────────────────
 
 function scoreNormColorExpression(): unknown[] {
   return [
-    "interpolate", ["linear"], ["get", "score_norm"],
-    0,    "#333a4d",
-    0.33, "#555f72",
-    0.66, "#f59e0b",
-    1,    "#3ecf8e",
+    // Seuils ratio score/max :
+    // <20% gris, 20-50% orange, 50-80% vert, >=80% vert foncé.
+    "step", ["coalesce", ["get", "score_ratio"], 0],
+    "#6b7280", // < 0.2
+    0.2, "#f59e0b", // 0.2 - 0.5
+    0.5, "#16a34a", // 0.5 - 0.8
+    0.8, "#166534", // >= 0.8
   ];
 }
 
-const SATELLITE_STYLE: maplibregl.StyleSpecification = {
+function foncierScoreColorExpression(): unknown[] {
+  return [
+    "case",
+    // Si pas de score foncier, fallback sur la palette eco pour garder une carte lisible.
+    ["<", ["coalesce", ["get", "foncier_score"], -1], 0],
+    ["step", ["coalesce", ["get", "score_ratio"], 0], "#6b7280", 0.2, "#f59e0b", 0.5, "#16a34a", 0.8, "#166534"],
+    ["step", ["coalesce", ["get", "foncier_score"], 0], "#065f46", 21, "#166534", 41, "#92400e", 61, "#b45309", 81, "#991b1b"],
+  ];
+}
+
+/** Rouge si parcelle marquée indésirable (propriété `pool_indesirable`), sinon couleur score. */
+function parcelFillColorExpression(mode: ScoreColorMode): maplibregl.ExpressionSpecification {
+  const byScore =
+    (mode === "foncier" ? foncierScoreColorExpression() : scoreNormColorExpression()) as maplibregl.ExpressionSpecification;
+  return [
+    "case",
+    ["==", ["coalesce", ["get", "pool_indesirable"], false], true],
+    "#dc2626",
+    byScore,
+  ] as unknown as maplibregl.ExpressionSpecification;
+}
+
+const BASE_STYLE: maplibregl.StyleSpecification = {
   version: 8,
   sources: {
     "esri-satellite": {
@@ -68,8 +100,19 @@ const SATELLITE_STYLE: maplibregl.StyleSpecification = {
       tileSize: 256,
       attribution: "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics",
     },
+    "osm-standard": {
+      type: "raster",
+      tiles: [
+        "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+      ],
+      tileSize: 256,
+      attribution: "© OpenStreetMap contributors",
+    },
   },
-  layers: [{ id: "esri-satellite", type: "raster", source: "esri-satellite" }],
+  layers: [
+    { id: "basemap-satellite", type: "raster", source: "esri-satellite", layout: { visibility: "visible" } },
+    { id: "basemap-plan", type: "raster", source: "osm-standard", layout: { visibility: "none" } },
+  ],
 };
 
 function emptyFC(): FeatureCollection { return { type: "FeatureCollection", features: [] }; }
@@ -84,6 +127,8 @@ export function ParcellesMap({
   loadingMessage = null,
   preloadedThematic,
   thematicPreloadLoading = false,
+  poolMetricsByIdu = null,
+  indesirableCount = 0,
 }: ParcellesMapProps) {
   const mapContainer       = useRef<HTMLDivElement>(null);
   const map                = useRef<maplibregl.Map | null>(null);
@@ -93,6 +138,40 @@ export function ParcellesMap({
 
   const [thematicState, setThematicState] = useState<Record<string, ThematicLayerState>>(buildInitialThematic);
   const [parcellesVisible, setParcellesVisible] = useState(true);
+  const [baseMapMode, setBaseMapMode] = useState<BaseMapMode>("satellite");
+  const [scoreColorMode, setScoreColorMode] = useState<ScoreColorMode>("ecologique");
+
+  const geojsonWithScoreRatio = useMemo(() => {
+    if (!geojson?.features?.length) return geojson;
+    return {
+      ...geojson,
+      features: geojson.features.map((f) => {
+        const idu = typeof f.properties?.idu === "string" ? f.properties.idu : "";
+        const scoreMetric = (poolMetricsByIdu?.[idu] ?? []).find((m) => m.metric_key === "parcel_score_v1");
+        const raw = (scoreMetric?.metric_value_jsonb ?? {}) as Record<string, unknown>;
+        const totalScore = typeof raw.total_score === "number" ? raw.total_score : Number(raw.total_score ?? NaN);
+        const maxScore = typeof raw.max_score === "number" ? raw.max_score : Number(raw.max_score ?? NaN);
+        const ratio =
+          Number.isFinite(totalScore) && Number.isFinite(maxScore) && maxScore > 0
+            ? totalScore / maxScore
+            : Number(f.properties?.score_norm ?? 0);
+        const dureteMetric = (poolMetricsByIdu?.[idu] ?? []).find((m) => m.metric_key === "durete_fonciere");
+        const rawD = (dureteMetric?.metric_value_jsonb ?? {}) as Record<string, unknown>;
+        const foncierScore =
+          rawD.eligible === true && typeof rawD.score_final === "number" && Number.isFinite(rawD.score_final)
+            ? rawD.score_final
+            : -1;
+        return {
+          ...f,
+          properties: {
+            ...(f.properties ?? {}),
+            score_ratio: Math.max(0, Math.min(1, ratio)),
+            foncier_score: foncierScore,
+          },
+        };
+      }),
+    };
+  }, [geojson, poolMetricsByIdu]);
 
   // Reset au changement de projet
   useEffect(() => {
@@ -141,7 +220,7 @@ export function ParcellesMap({
     if (!mapContainer.current || map.current) return;
     map.current = new maplibregl.Map({
       container: mapContainer.current,
-      style: SATELLITE_STYLE,
+      style: BASE_STYLE,
       center: [0, 47],
       zoom: 8,
     });
@@ -150,7 +229,7 @@ export function ParcellesMap({
 
   // ── Sync parcelles + foncier ──────────────────────────────────────────────
   useEffect(() => {
-    if (!map.current || !geojson?.features?.length) return;
+    if (!map.current || !geojsonWithScoreRatio?.features?.length) return;
 
     const apply = () => {
       if (!map.current) return;
@@ -168,20 +247,20 @@ export function ParcellesMap({
 
       // Parcelles
       if (map.current.getSource("parcelles")) {
-        (map.current.getSource("parcelles") as maplibregl.GeoJSONSource).setData(geojson);
+        (map.current.getSource("parcelles") as maplibregl.GeoJSONSource).setData(geojsonWithScoreRatio);
       } else {
-        map.current.addSource("parcelles", { type: "geojson", data: geojson });
+        map.current.addSource("parcelles", { type: "geojson", data: geojsonWithScoreRatio });
         map.current.addLayer({
           id: "parcelles-fill", type: "fill", source: "parcelles",
           paint: {
-            "fill-color": scoreNormColorExpression() as maplibregl.ExpressionSpecification,
+            "fill-color": parcelFillColorExpression(scoreColorMode),
             "fill-opacity": 0.4,
           },
         });
         map.current.addLayer({
           id: "parcelles-outline", type: "line", source: "parcelles",
           paint: {
-            "line-color": scoreNormColorExpression() as maplibregl.ExpressionSpecification,
+            "line-color": parcelFillColorExpression(scoreColorMode),
             "line-width": 2,
           },
         });
@@ -231,10 +310,9 @@ export function ParcellesMap({
           const visible = thematicInteractiveIds.filter((id) => {
             try { return map.current!.getLayoutProperty(id, "visibility") === "visible"; } catch { return false; }
           });
-          if (!visible.length) { map.current.getCanvas().style.cursor = ""; popup.remove(); return; }
+          if (!visible.length) { popup.remove(); return; }
           const features = map.current.queryRenderedFeatures(e.point, { layers: visible });
-          if (!features.length) { map.current.getCanvas().style.cursor = ""; popup.remove(); return; }
-          map.current.getCanvas().style.cursor = "pointer";
+          if (!features.length) { popup.remove(); return; }
           const f = features[0];
           const def = RESULTS_LAYERS.find((d) => {
             const ids = thematicLayerIds(d.key);
@@ -250,19 +328,40 @@ export function ParcellesMap({
             .setHTML(`<div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px">${def.label}</div><table style="font-size:12px;border-collapse:collapse">${rows}</table>`)
             .addTo(map.current);
         });
-        map.current.on("mouseleave", () => { map.current?.getCanvas().style.removeProperty("cursor"); popup.remove(); });
+        map.current.on("mouseleave", () => { popup.remove(); });
 
         map.current.on("dblclick", "parcelles-fill", (e) => {
           const props = e.features?.[0]?.properties as ParcelleProperties | undefined;
           if (props?.idu && typeof props.idu === "string") onDoubleClickRef.current?.(props.idu);
         });
+        const parcellePopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, maxWidth: "560px" });
+        map.current.on("mousemove", "parcelles-fill", (e) => {
+          if (!map.current) return;
+          const props = e.features?.[0]?.properties as ParcelleProperties | undefined;
+          if (!props) {
+            parcellePopup.remove();
+            return;
+          }
+          const idu = props.idu ? String(props.idu) : "—";
+          const scoreRatio =
+            typeof (props as Record<string, unknown>).score_ratio === "number"
+              ? Number((props as Record<string, unknown>).score_ratio)
+              : Number(props.score_norm ?? 0);
+          parcellePopup
+            .setLngLat(e.lngLat)
+            .setHTML(buildParcelHoverHtml(idu, poolMetricsByIdu?.[idu] ?? null, scoreRatio))
+            .addTo(map.current);
+        });
         map.current.on("mouseenter", "parcelles-fill", () => map.current?.getCanvas().style.setProperty("cursor", "pointer"));
-        map.current.on("mouseleave", "parcelles-fill", () => map.current?.getCanvas().style.removeProperty("cursor"));
+        map.current.on("mouseleave", "parcelles-fill", () => {
+          map.current?.getCanvas().style.removeProperty("cursor");
+          parcellePopup.remove();
+        });
       }
 
       // Fit bounds
       const bounds = new maplibregl.LngLatBounds();
-      geojson.features.forEach((f: GeoJSON.Feature) => {
+      geojsonWithScoreRatio.features.forEach((f: GeoJSON.Feature) => {
         if (f.geometry.type === "Polygon") {
           f.geometry.coordinates[0].forEach((c: number[]) => bounds.extend(c as [number, number]));
         } else if (f.geometry.type === "MultiPolygon") {
@@ -275,7 +374,31 @@ export function ParcellesMap({
     };
 
     if (map.current.isStyleLoaded()) apply(); else map.current.once("load", apply);
-  }, [geojson, foncierGeojson]);
+  }, [geojsonWithScoreRatio, foncierGeojson, poolMetricsByIdu, scoreColorMode]);
+
+  useEffect(() => {
+    if (!map.current || !map.current.isStyleLoaded()) return;
+    const expr = parcelFillColorExpression(scoreColorMode);
+    try {
+      map.current.setPaintProperty("parcelles-fill", "fill-color", expr);
+      map.current.setPaintProperty("parcelles-outline", "line-color", expr);
+    } catch {
+      // layers pas encore montées
+    }
+  }, [scoreColorMode, geojsonWithScoreRatio]);
+
+  // ── Fond de carte (satellite/plan) ────────────────────────────────────────
+  useEffect(() => {
+    if (!map.current || !map.current.isStyleLoaded()) return;
+    const satVis = baseMapMode === "satellite" ? "visible" : "none";
+    const planVis = baseMapMode === "plan" ? "visible" : "none";
+    try {
+      map.current.setLayoutProperty("basemap-satellite", "visibility", satVis);
+      map.current.setLayoutProperty("basemap-plan", "visibility", planVis);
+    } catch {
+      /* layers pas encore montées */
+    }
+  }, [baseMapMode]);
 
   // ── Visibilité parcelles (toggle légende) ────────────────────────────────
   useEffect(() => {
@@ -387,6 +510,90 @@ export function ParcellesMap({
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <div
+        style={{
+          position: "absolute",
+          top: 10,
+          left: 10,
+          zIndex: 5,
+          display: "flex",
+          gap: 6,
+          background: "rgba(15, 23, 42, 0.78)",
+          border: "1px solid #334155",
+          borderRadius: 6,
+          padding: 4,
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setBaseMapMode("satellite")}
+          style={{
+            border: "1px solid #475569",
+            background: baseMapMode === "satellite" ? "#1d4ed8" : "#1f2937",
+            color: "#e2e8f0",
+            borderRadius: 4,
+            padding: "4px 8px",
+            fontSize: 11,
+            cursor: "pointer",
+          }}
+        >
+          Satellite
+        </button>
+        <button
+          type="button"
+          onClick={() => setBaseMapMode("plan")}
+          style={{
+            border: "1px solid #475569",
+            background: baseMapMode === "plan" ? "#1d4ed8" : "#1f2937",
+            color: "#e2e8f0",
+            borderRadius: 4,
+            padding: "4px 8px",
+            fontSize: 11,
+            cursor: "pointer",
+          }}
+        >
+          Plan
+        </button>
+        <div
+          style={{
+            width: 1,
+            background: "#334155",
+            margin: "0 2px",
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => setScoreColorMode("ecologique")}
+          style={{
+            border: "1px solid #475569",
+            background: scoreColorMode === "ecologique" ? "#1d4ed8" : "#1f2937",
+            color: "#e2e8f0",
+            borderRadius: 4,
+            padding: "4px 8px",
+            fontSize: 11,
+            cursor: "pointer",
+          }}
+          title="Coloration des parcelles par score écologique (ratio score/max)"
+        >
+          Score éco
+        </button>
+        <button
+          type="button"
+          onClick={() => setScoreColorMode("foncier")}
+          style={{
+            border: "1px solid #475569",
+            background: scoreColorMode === "foncier" ? "#1d4ed8" : "#1f2937",
+            color: "#e2e8f0",
+            borderRadius: 4,
+            padding: "4px 8px",
+            fontSize: 11,
+            cursor: "pointer",
+          }}
+          title="Coloration des parcelles par score de dureté foncière"
+        >
+          Score foncier
+        </button>
+      </div>
+      <div
         ref={mapContainer}
         className={`parcelles-map${loadingMessage ? " parcelles-map--loading" : ""}`}
         style={{ width: "100%", height: "100%" }}
@@ -405,9 +612,24 @@ export function ParcellesMap({
         layersState={thematicState}
         onToggle={toggleLayer}
         primaryLayer={{
-          label: "Parcelles résultats",
+          label: "Parcelles",
           visible: parcellesVisible,
           onToggle: () => setParcellesVisible((v) => !v),
+          footnote:
+            indesirableCount > 0 ? (
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span
+                  style={{
+                    width: 10,
+                    height: 10,
+                    background: "#dc2626",
+                    borderRadius: 2,
+                    flexShrink: 0,
+                  }}
+                />
+                Indésirable ({indesirableCount}) — exclu du classement
+              </span>
+            ) : undefined,
         }}
         bulkLoading={thematicPreloadLoading}
         onToggleValue={toggleDiscriminantValue}

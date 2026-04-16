@@ -344,8 +344,11 @@
 }
 
 .ranking-table-scroll {
-  max-height: 500px;
-  overflow-y: auto;
+  /* Classement parcelles + indésirables : on laisse le scroll au parent `.results-content`
+     pour enchaîner naturellement les deux tables l'une sous l'autre. */
+  max-height: none;
+  overflow-y: visible;
+  overflow-x: auto;
 }
 
 .ranking-load-more {
@@ -507,6 +510,89 @@
 .col-rank { width: 50px; text-align: center; }
 .col-idu { min-width: 120px; }
 .col-dist, .col-surf, .col-miller, .col-hydro { width: 80px; text-align: right; }
+.col-indesirable {
+  width: 36px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.ranking-btn-indesirable {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  opacity: 0.88;
+  color: #dc2626;
+}
+
+.ranking-btn-indesirable:hover {
+  background: rgba(220, 38, 38, 0.14);
+  opacity: 1;
+}
+
+/* Table « pool indésirables » sous le classement */
+.indesirables-wrap {
+  margin-top: 14px;
+}
+
+.ranking-title--indesirable {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.ranking-table--indesirable thead th {
+  font-size: 11px;
+}
+
+.col-restore {
+  width: 92px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.ranking-btn-restore {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid #fecaca;
+  background: #fff1f2;
+  color: #991b1b;
+  cursor: pointer;
+}
+
+.ranking-btn-restore:hover {
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+
+.ranking-row--indesirable:hover,
+.ranking-row--indesirable.hovered {
+  background: #fef2f2 !important;
+}
+
+.ranking-row--indesirable:hover .idu-main,
+.ranking-row--indesirable:hover .idu-sub,
+.ranking-row--indesirable:hover .unit,
+.ranking-row--indesirable.hovered .idu-main,
+.ranking-row--indesirable.hovered .idu-sub,
+.ranking-row--indesirable.hovered .unit {
+  color: #0f172a !important;
+}
+
+.ranking-row--indesirable:hover .rank-badge,
+.ranking-row--indesirable.hovered .rank-badge {
+  color: #0f172a !important;
+  border-color: #fecaca !important;
+  background: rgba(254, 202, 202, 0.35) !important;
+}
+
+.ranking-row--indesirable.selected {
+  background: #fee2e2 !important;
+}
 
 .ranking-pool-hint {
   font-weight: 500;

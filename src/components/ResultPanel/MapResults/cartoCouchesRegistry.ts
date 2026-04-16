@@ -63,7 +63,7 @@ export interface ResultsLayerDef {
       lineColor: "#c2410c",
       fillOpacity: 0.15,
       lineWidth: 1.5,
-      discriminantField: "niveau_patrimonialite",
+      discriminantField: "nom_vernaculaire",
       popupFields: [
         { field: "nom_vernaculaire", label: "Nom vernaculaire" },
         { field: "nom_taxref", label: "Nom taxref" },

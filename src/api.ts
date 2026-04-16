@@ -3,6 +3,8 @@ import type {
   FilterResponse,
   ParcelPoolMetricRow,
   PoolMetricsBulkResponse,
+  PoolRunListItem,
+  PoolRunSnapshot,
   UfFilterResponse,
 } from "./types";
 import type { FeatureCollection, Geometry, GeoJsonProperties } from "geojson";
@@ -22,6 +24,26 @@ export type ProjectSummary = {
   layers_status: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+};
+
+export type ProjectHistorySummary = ProjectSummary & {
+  history: {
+    buffer_km: number | null;
+    foncier_area_ha: number | null;
+    pool_total_count: number | null;
+    last_filter: {
+      min_area_ha?: number;
+      miller_threshold?: number;
+      radius_start_km?: number;
+      target_count?: number;
+      faune_criteria?: unknown[];
+      vegetation_hybride?: {
+        mode?: string;
+        zdv_natures?: string[];
+        cesbio_libelles?: string[];
+      };
+    } | null;
+  };
 };
 
 export type LayerInfo = {
@@ -46,6 +68,12 @@ export type StudyFromParcelleResponse = {
 
 export async function fetchProjects(): Promise<ProjectSummary[]> {
   const res = await fetch(`${API}/api/projects`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function fetchProjectHistory(): Promise<ProjectHistorySummary[]> {
+  const res = await fetch(`${API}/api/projects/history`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -146,6 +174,14 @@ export type ProjectContextGeometryResponse = {
     properties: {
       project_id: string;
       aoi_id?: string | null;
+    };
+  } | null;
+  foncier: {
+    type: "Feature";
+    geometry: Geometry;
+    properties: {
+      project_id: string;
+      foncier_id?: string | null;
     };
   } | null;
 };
@@ -411,16 +447,60 @@ export async function fetchSousEnsemblesStatus(
   return res.json();
 }
 
+/** Aligné sur `FiltreOptionsDTO` (Pydantic) : évite les 422 si l’UI envoie des valeurs tolérées côté front mais rejetées par l’API. */
+function sanitizeFilterOptionsForApi(options: FilterOptions): FilterOptions {
+  const vh = options.vegetation_hybride;
+  const modeRaw = String(vh.mode ?? "OR").trim().toUpperCase();
+  const mode = modeRaw === "AND" ? "AND" : "OR";
+  const faune = options.faune_criteria.filter(
+    (c) => typeof c.tax_nom_val === "string" && c.tax_nom_val.trim().length > 0,
+  );
+  return {
+    ...options,
+    vegetation_hybride: { ...vh, mode },
+    faune_criteria: faune,
+  };
+}
+
+async function throwHttpError(res: Response): Promise<never> {
+  const text = await res.text();
+  let parsed: { detail?: unknown } | null = null;
+  try {
+    parsed = JSON.parse(text) as { detail?: unknown };
+  } catch {
+    throw new Error(text || `Erreur HTTP ${res.status}`);
+  }
+  if (Array.isArray(parsed.detail)) {
+    const msg = parsed.detail
+      .map((d: unknown) => {
+        if (d && typeof d === "object" && "msg" in d) {
+          const loc =
+            "loc" in d && Array.isArray((d as { loc: unknown }).loc)
+              ? (d as { loc: (string | number)[] }).loc.slice(1).join(".")
+              : "";
+          const m = String((d as { msg: unknown }).msg);
+          return loc ? `${loc}: ${m}` : m;
+        }
+        return JSON.stringify(d);
+      })
+      .join(" ; ");
+    throw new Error(msg || text || `Erreur HTTP ${res.status}`);
+  }
+  if (typeof parsed.detail === "string") throw new Error(parsed.detail);
+  throw new Error(text || `Erreur HTTP ${res.status}`);
+}
+
 export async function runFilter(
   projectId: string,
   options: FilterOptions
 ): Promise<FilterResponse> {
+  const safe = sanitizeFilterOptionsForApi(options);
   const res = await fetch(`${API}/api/projects/${projectId}/filter`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ options }),
+    body: JSON.stringify({ options: safe }),
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) await throwHttpError(res);
   return res.json();
 }
 
@@ -449,6 +529,44 @@ export async function fetchPoolRunMetricsBulk(
   return res.json();
 }
 
+/** Parcelles marquées indésirables pour ce run (persistées). */
+export async function fetchPoolIndesirables(
+  projectId: string,
+  runId: string,
+): Promise<{ run_id: string; idus: string[]; total: number }> {
+  const q = new URLSearchParams({ run_id: runId });
+  const res = await fetch(`${API}/api/projects/${projectId}/pool/indesirables?${q}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function addPoolIndesirables(
+  projectId: string,
+  runId: string,
+  idus: string[],
+): Promise<{ inserted: number }> {
+  const res = await fetch(`${API}/api/projects/${projectId}/pool/indesirables`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ run_id: runId, idus }),
+  });
+  if (!res.ok) await throwHttpError(res);
+  return res.json();
+}
+
+export async function removePoolIndesirable(
+  projectId: string,
+  runId: string,
+  idu: string,
+): Promise<void> {
+  const q = new URLSearchParams({ run_id: runId });
+  const res = await fetch(
+    `${API}/api/projects/${projectId}/pool/indesirables/${encodeURIComponent(idu)}?${q}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) await throwHttpError(res);
+}
+
 /** Lance le calcul des profilers (COSIA, CARHAB, végétation hybride, …) pour le run pool. Appelé après le filtre. */
 export async function computePoolRunMetrics(projectId: string, runId: string): Promise<void> {
   const res = await fetch(
@@ -458,16 +576,26 @@ export async function computePoolRunMetrics(projectId: string, runId: string): P
   if (!res.ok) throw new Error(await res.text());
 }
 
+/** Lance uniquement le recalcul du score parcelle (`parcel_score_v1`) pour le run pool. */
+export async function computePoolRunScoreOnly(projectId: string, runId: string): Promise<void> {
+  const res = await fetch(
+    `${API}/api/projects/${projectId}/pool/runs/${runId}/recompute-score`,
+    { method: "POST" },
+  );
+  if (!res.ok) throw new Error(await res.text());
+}
+
 export async function runFilterUF(
   projectId: string,
   options: FilterOptions
 ): Promise<UfFilterResponse> {
+  const safe = sanitizeFilterOptionsForApi(options);
   const res = await fetch(`${API}/api/projects/${projectId}/filter/uf`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ options }),
+    body: JSON.stringify({ options: safe }),
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) await throwHttpError(res);
   return res.json();
 }
 
@@ -480,11 +608,56 @@ export async function fetchUfSubsetsGeojson(
 }
 
 export async function fetchParcellesGeojson(
-  projectId: string
+  projectId: string,
+  poolRunId?: string | null,
 ): Promise<{ type: "FeatureCollection"; features: unknown[] }> {
-  const res = await fetch(`${API}/api/projects/${projectId}/geojson`);
+  const q = poolRunId ? new URLSearchParams({ run_id: poolRunId }) : "";
+  const url = q
+    ? `${API}/api/projects/${projectId}/geojson?${q}`
+    : `${API}/api/projects/${projectId}/geojson`;
+  const res = await fetch(url);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
+}
+
+/** Liste des runs pool parcelles (ou autres scopes) pour un projet. */
+export async function fetchPoolRunsList(
+  projectId: string,
+  limit = 80,
+): Promise<{ runs: PoolRunListItem[] }> {
+  const q = new URLSearchParams({ limit: String(limit) });
+  const res = await fetch(`${API}/api/projects/${projectId}/pool/runs?${q}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+/** Recharge les résultats parcelles d’un run persisté (tableau + métriques + options filtre). */
+export async function fetchPoolRunSnapshot(
+  projectId: string,
+  runId: string,
+): Promise<PoolRunSnapshot> {
+  const res = await fetch(
+    `${API}/api/projects/${projectId}/pool/runs/${encodeURIComponent(runId)}/snapshot`,
+  );
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+/** Derniers résultats JSON stockés sur le projet (UF, etc.). */
+export async function fetchProjectStoredResults(projectId: string): Promise<{
+  last_results_uf: unknown;
+  last_filter_uf: unknown;
+}> {
+  const res = await fetch(`${API}/api/projects/${projectId}/results`);
+  if (!res.ok) throw new Error(await res.text());
+  const data = (await res.json()) as {
+    last_results_uf?: unknown;
+    last_filter_uf?: unknown;
+  };
+  return {
+    last_results_uf: data.last_results_uf ?? null,
+    last_filter_uf: data.last_filter_uf ?? null,
+  };
 }
 
 export async function fetchFoncierGeojson(
@@ -505,8 +678,10 @@ export type ExportScope = "parcelles" | "uf";
 export async function exportCsv(
   projectId: string,
   scope: ExportScope = "parcelles",
+  poolRunId?: string | null,
 ): Promise<void> {
   const q = new URLSearchParams({ scope });
+  if (poolRunId) q.set("run_id", poolRunId);
   const res = await fetch(`${API}/api/projects/${projectId}/export/csv?${q}`);
   if (!res.ok) {
     const text = await res.text();
@@ -529,8 +704,10 @@ export async function exportCsv(
 export async function exportShp(
   projectId: string,
   scope: ExportScope = "parcelles",
+  poolRunId?: string | null,
 ): Promise<void> {
   const q = new URLSearchParams({ scope });
+  if (poolRunId) q.set("run_id", poolRunId);
   const res = await fetch(`${API}/api/projects/${projectId}/export/shp?${q}`);
   if (!res.ok) {
     const text = await res.text();

@@ -4,6 +4,7 @@ import { Routes, Route, Link, Navigate, useNavigate, useParams } from "react-rou
 import { FilterPanel } from "./components/FilterPanel/FilterPanel";
 import { FunnelDisplay } from "./components/ResultPanel/FunnelDisplay";
 import { RankingTable } from "./components/ResultPanel/RankingTable";
+import { IndesirablesTable } from "./components/ResultPanel/IndesirablesTable";
 import { UnitesFoncieresTable } from "./components/ResultPanel/UnitesFoncieresTable";
 import { ParcellesMap } from "./components/ResultPanel/MapResults/ParcellesMap";
 import { SousEnsemblesMap } from "./components/ResultPanel/MapResults/SousEnsemblesMap";
@@ -11,22 +12,28 @@ import type { ParcellesGeoJSON } from "./components/ResultPanel/MapResults/Parce
 import {
   runFilter,
   runFilterUF,
-  exportShp,
-  exportCsv,
   fetchParcellesGeojson,
   fetchPoolRunMetricsBulk,
   computePoolRunMetrics,
+  computePoolRunScoreOnly,
   fetchProjectContextGeometry,
   fetchFoncierGeojson,
   fetchUfSubsetsGeojson,
   fetchSousEnsemblesStatus,
   prefetchAllResultsThematicLayers,
+  fetchPoolIndesirables,
+  addPoolIndesirables,
+  removePoolIndesirable,
+  fetchPoolRunSnapshot,
+  fetchPoolRunsList,
+  fetchProjectStoredResults,
 } from "./api";
 import type { ResultsThematicPreload } from "./components/ResultPanel/MapResults/cartoCouchesRegistry";
 import type {
   FilterOptions,
   FilterResponse,
   ParcelPoolMetricRow,
+  PoolRunListItem,
   RankingSortKey,
   UfFilterResponse,
 } from "./types";
@@ -61,17 +68,100 @@ type SousEnsemblesStatus = "idle" | "loading" | "yes" | "no";
 
 interface EcoCompensationAppProps {
   fixedProjectId?: string | null;
+  /** Si renseigné : hydrate les résultats depuis ce run pool (URL partageable). */
+  initialRunId?: string | null;
+  /** Appelé quand l’utilisateur change de projet depuis le sélecteur alors qu’on affiche un run (`initialRunId`). */
+  onProjectChangeNavigate?: (newProjectId: string) => void;
   onNavigateToCreate?: () => void;
 }
 
-function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCompensationAppProps) {
+/**
+ * Recalcule `score_norm` (0–1, meilleur = plus vert sur la carte) à partir de `parcel_score_v1`
+ * dès que les métriques pool sont chargées, sans refaire un GET /geojson.
+ */
+function applyParcelScoreV1ToParcellesGeojson(
+  base: ParcellesGeoJSON | null,
+  poolMetricsByIdu: Record<string, ParcelPoolMetricRow[]> | null,
+): ParcellesGeoJSON | null {
+  if (!base?.features?.length || !poolMetricsByIdu) return base;
+
+  const scoreByIdu = new Map<string, number>();
+  for (const f of base.features) {
+    const idu = String(f.properties?.idu ?? "");
+    if (!idu) continue;
+    const rows = poolMetricsByIdu[idu];
+    const row = rows?.find((r) => r.metric_key === "parcel_score_v1");
+    const raw = row?.metric_value_jsonb;
+    const ts =
+      raw && typeof raw === "object" && raw !== null && "total_score" in raw
+        ? (raw as { total_score?: unknown }).total_score
+        : undefined;
+    if (typeof ts === "number" && Number.isFinite(ts)) {
+      scoreByIdu.set(idu, ts);
+    }
+  }
+  if (scoreByIdu.size === 0) return base;
+
+  const vals = [...scoreByIdu.values()];
+  const minT = Math.min(...vals);
+  const maxT = Math.max(...vals);
+  const rng = maxT - minT || 1;
+
+  return {
+    ...base,
+    features: base.features.map((f) => {
+      const idu = String(f.properties?.idu ?? "");
+      const t = scoreByIdu.get(idu);
+      if (t === undefined) return f;
+      const score_norm = Math.round(((t - minT) / rng) * 10000) / 10000;
+      return {
+        ...f,
+        properties: {
+          ...f.properties,
+          total_score: t,
+          score_norm,
+          score_norm_source: "parcel_score_v1",
+        },
+      };
+    }),
+  };
+}
+
+/** Marque les parcelles indésirables sur le GeoJSON (couleur rouge carte + hors classement). */
+function applyPoolIndesirableToParcellesGeojson(
+  base: ParcellesGeoJSON | null,
+  indesirableIdus: readonly string[],
+): ParcellesGeoJSON | null {
+  if (!base?.features?.length) return base;
+  const set = new Set(indesirableIdus);
+  return {
+    ...base,
+    features: base.features.map((f) => {
+      const idu = String(f.properties?.idu ?? "");
+      return {
+        ...f,
+        properties: {
+          ...f.properties,
+          pool_indesirable: set.has(idu),
+        },
+      };
+    }),
+  };
+}
+
+function EcoCompensationApp({
+  fixedProjectId = null,
+  initialRunId = null,
+  onProjectChangeNavigate,
+  onNavigateToCreate,
+}: EcoCompensationAppProps) {
+  const navigate = useNavigate();
   const [projectId, setProjectId] = useState<string | null>(fixedProjectId);
+  const [poolRuns, setPoolRuns] = useState<PoolRunListItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [filterLoadingStage, setFilterLoadingStage] = useState<FilterLoadingStage>("idle");
   const [ufResults, setUfResults] = useState<UfFilterResponse | null>(null);
   const [ufGeojson, setUfGeojson] = useState<FeatureCollection<Geometry, GeoJsonProperties> | null>(null);
-  const [exportingShp, setExportingShp] = useState(false);
-  const [exportingCsv, setExportingCsv] = useState(false);
   const [results, setResults] = useState<FilterResponse | null>(null);
   const [geojson, setGeojson] = useState<ParcellesGeoJSON | null>(null);
   const [foncierGeojson, setFoncierGeojson] = useState<unknown | null>(null);
@@ -99,6 +189,8 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
   /** Options du dernier filtre réussi (pour tri priorité végétation = même ordre que `last_filter` en base). */
   const [lastFilterOptions, setLastFilterOptions] = useState<FilterOptions | null>(null);
   const [rankingSortKey, setRankingSortKey] = useState<RankingSortKey>("rank");
+  /** IDU exclus du classement (pool indésirables), aligné sur `results.pool_run_id`. */
+  const [indesirableIdus, setIndesirableIdus] = useState<string[]>([]);
   const hasParcellesFunnel = (results?.funnel ?? []).some((s) => s.count >= 0);
   const hasUfFunnel = (ufResults?.funnel ?? []).some((s) => s.count >= 0);
 
@@ -130,7 +222,178 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
     };
   }, [projectId]);
 
+  useEffect(() => {
+    if (!projectId) {
+      setPoolRuns([]);
+      return;
+    }
+    let cancelled = false;
+    fetchPoolRunsList(projectId, 100)
+      .then((r) => {
+        if (!cancelled) {
+          setPoolRuns((r.runs ?? []).filter((x) => x.scope === "parcelles"));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setPoolRuns([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!projectId || !initialRunId) return;
+
+    // StrictMode : le 1er effet est démonté avant le 2e ; ne pas court-circuiter avec une ref
+    // posée trop tôt (sinon aucun fetch métriques / geo, loading bloqué à l’infini).
+    let active = true;
+    setLoading(true);
+    setFilterLoadingStage("metrics_loading");
+    thematicPrefetchSeqRef.current += 1;
+    setThematicPreloadLoading(false);
+    setThematicPreload(null);
+
+    void (async () => {
+      try {
+        const snap = await fetchPoolRunSnapshot(projectId, initialRunId);
+        if (!active) return;
+        const { filter_options, run_created_at, ...rest } = snap;
+        setPoolMetricsByIdu(null);
+        setResults({
+          ...(rest as FilterResponse),
+          run_created_at: run_created_at ?? undefined,
+        });
+        setLastFilterOptions(filter_options as FilterOptions);
+
+        if (active) {
+          setLoading(false);
+          setFilterLoadingStage("idle");
+        }
+
+        const rid = snap.pool_run_id;
+        const runIdForGeo = snap.pool_run_id ?? initialRunId;
+
+        const loadMetrics = async () => {
+          if (!rid) {
+            if (active) setPoolMetricsByIdu({});
+            return;
+          }
+          try {
+            const bulk = await fetchPoolRunMetricsBulk(projectId, rid);
+            if (!active) return;
+            const by = bulk.by_idu ?? {};
+            const normalized: Record<string, ParcelPoolMetricRow[]> = {};
+            for (const [idu, rows] of Object.entries(by)) {
+              normalized[idu] = (rows as ParcelPoolMetricRow[]).map((row) => ({
+                metric_key: String(row.metric_key),
+                metric_value_jsonb:
+                  typeof row.metric_value_jsonb === "object" && row.metric_value_jsonb !== null
+                    ? (row.metric_value_jsonb as Record<string, unknown>)
+                    : {},
+                updated_at: row.updated_at ?? null,
+              }));
+            }
+            setPoolMetricsByIdu(normalized);
+          } catch (e) {
+            console.warn("Métriques run historique:", e);
+            if (active) setPoolMetricsByIdu({});
+          }
+        };
+
+        const loadGeo = async () => {
+          try {
+            const geo = await fetchParcellesGeojson(projectId, runIdForGeo);
+            if (active) setGeojson(geo as ParcellesGeoJSON);
+          } catch (err) {
+            console.warn("GeoJSON parcelles (run):", err);
+            if (active) setGeojson(null);
+          }
+        };
+
+        const loadFoncier = async () => {
+          try {
+            const foncier = await fetchFoncierGeojson(projectId);
+            if (active) setFoncierGeojson(foncier);
+          } catch (err) {
+            console.warn("GeoJSON foncier:", err);
+            if (active) setFoncierGeojson(null);
+          }
+        };
+
+        const loadStored = async () => {
+          try {
+            const stored = await fetchProjectStoredResults(projectId);
+            if (!active) return;
+            const ufRaw = stored.last_results_uf;
+            if (ufRaw && typeof ufRaw === "object") {
+              setUfResults(ufRaw as UfFilterResponse);
+              const hasSubsets = (ufRaw as UfFilterResponse).unites_foncieres?.some(
+                (u) => (u.sous_ensembles ?? []).length > 0,
+              );
+              if (hasSubsets) {
+                try {
+                  const ufGeo = await fetchUfSubsetsGeojson(projectId);
+                  if (active) setUfGeojson(ufGeo);
+                } catch {
+                  if (active) setUfGeojson(null);
+                }
+              } else {
+                setUfGeojson(null);
+              }
+            } else {
+              setUfResults(null);
+              setUfGeojson(null);
+            }
+          } catch {
+            if (active) {
+              setUfResults(null);
+              setUfGeojson(null);
+            }
+          }
+        };
+
+        // Indésirables : useEffect sur [projectId, results.pool_run_id] après setResults.
+        // Métriques d’abord (tableau + RankingLine) ; géométries / UF stockées sans bloquer.
+        await loadMetrics();
+
+        const pid = projectId;
+        const prefetchSeq = thematicPrefetchSeqRef.current;
+        if (active) {
+          setThematicPreloadLoading(true);
+          void prefetchAllResultsThematicLayers(pid)
+            .then((data) => {
+              if (projectIdRef.current !== pid) return;
+              setThematicPreload(data);
+            })
+            .finally(() => {
+              if (thematicPrefetchSeqRef.current !== prefetchSeq) return;
+              setThematicPreloadLoading(false);
+            });
+        }
+
+        void Promise.all([loadGeo(), loadFoncier(), loadStored()]);
+      } catch (err) {
+        console.error("Chargement run:", err);
+        alert(err instanceof Error ? err.message : "Impossible de charger ce run.");
+      } finally {
+        if (active) {
+          setFilterLoadingStage("idle");
+          setLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [projectId, initialRunId]);
+
   function handleProjectChange(newProjectId: string | null) {
+    if (initialRunId && onProjectChangeNavigate && newProjectId) {
+      onProjectChangeNavigate(newProjectId);
+      return;
+    }
     setProjectId(newProjectId);
     setResults(null);
     setUfResults(null);
@@ -153,6 +416,7 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
     setPoolMetricsByIdu(null);
     setLastFilterOptions(null);
     setRankingSortKey("rank");
+    setIndesirableIdus([]);
   }
 
   useEffect(() => {
@@ -173,7 +437,45 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
     };
   }, [projectId]);
 
-  async function handleSubmit(opts: FilterOptions) {
+  useEffect(() => {
+    if (!projectId || !results?.pool_run_id) {
+      setIndesirableIdus([]);
+      return;
+    }
+    let cancelled = false;
+    fetchPoolIndesirables(projectId, results.pool_run_id)
+      .then((r) => {
+        if (!cancelled) setIndesirableIdus(r.idus);
+      })
+      .catch(() => {
+        if (!cancelled) setIndesirableIdus([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, results?.pool_run_id]);
+
+  async function handleMarkIndesirable(idu: string) {
+    if (!projectId || !results?.pool_run_id) return;
+    try {
+      await addPoolIndesirables(projectId, results.pool_run_id, [idu]);
+      setIndesirableIdus((prev) => (prev.includes(idu) ? prev : [...prev, idu]));
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Impossible de marquer la parcelle comme indésirable.");
+    }
+  }
+
+  async function handleRestoreIndesirable(idu: string) {
+    if (!projectId || !results?.pool_run_id) return;
+    try {
+      await removePoolIndesirable(projectId, results.pool_run_id, idu);
+      setIndesirableIdus((prev) => prev.filter((x) => x !== idu));
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Impossible de réintégrer la parcelle au classement.");
+    }
+  }
+
+  async function handleSubmit(opts: FilterOptions, scoreOnlyMode = false) {
     if (!projectId) return;
     setLoading(true);
     setFilterLoadingStage("filtering");
@@ -185,6 +487,7 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
     setPoolMetricsByIdu(null);
     setLastFilterOptions(null);
     setRankingSortKey("rank");
+    setIndesirableIdus([]);
     try {
       let runUf = false;
       if (sousEnsemblesStatus === "yes") {
@@ -202,7 +505,8 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
       if (data.pool_run_id) {
         setFilterLoadingStage("profiling");
         try {
-          await computePoolRunMetrics(projectId, data.pool_run_id);
+          if (scoreOnlyMode) await computePoolRunScoreOnly(projectId, data.pool_run_id);
+          else await computePoolRunMetrics(projectId, data.pool_run_id);
         } catch (e) {
           console.warn("Calcul métriques pool):", e);
         }
@@ -289,24 +593,6 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
     return "Filtrage en cours…";
   }, [loading, filterLoadingStage]);
 
-  async function handleExportShp() {
-    if (!projectId) return;
-    if (mainResultsTab === "parcelles" && !results) return;
-    if (mainResultsTab === "unites" && !ufResults) return;
-    setExportingShp(true);
-    try {
-      const scope = mainResultsTab === "unites" ? "uf" : "parcelles";
-      await exportShp(projectId, scope);
-    } catch (err) {
-      console.error("Erreur export SHP:", err);
-      alert(
-        err instanceof Error ? err.message : "Erreur lors de l'export SHP. Voir console.",
-      );
-    } finally {
-      setExportingShp(false);
-    }
-  }
-
   function handleParcelleDoubleClickFromMap(idu: string) {
     setMainResultsTab("parcelles");
     setParcelSubView("classement");
@@ -323,24 +609,6 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
   const isEntonnoirScroll =
     (mainResultsTab === "parcelles" && parcelSubView === "entonnoir") ||
     (mainResultsTab === "unites" && ufSubView === "entonnoir");
-
-  async function handleExportCsv() {
-    if (!projectId) return;
-    if (mainResultsTab === "parcelles" && !results) return;
-    if (mainResultsTab === "unites" && !ufResults) return;
-    setExportingCsv(true);
-    try {
-      const scope = mainResultsTab === "unites" ? "uf" : "parcelles";
-      await exportCsv(projectId, scope);
-    } catch (err) {
-      console.error("Erreur export CSV:", err);
-      alert(
-        err instanceof Error ? err.message : "Erreur lors de l'export CSV. Voir console.",
-      );
-    } finally {
-      setExportingCsv(false);
-    }
-  }
 
   const subsetScores = useMemo(() => {
     if (!ufResults) return null;
@@ -382,12 +650,53 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
 
   const displayedParcelles = useMemo(() => {
     if (!results?.parcelles?.length) return [];
+    const indesirableSet = new Set(indesirableIdus);
+    const getParcelScore = (idu: string): number => {
+      const rows = poolMetricsByIdu?.[idu] ?? [];
+      const scoreRow = rows.find((r) => r.metric_key === "parcel_score_v1");
+      const raw = scoreRow?.metric_value_jsonb?.total_score;
+      return typeof raw === "number" && Number.isFinite(raw) ? raw : Number.NEGATIVE_INFINITY;
+    };
+    const getDureteScore = (idu: string): number => {
+      const rows = poolMetricsByIdu?.[idu] ?? [];
+      const dRow = rows.find((r) => r.metric_key === "durete_fonciere");
+      const raw = dRow?.metric_value_jsonb?.score_final;
+      return typeof raw === "number" && Number.isFinite(raw) ? raw : Number.POSITIVE_INFINITY;
+    };
+    const getCompositeScore = (idu: string): number => {
+      const rows = poolMetricsByIdu?.[idu] ?? [];
+      const cRow = rows.find((r) => r.metric_key === "composite_score_v1");
+      const raw = cRow?.metric_value_jsonb?.score_composite;
+      return typeof raw === "number" && Number.isFinite(raw) ? raw : Number.NEGATIVE_INFINITY;
+    };
     const cap = Math.max(1, distanceCursorKm);
     let list = results.parcelles.filter(
-      (p) => (p.distance_km ?? 0) <= cap && (p.surface_ha ?? 0) >= surfaceMinHa,
+      (p) =>
+        !indesirableSet.has(p.idu) &&
+        (p.distance_km ?? 0) <= cap &&
+        (p.surface_ha ?? 0) >= surfaceMinHa,
     );
     if (rankingSortKey === "rank") {
-      list = [...list].sort((a, b) => a.rank - b.rank);
+      list = [...list].sort((a, b) => {
+        const sa = getParcelScore(a.idu);
+        const sb = getParcelScore(b.idu);
+        if (sa !== sb) return sb - sa; // score élevé en premier
+        return a.rank - b.rank; // fallback stable
+      });
+    } else if (rankingSortKey === "durete_score") {
+      list = [...list].sort((a, b) => {
+        const da = getDureteScore(a.idu);
+        const db = getDureteScore(b.idu);
+        if (da !== db) return da - db; // plus petit score de dureté = meilleur
+        return a.rank - b.rank;
+      });
+    } else if (rankingSortKey === "composite_score") {
+      list = [...list].sort((a, b) => {
+        const ca = getCompositeScore(a.idu);
+        const cb = getCompositeScore(b.idu);
+        if (ca !== cb) return cb - ca; // score composite élevé en premier
+        return a.rank - b.rank;
+      });
     } else if (rankingSortKey === "distance") {
       list = [...list].sort((a, b) => a.distance_km - b.distance_km);
     } else if (rankingSortKey === "surface") {
@@ -418,7 +727,23 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
     rankingSortKey,
     poolMetricsByIdu,
     lastFilterOptions,
+    indesirableIdus,
   ]);
+
+  const indesirableParcelles = useMemo(() => {
+    if (!results?.parcelles?.length || !indesirableIdus.length) return [];
+    const set = new Set(indesirableIdus);
+    return results.parcelles
+      .filter((p) => set.has(p.idu))
+      .sort((a, b) => a.rank - b.rank);
+  }, [results?.parcelles, indesirableIdus]);
+
+  /** Carte : couleurs = score v1 normalisé dès que les métriques sont là ; sinon /geojson (rang distance). */
+  const parcellesMapGeojson = useMemo(() => {
+    const withScore = applyParcelScoreV1ToParcellesGeojson(geojson, poolMetricsByIdu);
+    return applyPoolIndesirableToParcellesGeojson(withScore, indesirableIdus);
+  }, [geojson, poolMetricsByIdu, indesirableIdus]);
+
   const isPoolMetricsPending =
     !!results?.pool_run_id && loading && (filterLoadingStage === "profiling" || filterLoadingStage === "metrics_loading");
 
@@ -432,6 +757,7 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
         isLoading={loading}
         loadingText={loadingStatusText}
         disabled={!projectId}
+        initialOptions={lastFilterOptions}
       />
 
       <main className="results-panel">
@@ -458,6 +784,54 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
           <div className="loading-status-banner loading-text-breathe">{loadingStatusText}</div>
         )}
 
+        {projectId && poolRuns.length > 0 && (
+          <div
+            style={{
+              padding: "8px 16px",
+              borderBottom: "1px solid #e5e7eb",
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              flexWrap: "wrap",
+              background: "#fafafa",
+            }}
+          >
+            <label style={{ fontSize: 12, color: "#334155", display: "flex", alignItems: "center", gap: 6 }}>
+              Run archivé
+              <select
+                className="mono"
+                style={{ fontSize: 12, padding: "4px 8px", borderRadius: 6, border: "1px solid #e2e8f0" }}
+                value={results?.pool_run_id ?? initialRunId ?? ""}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (!v || !projectId) return;
+                  navigate(`/projects/${projectId}/runs/${v}`);
+                }}
+                title="Charger un filtre parcelles déjà exécuté (même tableau / carte / métriques)"
+              >
+                {poolRuns.map((run) => (
+                  <option key={run.id} value={run.id}>
+                    {new Date(run.created_at).toLocaleString("fr-FR", {
+                      dateStyle: "short",
+                      timeStyle: "short",
+                    })}{" "}
+                    ({run.total_count} parc.)
+                  </option>
+                ))}
+              </select>
+            </label>
+            {initialRunId && (
+              <Link
+                to={`/projects/${projectId}/filter`}
+                style={{ fontSize: 12, color: "#2563eb" }}
+                title="Quitter la vue run : page filtre du projet"
+              >
+                Page filtre
+              </Link>
+            )}
+          </div>
+        )}
+
         {results ? (
           <>
             <div className="results-header">
@@ -473,32 +847,12 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
                   `Unités foncières — classement (${ufResults?.total_uf ?? 0})`}
                 {mainResultsTab === "unites" && ufSubView === "carte" &&
                   `Unités foncières — carte (${ufResults?.total_uf ?? 0})`}
+                {results.run_created_at && (
+                  <span style={{ fontSize: 12, fontWeight: 400, color: "#64748b", marginLeft: 8 }}>
+                    · run du {new Date(results.run_created_at).toLocaleString("fr-FR")}
+                  </span>
+                )}
               </h2>
-              <div className="export-buttons">
-                {mainResultsTab === "parcelles" && parcelSubView === "classement" && (
-                  <>
-                    <button className="btn-export btn-export-csv" onClick={handleExportCsv}>
-                      {exportingCsv ? "⏳" : "📊"} CSV parcelles
-                    </button>
-                    <button className="btn-export btn-export-shp" onClick={handleExportShp}>
-                      {exportingShp ? "⏳" : "📥"} SHP parcelles
-                    </button>
-                  </>
-                )}
-                {mainResultsTab === "unites" &&
-                  ufSubView === "classement" &&
-                  sousEnsemblesStatus === "yes" &&
-                  ufResults && (
-                  <>
-                    <button className="btn-export btn-export-csv" onClick={handleExportCsv}>
-                      {exportingCsv ? "⏳" : "📊"} CSV UF
-                    </button>
-                    <button className="btn-export btn-export-shp" onClick={handleExportShp}>
-                      {exportingShp ? "⏳" : "📥"} SHP UF
-                    </button>
-                  </>
-                )}
-              </div>
             </div>
 
             {/* Onglets principaux : Parcelles | Unités foncières */}
@@ -671,6 +1025,8 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
                   <div className={`ranking-table-shell${isPoolMetricsPending ? " ranking-table-shell--loading" : ""}`}>
                     <RankingTable
                       parcelles={displayedParcelles}
+                      projectId={projectId}
+                      exportPoolRunId={results.pool_run_id ?? null}
                       poolRunId={results.pool_run_id ?? null}
                       poolMetricsByIdu={poolMetricsByIdu}
                       poolMetricsLoading={!!results.pool_run_id && poolMetricsByIdu === null}
@@ -679,6 +1035,7 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
                       scrollToIdu={scrollToIdu}
                       selectedIdu={scrollToIdu}
                       onRowDoubleClick={handleTableRowDoubleClick}
+                      onMarkIndesirable={handleMarkIndesirable}
                     />
                     {isPoolMetricsPending && (
                       <div className="ranking-table-loading-overlay" aria-live="polite">
@@ -691,16 +1048,28 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
                       </div>
                     )}
                   </div>
+                  {results.pool_run_id && (
+                    <IndesirablesTable
+                      parcelles={indesirableParcelles}
+                      poolRunId={results.pool_run_id}
+                      poolMetricsByIdu={poolMetricsByIdu}
+                      poolMetricsLoading={!!results.pool_run_id && poolMetricsByIdu === null}
+                      onRestore={handleRestoreIndesirable}
+                      onRowDoubleClick={handleTableRowDoubleClick}
+                    />
+                  )}
                 </>
               )}
 
               {mainResultsTab === "parcelles" && parcelSubView === "carte" && geojson && (
                 <ParcellesMap
-                  geojson={geojson}
+                  geojson={parcellesMapGeojson ?? geojson}
                   foncierGeojson={foncierGeojson}
                   projectId={projectId}
                   preloadedThematic={thematicPreload}
                   thematicPreloadLoading={thematicPreloadLoading}
+                  poolMetricsByIdu={poolMetricsByIdu}
+                  indesirableCount={indesirableIdus.length}
                   loadingMessage={loadingStatusText}
                   onParcelleDoubleClick={handleParcelleDoubleClickFromMap}
                 />
@@ -712,7 +1081,7 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
               )}
 
               {mainResultsTab === "unites" && ufResults && ufSubView === "classement" && (
-                <UnitesFoncieresTable ufResults={ufResults} />
+                <UnitesFoncieresTable ufResults={ufResults} projectId={projectId} />
               )}
               {mainResultsTab === "unites" && !ufResults && sousEnsemblesStatus === "no" && (
                 <div style={{ padding: 12, color: "#000000", fontSize: 13 }}>
@@ -748,6 +1117,7 @@ function EcoCompensationApp({ fixedProjectId = null, onNavigateToCreate }: EcoCo
             <ProjectContextMap
               parcelleFeature={contextGeom?.parcelle_source ?? null}
               aoiFeature={contextGeom?.aoi ?? null}
+              foncierFeature={contextGeom?.foncier ?? null}
             />
           </div>
         ) : (
@@ -778,6 +1148,19 @@ function ProjectFilterRoutePage() {
     <EcoCompensationApp
       fixedProjectId={projectId ?? null}
       onNavigateToCreate={() => navigate("/create-aoi")}
+    />
+  );
+}
+
+function ProjectRunRoutePage() {
+  const { projectId, runId } = useParams<{ projectId: string; runId: string }>();
+  const navigate = useNavigate();
+  return (
+    <EcoCompensationApp
+      fixedProjectId={projectId ?? null}
+      initialRunId={runId ?? null}
+      onNavigateToCreate={() => navigate("/create-aoi")}
+      onProjectChangeNavigate={(id) => navigate(`/projects/${id}/filter`)}
     />
   );
 }
@@ -822,6 +1205,7 @@ export default function App() {
           <Route path="/create-aoi" element={<CreateAoiRoutePage />} />
           <Route path="/etude" element={<StudyHomeRoutePage />} />
           <Route path="/projects/:projectId/filter" element={<ProjectFilterRoutePage />} />
+          <Route path="/projects/:projectId/runs/:runId" element={<ProjectRunRoutePage />} />
           <Route path="/ideco" element={<AnalyseEcologiquePage />} />
           <Route path="/bancarisation" element={<Bancarisation />} />
         </Routes>

@@ -93,6 +93,18 @@
   color: #fca5a5;
 }
 
+.select-aoi-layers__fauna-picker {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #2a2f3d;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.select-aoi-layers__fauna-picker--disabled {
+  opacity: 0.6;
+}
+
 .select-aoi-layers__uf-block {
   margin-top: 14px;
   padding: 12px 12px;

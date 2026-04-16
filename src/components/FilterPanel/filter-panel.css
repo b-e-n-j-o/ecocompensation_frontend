@@ -674,40 +674,75 @@
   color: #9ca3af;
 }
 
-.project-selector__select {
+.project-history-toggle {
   width: 100%;
-  padding: 8px 36px 8px 12px;
+  padding: 7px 10px;
+  font-size: 11px;
+  color: #93c5fd;
+  background: #1a1d24;
+  border: 1px solid #1d4ed8;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.project-history-toggle:hover:not(:disabled) {
+  background: rgba(37, 99, 235, 0.16);
+}
+
+.project-history-toggle:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.project-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.project-history-item {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
   background: #1a1d24;
   border: 1px solid #2a2f3d;
   border-radius: 6px;
-  color: #e5e7eb;
-  font-size: 13px;
-  font-family: 'Inter', sans-serif;
-  appearance: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
+  color: #d1d5db;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   cursor: pointer;
-  background-image:
-    linear-gradient(45deg, #9ca3af 50%, transparent 50%),
-    linear-gradient(135deg, #9ca3af 50%, transparent 50%);
-  background-position: calc(100% - 14px) 14px, calc(100% - 8px) 14px;
-  background-size: 6px 6px, 6px 6px;
-  background-repeat: no-repeat;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 
-.project-selector__select:hover {
+.project-history-item:hover:not(:disabled) {
   border-color: #3b82f6;
+  background: #202632;
 }
 
-.project-selector__select:focus {
-  outline: none;
+.project-history-item--selected {
   border-color: #3b82f6;
-  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.2);
+  background: rgba(59, 130, 246, 0.14);
 }
 
-.project-selector__select:disabled {
+.project-history-item:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.project-history-item__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e5e7eb;
+}
+
+.project-history-item__meta {
+  font-size: 11px;
+  color: #9ca3af;
+  line-height: 1.35;
 }
 
 .project-selector--loading,

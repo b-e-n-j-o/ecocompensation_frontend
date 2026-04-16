@@ -3,7 +3,7 @@
  * Voir `layers/` pour adapter couche par couche sans fichier monolithique.
  */
 import type { CSSProperties } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { DEFAULT_FILTER } from "../../types";
 import type {
   ArrachageVignesMode,
@@ -42,11 +42,13 @@ const shell: CSSProperties = {
 interface FilterPanelProps {
   projectId: string | null;
   onProjectChange: (projectId: string | null) => void;
-  onSubmit: (options: FilterOptions) => void;
+  onSubmit: (options: FilterOptions, scoreOnlyMode: boolean) => void;
   onNavigateToCreate?: () => void;
   isLoading?: boolean;
   loadingText?: string | null;
   disabled?: boolean;
+  /** Hydratation des critères (ex. chargement d’un run historique). */
+  initialOptions?: FilterOptions | null;
 }
 
 export function FilterPanel({
@@ -57,8 +59,16 @@ export function FilterPanel({
   isLoading = false,
   loadingText = null,
   disabled = false,
+  initialOptions = null,
 }: FilterPanelProps) {
   const [opts, setOpts] = useState<FilterOptions>(DEFAULT_FILTER);
+  const [scoreOnlyMode, setScoreOnlyMode] = useState(false);
+
+  useEffect(() => {
+    if (initialOptions) {
+      setOpts({ ...DEFAULT_FILTER, ...initialOptions });
+    }
+  }, [initialOptions]);
 
   function patch(p: Partial<FilterOptions>) {
     setOpts((prev) => ({ ...prev, ...p }));
@@ -67,7 +77,7 @@ export function FilterPanel({
   const runBtn = (
     <button
       type="button"
-      onClick={() => onSubmit(opts)}
+      onClick={() => onSubmit(opts, scoreOnlyMode)}
       disabled={disabled || isLoading}
       style={{
         width: 220,
@@ -233,6 +243,14 @@ export function FilterPanel({
             onChange={(e) => patch({ funnel_mode: e.target.checked })}
           />
           Détail de filtrage (entonnoir)
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#9ca3af", cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={scoreOnlyMode}
+            onChange={(e) => setScoreOnlyMode(e.target.checked)}
+          />
+          Recalculer uniquement le scoring (debug perf)
         </label>
 
       </div>

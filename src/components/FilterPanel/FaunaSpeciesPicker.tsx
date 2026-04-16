@@ -4,9 +4,10 @@ import { fetchFaunaTaxa } from "../../api";
 interface FaunaSpeciesPickerProps {
   selectedSpecies: string[];
   onChange: (v: string[]) => void;
+  disabled?: boolean;
 }
 
-export function FaunaSpeciesPicker({ selectedSpecies, onChange }: FaunaSpeciesPickerProps) {
+export function FaunaSpeciesPicker({ selectedSpecies, onChange, disabled = false }: FaunaSpeciesPickerProps) {
   const [taxa, setTaxa] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,6 +47,7 @@ export function FaunaSpeciesPicker({ selectedSpecies, onChange }: FaunaSpeciesPi
   }, [search, taxa, selectedSpecies]);
 
   function addSpecies(taxon: string) {
+    if (disabled) return;
     if (!taxon) return;
     if (selectedSpecies.includes(taxon)) return;
     onChange([...selectedSpecies, taxon]);
@@ -54,6 +56,7 @@ export function FaunaSpeciesPicker({ selectedSpecies, onChange }: FaunaSpeciesPi
   }
 
   function removeSpecies(taxon: string) {
+    if (disabled) return;
     onChange(selectedSpecies.filter((s) => s !== taxon));
   }
 
@@ -77,10 +80,10 @@ export function FaunaSpeciesPicker({ selectedSpecies, onChange }: FaunaSpeciesPi
               // Petit délai pour laisser le clic sur une suggestion.
               window.setTimeout(() => setShowSuggestions(false), 150);
             }}
-            disabled={loading}
+            disabled={loading || disabled}
           />
 
-          {showSuggestions && suggestions.length > 0 && (
+          {!disabled && showSuggestions && suggestions.length > 0 && (
             <div
               style={{
                 position: "absolute",
@@ -143,6 +146,7 @@ export function FaunaSpeciesPicker({ selectedSpecies, onChange }: FaunaSpeciesPi
               <button
                 type="button"
                 onClick={() => removeSpecies(s)}
+                disabled={disabled}
                 style={{
                   width: 20,
                   height: 20,
@@ -150,9 +154,10 @@ export function FaunaSpeciesPicker({ selectedSpecies, onChange }: FaunaSpeciesPi
                   background: "transparent",
                   border: "1px solid rgba(59, 130, 246, 0.6)",
                   color: "#bfdbfe",
-                  cursor: "pointer",
+                  cursor: disabled ? "not-allowed" : "pointer",
                   lineHeight: "18px",
                   padding: 0,
+                  opacity: disabled ? 0.45 : 1,
                 }}
                 title="Retirer"
               >

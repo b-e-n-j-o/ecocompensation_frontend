@@ -1,5 +1,6 @@
 import type { LayerInfo } from "../../api";
-import { isOptionalLayerKey, splitOptionalLayersByGroup } from "./aoiLayerKeys";
+import { FaunaSpeciesPicker } from "../../components/FilterPanel/FaunaSpeciesPicker";
+import { FAUNA_LAYER_KEY, isOptionalLayerKey, splitOptionalLayersByGroup } from "./aoiLayerKeys";
 import "./SelectAoiLayers.css";
 
 export interface SelectAoiLayersProps {
@@ -16,9 +17,9 @@ export interface SelectAoiLayersProps {
   /** Surface minimale UF (ha) pour garder une unité foncière au pré-filtre. */
   ufMinAreaHa: number;
   onUfMinAreaHaChange: (value: number) => void;
+  faunaSpecies: string[];
+  onFaunaSpeciesChange: (species: string[]) => void;
   disabled?: boolean;
-  /** Si true : encart UF personnes morales visible mais non utilisable (ex. création AOI). */
-  ufComingSoon?: boolean;
 }
 
 /**
@@ -36,18 +37,21 @@ export function SelectAoiLayers({
   onUfMaxParcellesChange,
   ufMinAreaHa,
   onUfMinAreaHaChange,
+  faunaSpecies,
+  onFaunaSpeciesChange,
   disabled = false,
-  ufComingSoon = false,
 }: SelectAoiLayersProps) {
   const optionalLayers = layers.filter((l) => isOptionalLayerKey(l.key));
-  const grouped = splitOptionalLayersByGroup(optionalLayers);
+  const faunaLayer = optionalLayers.find((l) => l.key === FAUNA_LAYER_KEY);
+  const grouped = splitOptionalLayersByGroup(optionalLayers.filter((l) => l.key !== FAUNA_LAYER_KEY));
   const selectedSet = new Set(selectedKeys);
   const allKeys = optionalLayers.map((l) => l.key);
+  const faunaSelected = selectedSet.has(FAUNA_LAYER_KEY);
   const allSelected = allKeys.length > 0 && allKeys.every((k) => selectedSet.has(k));
   const noneSelected = selectedKeys.length === 0;
 
   const ufBlockedByBuffer = bufferKm > 5;
-  const ufLocked = ufComingSoon || disabled;
+  const ufLocked = disabled;
 
   function toggleKey(key: string) {
     if (disabled) return;
@@ -83,6 +87,35 @@ export function SelectAoiLayers({
           Tout désélectionner
         </button>
       </div>
+
+      {faunaLayer && (
+        <div className="select-aoi-layers__group">
+          <div className="select-aoi-layers__group-title">Faune</div>
+          <div className="select-aoi-layers__list" role="list">
+            <label className="select-aoi-layers__row">
+              <input
+                type="checkbox"
+                checked={faunaSelected}
+                disabled={disabled}
+                onChange={() => toggleKey(FAUNA_LAYER_KEY)}
+              />
+              <span className="select-aoi-layers__row-label">{faunaLayer.label}</span>
+            </label>
+          </div>
+          <div className={`select-aoi-layers__fauna-picker ${!faunaSelected || disabled ? "select-aoi-layers__fauna-picker--disabled" : ""}`}>
+            <FaunaSpeciesPicker
+              selectedSpecies={faunaSpecies}
+              onChange={onFaunaSpeciesChange}
+              disabled={!faunaSelected || disabled}
+            />
+          </div>
+          {faunaSelected && faunaSpecies.length === 0 && (
+            <p style={{ color: "#b00020", marginTop: 8, marginBottom: 0 }}>
+              Sélectionnez au moins une espèce pour lancer la couche Faune.
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="select-aoi-layers__group">
         <div className="select-aoi-layers__group-title">Couches primaires (cochées par défaut)</div>
@@ -125,18 +158,14 @@ export function SelectAoiLayers({
       </div>
 
       <div
-        className={`select-aoi-layers__uf-block ${ufBlockedByBuffer ? "select-aoi-layers__uf-block--blocked" : ""} ${ufComingSoon ? "select-aoi-layers__uf-block--coming-soon" : ""}`}
-        aria-disabled={ufComingSoon ? true : undefined}
+        className={`select-aoi-layers__uf-block ${ufBlockedByBuffer ? "select-aoi-layers__uf-block--blocked" : ""}`}
       >
         <div className="select-aoi-layers__uf-title">Unités foncières (personnes morales)</div>
-        {ufComingSoon && (
-          <p className="select-aoi-layers__uf-coming-soon-badge">Fonctionnalité à venir</p>
-        )}
-        <label className={`select-aoi-layers__uf-row ${ufComingSoon ? "select-aoi-layers__uf-row--locked" : ""}`}>
+        <label className="select-aoi-layers__uf-row">
           <input
             type="checkbox"
-            checked={ufEnabled && !ufBlockedByBuffer && !ufComingSoon}
-            disabled={disabled || ufBlockedByBuffer || ufComingSoon}
+            checked={ufEnabled && !ufBlockedByBuffer}
+            disabled={disabled || ufBlockedByBuffer}
             onChange={(e) => onUfEnabledChange(e.target.checked)}
           />
           <span className="select-aoi-layers__row-label">
@@ -179,7 +208,7 @@ export function SelectAoiLayers({
           possibles de sous-ensembles de parcelles (contiguës). Des valeurs plus élevées augmentent fortement
           le coût de calcul.
         </p>
-        {ufBlockedByBuffer && !ufComingSoon && (
+        {ufBlockedByBuffer && (
           <p className="select-aoi-layers__uf-buffer-warn">
             Buffer AOI &gt; 5 km : les unités foncières et sous-ensembles ne sont pas calculés (serveur).
           </p>

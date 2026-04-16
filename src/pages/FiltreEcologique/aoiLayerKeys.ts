@@ -5,9 +5,9 @@ export const ALWAYS_FETCH_KEYS = new Set(["parcelles", "geomce"]);
 
 /** Liées : une seule option pour les deux. */
 export const UF_BUNDLE_KEYS = ["unites_foncieres", "sous_ensembles"] as const;
+export const FAUNA_LAYER_KEY = "fauna" as const;
 
 export const PRIMARY_OPTIONAL_LAYER_KEYS = [
-  "fauna",
   "bd_topo_et_cesbio",
   "zone_humide",
   "ebc",
@@ -41,7 +41,10 @@ export function isOptionalLayerKey(key: string): boolean {
 
 export function getDefaultOptionalLayerKeys(registryLayers: LayerInfo[]): string[] {
   const available = new Set(registryLayers.map((l) => l.key));
-  return PRIMARY_OPTIONAL_LAYER_KEYS.filter((k) => available.has(k));
+  const defaults: string[] = [];
+  if (available.has(FAUNA_LAYER_KEY)) defaults.push(FAUNA_LAYER_KEY);
+  defaults.push(...PRIMARY_OPTIONAL_LAYER_KEYS.filter((k) => available.has(k)));
+  return defaults;
 }
 
 export function splitOptionalLayersByGroup(optionalLayers: LayerInfo[]): {

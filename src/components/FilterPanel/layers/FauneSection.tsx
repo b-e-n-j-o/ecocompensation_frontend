@@ -39,14 +39,12 @@ export function FauneSection({ projectId, value, onChange }: FauneSectionProps) 
   const [taxa, setTaxa] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedTaxon, setSelectedTaxon] = useState("");
 
   useEffect(() => {
     if (!projectId) {
       setTaxa([]);
       setLoading(false);
       setError(null);
-      setSelectedTaxon("");
       return;
     }
     let cancelled = false;
@@ -75,18 +73,17 @@ export function FauneSection({ projectId, value, onChange }: FauneSectionProps) 
     [taxa, value],
   );
 
-  function addCriterion() {
-    if (!selectedTaxon) return;
+  function addCriterion(taxon: string) {
+    if (!taxon) return;
     onChange([
       ...value,
       {
-        tax_nom_val: selectedTaxon,
+        tax_nom_val: taxon,
         mode: "intersect",
         radius_m: 500,
         sources: ["pct", "lin", "surf"],
       },
     ]);
-    setSelectedTaxon("");
   }
 
   function removeCriterion(taxon: string) {
@@ -118,7 +115,7 @@ export function FauneSection({ projectId, value, onChange }: FauneSectionProps) 
       <div style={{ display: "flex", gap: 8 }}>
         <select
           style={{
-            flex: 1,
+            width: "100%",
             padding: "7px 10px",
             background: filterTheme.bgInput,
             border: `1px solid ${filterTheme.border}`,
@@ -126,8 +123,8 @@ export function FauneSection({ projectId, value, onChange }: FauneSectionProps) 
             color: filterTheme.text,
             fontSize: 12,
           }}
-          value={selectedTaxon}
-          onChange={(e) => setSelectedTaxon(e.target.value)}
+          value=""
+          onChange={(e) => addCriterion(e.target.value)}
           disabled={!projectId || loading || availableTaxa.length === 0}
         >
           <option value="">
@@ -139,23 +136,6 @@ export function FauneSection({ projectId, value, onChange }: FauneSectionProps) 
             </option>
           ))}
         </select>
-        <button
-          type="button"
-          onClick={addCriterion}
-          disabled={!projectId || !selectedTaxon}
-          style={{
-            padding: "7px 10px",
-            background: "#262b36",
-            border: `1px solid ${filterTheme.accentBlue}`,
-            borderRadius: 4,
-            color: "#93c5fd",
-            fontSize: 11,
-            cursor: !projectId || !selectedTaxon ? "not-allowed" : "pointer",
-            opacity: !projectId || !selectedTaxon ? 0.5 : 1,
-          }}
-        >
-          Ajouter
-        </button>
       </div>
 
       {error && (
@@ -246,7 +226,7 @@ export function FauneSection({ projectId, value, onChange }: FauneSectionProps) 
                 label="Rayon"
                 value={c.radius_m}
                 min={0}
-                max={2000}
+                max={5000}
                 step={50}
                 onChange={(v) => patchCriterion(c.tax_nom_val, { radius_m: v })}
                 unit=" m"

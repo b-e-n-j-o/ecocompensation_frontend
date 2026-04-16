@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
+import { exportCsv, exportShp } from "../../api";
 import type { UfFilterResponse } from "../../types";
 
 const UF_PAGE_SIZE = 50;
 
 interface UnitesFoncieresTableProps {
   ufResults: UfFilterResponse;
+  projectId: string | null;
 }
 
-export function UnitesFoncieresTable({ ufResults }: UnitesFoncieresTableProps) {
+export function UnitesFoncieresTable({ ufResults, projectId }: UnitesFoncieresTableProps) {
   const [expandedUfId, setExpandedUfId] = useState<string | null>(null);
   const [visibleUfCount, setVisibleUfCount] = useState(UF_PAGE_SIZE);
+  const [exportChoice, setExportChoice] = useState<"" | "csv" | "shp">("");
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     setVisibleUfCount(UF_PAGE_SIZE);
@@ -30,9 +34,42 @@ export function UnitesFoncieresTable({ ufResults }: UnitesFoncieresTableProps) {
     <div className="ranking-wrap">
       <div className="ranking-header">
         <span className="ranking-title">Unités foncières</span>
-        <span className="ranking-count mono">
-          {Math.min(visibleUfCount, ufs.length)} / {ufCount} UF · {totalSousEnsembles} sous-ensembles
-        </span>
+        <div className="ranking-header-actions">
+          <label className="ranking-sort-label">
+            Exporter
+            <select
+              value={exportChoice}
+              disabled={!projectId || exporting}
+              onChange={async (e) => {
+                const v = e.target.value as "" | "csv" | "shp";
+                if (!v || !projectId) return;
+                setExportChoice(v);
+                setExporting(true);
+                try {
+                  if (v === "csv") await exportCsv(projectId, "uf");
+                  else await exportShp(projectId, "uf");
+                } catch (err) {
+                  console.error("Export classement UF:", err);
+                  alert(
+                    err instanceof Error
+                      ? err.message
+                      : "Erreur lors de l'export. Voir la console.",
+                  );
+                } finally {
+                  setExporting(false);
+                  setExportChoice("");
+                }
+              }}
+            >
+              <option value="">—</option>
+              <option value="csv">CSV</option>
+              <option value="shp">Shapefile (ZIP)</option>
+            </select>
+          </label>
+          <span className="ranking-count mono">
+            {Math.min(visibleUfCount, ufs.length)} / {ufCount} UF · {totalSousEnsembles} sous-ensembles
+          </span>
+        </div>
       </div>
 
       <div className="ranking-table-scroll uf-foncieres-scroll" style={{ padding: 12 }}>
@@ -67,7 +104,7 @@ export function UnitesFoncieresTable({ ufResults }: UnitesFoncieresTableProps) {
                       UF #{uf.rang} · {uf.uf_id}
                     </div>
                     <div className="uf-foncier-meta">
-                      {uf.nb_parcelles} parcelles · dist centre {uf.distance_centre_km.toFixed(3)} km
+                      {uf.nb_parcelles} parcelles dans l'UF · {uf.sous_ensembles.length} combinaisons de sous-ensembles · dist centre {uf.distance_centre_km.toFixed(3)} km
                     </div>
                     {(uf.siren || uf.denomination) && (
                       <div className="uf-foncier-pm" title={[uf.denomination, uf.siren].filter(Boolean).join(" · ")}>
@@ -91,10 +128,10 @@ export function UnitesFoncieresTable({ ufResults }: UnitesFoncieresTableProps) {
                           <th className="col-idu">subset_id</th>
                           <th className="col-uf-siren">SIREN</th>
                           <th className="col-uf-denom">Dénomination</th>
+                          <th className="col-uf-nb-parcelles">Parcelles</th>
                           <th className="col-dist">Dist.</th>
                           <th className="col-surf">Surface</th>
                           <th className="col-miller">Miller</th>
-                          <th className="col-hydro">Hydro</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -114,6 +151,9 @@ export function UnitesFoncieresTable({ ufResults }: UnitesFoncieresTableProps) {
                             <td className="col-uf-denom" title={ss.denomination ?? undefined}>
                               {ss.denomination ?? "—"}
                             </td>
+                            <td className="col-uf-nb-parcelles mono">
+                              {ss.idus?.length ?? ss.k}<span className="unit"> parc.</span>
+                            </td>
                             <td className="col-dist mono">
                               {ss.distance_centre_km.toFixed(3)}<span className="unit"> km</span>
                             </td>
@@ -121,13 +161,6 @@ export function UnitesFoncieresTable({ ufResults }: UnitesFoncieresTableProps) {
                               {ss.surface_ha.toFixed(1)}<span className="unit"> ha</span>
                             </td>
                             <td className="col-miller mono">{ss.miller.toFixed(3)}</td>
-                            <td className="col-hydro mono">
-                              {ss.dist_hydro_m !== null
-                                ? ss.dist_hydro_m < 1
-                                  ? <span style={{ color: "var(--accent-green)" }}>0 m</span>
-                                  : `${Math.round(ss.dist_hydro_m)} m`
-                                : <span className="na">—</span>}
-                            </td>
                           </tr>
                         ))}
                       </tbody>

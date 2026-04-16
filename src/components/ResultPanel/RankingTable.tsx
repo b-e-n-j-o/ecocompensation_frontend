@@ -1,12 +1,13 @@
 // ─── RankingTable ─────────────────────────────────────────────────────────────
 import { Fragment, useEffect, useMemo, useState } from "react";
+import { exportCsv, exportShp } from "../../api";
 import type { ParcelleResult, ParcelPoolMetricRow, RankingSortKey } from "../../types";
 import { RankingLine } from "./RankingLine";
 
 const PAGE_SIZE = 50;
 
-/** Nombre de colonnes du tableau principal (ligne de détail en dessous). */
-const RANKING_COL_COUNT = 8;
+/** Nombre de colonnes fixes du tableau principal (hors colonne indésirable optionnelle). */
+const RANKING_BASE_COL_COUNT = 11;
 
 interface RankingTableProps {
   parcelles: ParcelleResult[];
@@ -23,6 +24,12 @@ interface RankingTableProps {
   selectedIdu?: string | null;
   /** IDU à laquelle scroller (ex. après double-clic sur la carte) */
   scrollToIdu?: string | null;
+  /** Marquer la parcelle comme indésirable (pool persisté, sans refiltrer). */
+  onMarkIndesirable?: (idu: string) => void;
+  /** Projet courant (export CSV / SHP classement parcelles). */
+  projectId?: string | null;
+  /** Run pool pour l’export (historique) — défaut côté API : dernier last_results. */
+  exportPoolRunId?: string | null;
 }
 
 type ParsedIdu = {
@@ -44,6 +51,59 @@ function parseIdu(idu: string, codeInseeFallback?: string): ParsedIdu {
   };
 }
 
+function getDureteScore(metrics: ParcelPoolMetricRow[] | undefined): number | null {
+  const row = (metrics ?? []).find((m) => m.metric_key === "durete_fonciere");
+  const raw = row?.metric_value_jsonb?.score_final;
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+}
+
+function getEcologicalScore(metrics: ParcelPoolMetricRow[] | undefined): { score: number; max: number } | null {
+  const row = (metrics ?? []).find((m) => m.metric_key === "parcel_score_v1");
+  const rawScore = row?.metric_value_jsonb?.total_score;
+  const rawMax = row?.metric_value_jsonb?.max_score;
+  if (typeof rawScore !== "number" || !Number.isFinite(rawScore)) return null;
+  const max = typeof rawMax === "number" && Number.isFinite(rawMax) && rawMax > 0 ? rawMax : 9;
+  return { score: rawScore, max };
+}
+
+function getCompositeScore(
+  metrics: ParcelPoolMetricRow[] | undefined,
+): { score: number; redhibitoire: boolean } | null {
+  const row = (metrics ?? []).find((m) => m.metric_key === "composite_score_v1");
+  const rawScore = row?.metric_value_jsonb?.score_composite;
+  const rawRedhib = row?.metric_value_jsonb?.foncier_redhibitoire;
+  if (typeof rawScore !== "number" || !Number.isFinite(rawScore)) return null;
+  return { score: rawScore, redhibitoire: rawRedhib === true };
+}
+
+function ecologicalBadgeStyle(scorePayload: { score: number; max: number } | null): { bg: string; fg: string } {
+  if (scorePayload == null) return { bg: "#e5e7eb", fg: "#374151" };
+  const ratio = scorePayload.max > 0 ? scorePayload.score / scorePayload.max : 0;
+  if (ratio >= 0.8) return { bg: "#dcfce7", fg: "#166534" };
+  if (ratio >= 0.5) return { bg: "#bbf7d0", fg: "#166534" };
+  if (ratio >= 0.2) return { bg: "#fef3c7", fg: "#92400e" };
+  return { bg: "#e5e7eb", fg: "#374151" };
+}
+
+function dureteBadgeStyle(score: number | null): { bg: string; fg: string } {
+  if (score == null) return { bg: "#e5e7eb", fg: "#374151" };
+  if (score >= 81) return { bg: "#fee2e2", fg: "#991b1b" };
+  if (score >= 61) return { bg: "#ffedd5", fg: "#9a3412" };
+  if (score >= 41) return { bg: "#fef3c7", fg: "#92400e" };
+  if (score >= 21) return { bg: "#dcfce7", fg: "#166534" };
+  return { bg: "#d1fae5", fg: "#065f46" };
+}
+
+function compositeBadgeStyle(scorePayload: { score: number; redhibitoire: boolean } | null): { bg: string; fg: string } {
+  if (scorePayload == null) return { bg: "#e5e7eb", fg: "#374151" };
+  if (scorePayload.redhibitoire) return { bg: "#fee2e2", fg: "#991b1b" };
+  const s = scorePayload.score;
+  if (s >= 75) return { bg: "#dcfce7", fg: "#166534" };
+  if (s >= 55) return { bg: "#bbf7d0", fg: "#166534" };
+  if (s >= 35) return { bg: "#fef3c7", fg: "#92400e" };
+  return { bg: "#e5e7eb", fg: "#374151" };
+}
+
 export function RankingTable({
   parcelles,
   poolRunId,
@@ -56,11 +116,16 @@ export function RankingTable({
   onRowDoubleClick,
   selectedIdu,
   scrollToIdu,
+  onMarkIndesirable,
+  projectId,
+  exportPoolRunId,
 }: RankingTableProps) {
   const [hoveredIdu, setHoveredIdu] = useState<string | null>(null);
   /** Plusieurs lignes peuvent rester dépliées pour comparer les métriques. */
   const [expandedIdus, setExpandedIdus] = useState<Set<string>>(() => new Set());
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [exportChoice, setExportChoice] = useState<"" | "csv" | "shp">("");
+  const [exporting, setExporting] = useState(false);
 
   /** Identifiant stable du jeu de parcelles affiché (ordre ignoré) — pour ne pas fermer les déploiements au seul changement de tri. */
   const parcellesIdentity = useMemo(
@@ -109,6 +174,7 @@ export function RankingTable({
 
   const visibleParcelles = parcelles.slice(0, visibleCount);
   const hasMore = parcelles.length > visibleCount;
+  const rankingColCount = RANKING_BASE_COL_COUNT + (onMarkIndesirable && poolRunId ? 1 : 0);
 
   return (
     <div className="ranking-wrap">
@@ -123,6 +189,8 @@ export function RankingTable({
               onClick={(ev) => ev.stopPropagation()}
             >
               <option value="rank">Rang (score)</option>
+              <option value="composite_score">Score composite (décroissant)</option>
+              <option value="durete_score">Dureté foncière (croissant)</option>
               <option value="distance">Distance</option>
               <option value="surface">Surface</option>
               <option value="miller">Miller</option>
@@ -133,6 +201,38 @@ export function RankingTable({
               >
                 Priorité filtre végétation (BD TOPO → CESBIO)
               </option>
+            </select>
+          </label>
+          <label className="ranking-sort-label">
+            Exporter
+            <select
+              value={exportChoice}
+              disabled={!projectId || exporting}
+              onChange={async (e) => {
+                const v = e.target.value as "" | "csv" | "shp";
+                if (!v || !projectId) return;
+                setExportChoice(v);
+                setExporting(true);
+                try {
+                  if (v === "csv") await exportCsv(projectId, "parcelles", exportPoolRunId ?? null);
+                  else await exportShp(projectId, "parcelles", exportPoolRunId ?? null);
+                } catch (err) {
+                  console.error("Export classement:", err);
+                  alert(
+                    err instanceof Error
+                      ? err.message
+                      : "Erreur lors de l'export. Voir la console.",
+                  );
+                } finally {
+                  setExporting(false);
+                  setExportChoice("");
+                }
+              }}
+              onClick={(ev) => ev.stopPropagation()}
+            >
+              <option value="">—</option>
+              <option value="csv">CSV</option>
+              <option value="shp">Shapefile (ZIP)</option>
             </select>
           </label>
           {poolMetricsLoading && (
@@ -162,15 +262,29 @@ export function RankingTable({
               <th className="col-numero">Numéro</th>
               <th className="col-idu">IDU</th>
               <th className="col-dist">Dist.</th>
+              <th className="col-eco">Score éco</th>
+              <th className="col-composite">Composite</th>
+              <th className="col-durete">Dureté</th>
               <th className="col-surf">Surface</th>
               <th className="col-miller">Miller</th>
+              {onMarkIndesirable && poolRunId && (
+                <th className="col-indesirable" title="Exclure du classement (pool indésirables)" aria-label="Indésirable">
+                  ⊘
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>
-            {visibleParcelles.map((p) => {
+            {visibleParcelles.map((p, idx) => {
               const isHovered = hoveredIdu === p.idu;
               const isSelected = selectedIdu === p.idu || expandedIdus.has(p.idu);
               const ref = parseIdu(p.idu, p.code_insee);
+              const ecoScore = getEcologicalScore(poolMetricsByIdu?.[p.idu]);
+              const ecoStyle = ecologicalBadgeStyle(ecoScore);
+              const compositeScore = getCompositeScore(poolMetricsByIdu?.[p.idu]);
+              const compositeStyle = compositeBadgeStyle(compositeScore);
+              const dureteScore = getDureteScore(poolMetricsByIdu?.[p.idu]);
+              const dureteStyle = dureteBadgeStyle(dureteScore);
 
               return (
                 <Fragment key={p.idu}>
@@ -183,7 +297,7 @@ export function RankingTable({
                     onDoubleClick={() => onRowDoubleClick?.(p.idu)}
                   >
                     <td className="col-rank">
-                      <span className="rank-badge mono">{p.rank}</span>
+                      <span className="rank-badge mono">{idx + 1}</span>
                     </td>
                     <td className="col-insee mono">{ref.insee}</td>
                     <td className="col-section mono">{ref.section}</td>
@@ -197,16 +311,106 @@ export function RankingTable({
                     <td className="col-dist mono">
                       {p.distance_km.toFixed(1)}<span className="unit"> km</span>
                     </td>
+                    <td className="col-eco">
+                      <span
+                        className="mono"
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          minWidth: 42,
+                          padding: "2px 8px",
+                          borderRadius: 999,
+                          background: ecoStyle.bg,
+                          color: ecoStyle.fg,
+                          fontWeight: 700,
+                          fontSize: 12,
+                        }}
+                        title={
+                          ecoScore == null
+                            ? "Score écologique non disponible"
+                            : `Score écologique: ${ecoScore.score}/${ecoScore.max}`
+                        }
+                      >
+                        {ecoScore == null ? "—" : ecoScore.score}
+                      </span>
+                    </td>
+                    <td className="col-composite">
+                      <span
+                        className="mono"
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          minWidth: 52,
+                          padding: "2px 8px",
+                          borderRadius: 999,
+                          background: compositeStyle.bg,
+                          color: compositeStyle.fg,
+                          fontWeight: 700,
+                          fontSize: 12,
+                        }}
+                        title={
+                          compositeScore == null
+                            ? "Score composite non disponible"
+                            : compositeScore.redhibitoire
+                              ? `Score composite: ${compositeScore.score}/100 — dureté rédhibitoire`
+                              : `Score composite: ${compositeScore.score}/100`
+                        }
+                      >
+                        {compositeScore == null ? "—" : compositeScore.score.toFixed(1)}
+                      </span>
+                    </td>
+                    <td className="col-durete">
+                      <span
+                        className="mono"
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          minWidth: 42,
+                          padding: "2px 8px",
+                          borderRadius: 999,
+                          background: dureteStyle.bg,
+                          color: dureteStyle.fg,
+                          fontWeight: 700,
+                          fontSize: 12,
+                        }}
+                        title={
+                          dureteScore == null
+                            ? "Score de dureté non disponible"
+                            : `Score de dureté foncière: ${dureteScore}/100`
+                        }
+                      >
+                        {dureteScore == null ? "—" : dureteScore}
+                      </span>
+                    </td>
                     <td className="col-surf mono">
                       {p.surface_ha.toFixed(1)}<span className="unit"> ha</span>
                     </td>
                     <td className="col-miller mono">
                       {p.miller.toFixed(2)}
                     </td>
+                    {onMarkIndesirable && poolRunId && (
+                      <td className="col-indesirable">
+                        <button
+                          type="button"
+                          className="ranking-btn-indesirable"
+                          title="Marquer comme indésirable (hors classement, carte en rouge)"
+                          aria-label={`Marquer la parcelle ${p.idu} comme indésirable`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onMarkIndesirable(p.idu);
+                          }}
+                        >
+                          🗑
+                        </button>
+                      </td>
+                    )}
                   </tr>
                   {expandedIdus.has(p.idu) && (
                     <tr className="ranking-row-detail">
-                      <td colSpan={RANKING_COL_COUNT} className="ranking-cell-detail">
+                      <td colSpan={rankingColCount} className="ranking-cell-detail">
                         <RankingLine
                           idu={p.idu}
                           expanded={expandedIdus.has(p.idu)}

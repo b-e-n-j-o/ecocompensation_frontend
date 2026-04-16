@@ -1,12 +1,14 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 
-const SATELLITE_STYLE: maplibregl.StyleSpecification = {
+type BaseMapMode = "satellite" | "plan";
+
+const CONTEXT_BASE_STYLE: maplibregl.StyleSpecification = {
   version: 8,
   sources: {
-    esri: {
+    "esri-satellite": {
       type: "raster",
       tiles: [
         "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
@@ -15,24 +17,37 @@ const SATELLITE_STYLE: maplibregl.StyleSpecification = {
       attribution:
         "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
     },
+    "osm-standard": {
+      type: "raster",
+      tiles: [
+        "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+      ],
+      tileSize: 256,
+      attribution: "© OpenStreetMap contributors",
+    },
   },
-  layers: [{ id: "esri", type: "raster", source: "esri" }],
+  layers: [
+    { id: "basemap-satellite", type: "raster", source: "esri-satellite", layout: { visibility: "visible" } },
+    { id: "basemap-plan", type: "raster", source: "osm-standard", layout: { visibility: "none" } },
+  ],
 };
 
 interface ProjectContextMapProps {
   parcelleFeature?: Feature<Geometry> | null;
   aoiFeature?: Feature<Geometry> | null;
+  foncierFeature?: Feature<Geometry> | null;
 }
 
-export function ProjectContextMap({ parcelleFeature, aoiFeature }: ProjectContextMapProps) {
+export function ProjectContextMap({ parcelleFeature, aoiFeature, foncierFeature }: ProjectContextMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const [baseMapMode, setBaseMapMode] = useState<BaseMapMode>("satellite");
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     mapRef.current = new maplibregl.Map({
       container: containerRef.current,
-      style: SATELLITE_STYLE,
+      style: CONTEXT_BASE_STYLE,
       center: [-0.75, 44.58],
       zoom: 9,
     });
@@ -55,6 +70,10 @@ export function ProjectContextMap({ parcelleFeature, aoiFeature }: ProjectContex
       const fcAoi: FeatureCollection = {
         type: "FeatureCollection",
         features: aoiFeature ? [aoiFeature] : [],
+      };
+      const fcFoncier: FeatureCollection = {
+        type: "FeatureCollection",
+        features: foncierFeature ? [foncierFeature] : [],
       };
 
       if (map.getSource("context-parcelle")) {
@@ -93,6 +112,24 @@ export function ProjectContextMap({ parcelleFeature, aoiFeature }: ProjectContex
         });
       }
 
+      if (map.getSource("context-foncier")) {
+        (map.getSource("context-foncier") as maplibregl.GeoJSONSource).setData(fcFoncier);
+      } else {
+        map.addSource("context-foncier", { type: "geojson", data: fcFoncier });
+        map.addLayer({
+          id: "context-foncier-fill",
+          type: "fill",
+          source: "context-foncier",
+          paint: { "fill-color": "#ff4fa3", "fill-opacity": 0.22 },
+        });
+        map.addLayer({
+          id: "context-foncier-line",
+          type: "line",
+          source: "context-foncier",
+          paint: { "line-color": "#ff4fa3", "line-width": 2.5 },
+        });
+      }
+
       const bounds = new maplibregl.LngLatBounds();
       const collect = (coords: unknown): void => {
         if (!Array.isArray(coords)) return;
@@ -114,18 +151,79 @@ export function ProjectContextMap({ parcelleFeature, aoiFeature }: ProjectContex
       };
       collectGeometry(aoiFeature?.geometry);
       collectGeometry(parcelleFeature?.geometry);
+      collectGeometry(foncierFeature?.geometry);
       if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 50, maxZoom: 17 });
     };
 
     if (map.isStyleLoaded()) onLoad();
     else map.once("load", onLoad);
-  }, [parcelleFeature, aoiFeature]);
+  }, [parcelleFeature, aoiFeature, foncierFeature]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+    const satVis = baseMapMode === "satellite" ? "visible" : "none";
+    const planVis = baseMapMode === "plan" ? "visible" : "none";
+    try {
+      map.setLayoutProperty("basemap-satellite", "visibility", satVis);
+      map.setLayoutProperty("basemap-plan", "visibility", planVis);
+    } catch {
+      // Style/layer pas encore prêt
+    }
+  }, [baseMapMode]);
 
   return (
-    <div
-      style={{ width: "100%", height: "100%", minHeight: 420, borderRadius: 6 }}
-      ref={containerRef}
-      title="Contexte du projet : parcelle source (vert) et AOI (bleu)"
-    />
+    <div style={{ position: "relative", width: "100%", height: "100%", minHeight: 420, borderRadius: 6 }}>
+      <div
+        style={{
+          position: "absolute",
+          top: 10,
+          left: 10,
+          zIndex: 2,
+          display: "flex",
+          gap: 6,
+          background: "rgba(15, 23, 42, 0.78)",
+          border: "1px solid #334155",
+          borderRadius: 6,
+          padding: 4,
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setBaseMapMode("satellite")}
+          style={{
+            border: "1px solid #475569",
+            background: baseMapMode === "satellite" ? "#1d4ed8" : "#1f2937",
+            color: "#e2e8f0",
+            borderRadius: 4,
+            padding: "4px 8px",
+            fontSize: 11,
+            cursor: "pointer",
+          }}
+        >
+          Satellite
+        </button>
+        <button
+          type="button"
+          onClick={() => setBaseMapMode("plan")}
+          style={{
+            border: "1px solid #475569",
+            background: baseMapMode === "plan" ? "#1d4ed8" : "#1f2937",
+            color: "#e2e8f0",
+            borderRadius: 4,
+            padding: "4px 8px",
+            fontSize: 11,
+            cursor: "pointer",
+          }}
+        >
+          Plan
+        </button>
+      </div>
+      <div
+        style={{ width: "100%", height: "100%", minHeight: 420, borderRadius: 6 }}
+        ref={containerRef}
+        title="Contexte du projet : parcelle source (vert), AOI (bleu) et foncier (rose)"
+      />
+    </div>
   );
 }
