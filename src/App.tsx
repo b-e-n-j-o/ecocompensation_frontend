@@ -277,6 +277,21 @@ function EcoCompensationApp({
         const runIdForGeo = snap.pool_run_id ?? initialRunId;
 
         const loadMetrics = async () => {
+          if (snap.by_idu && typeof snap.by_idu === "object") {
+            const normalized: Record<string, ParcelPoolMetricRow[]> = {};
+            for (const [idu, rows] of Object.entries(snap.by_idu)) {
+              normalized[idu] = (rows as ParcelPoolMetricRow[]).map((row) => ({
+                metric_key: String(row.metric_key),
+                metric_value_jsonb:
+                  typeof row.metric_value_jsonb === "object" && row.metric_value_jsonb !== null
+                    ? (row.metric_value_jsonb as Record<string, unknown>)
+                    : {},
+                updated_at: row.updated_at ?? null,
+              }));
+            }
+            if (active) setPoolMetricsByIdu(normalized);
+            return;
+          }
           if (!rid) {
             if (active) setPoolMetricsByIdu({});
             return;
@@ -511,6 +526,7 @@ function EcoCompensationApp({
     setIndesirableParcellesStored([]);
     setIndesirableMetricsByIdu({});
     try {
+      let createdPoolRunId: string | null = null;
       let runUf = false;
       if (sousEnsemblesStatus === "yes") {
         runUf = true;
@@ -523,6 +539,7 @@ function EcoCompensationApp({
       const data = await runFilter(projectId, opts);
       setResults(data);
       setLastFilterOptions(opts);
+      createdPoolRunId = data.pool_run_id ?? null;
 
       if (data.pool_run_id) {
         setFilterLoadingStage("profiling");
@@ -595,6 +612,11 @@ function EcoCompensationApp({
           if (thematicPrefetchSeqRef.current !== prefetchSeq) return;
           setThematicPreloadLoading(false);
         });
+
+      // URL persistante partageable : /projects/:projectId/runs/:runId
+      if (createdPoolRunId) {
+        navigate(`/projects/${projectId}/runs/${createdPoolRunId}`);
+      }
     } catch (err) {
       console.error("Erreur filtre:", err);
       alert("Erreur lors du filtrage. Voir console.");
@@ -770,6 +792,7 @@ function EcoCompensationApp({
       <FilterPanel
         projectId={projectId}
         onProjectChange={handleProjectChange}
+        onOpenRun={(pid, runId) => navigate(`/projects/${pid}/runs/${runId}`)}
         onSubmit={handleSubmit}
         onNavigateToCreate={onNavigateToCreate}
         isLoading={loading}

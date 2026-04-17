@@ -265,6 +265,9 @@ export interface PoolRunListItem {
 export interface PoolRunSnapshot extends FilterResponse {
   filter_options: FilterOptions;
   run_created_at: string | null;
+  /** Snapshot enrichi : métriques profiler groupées par parcelle (aligné /pool/metrics). */
+  by_idu?: Record<string, ParcelPoolMetricRow[]>;
+  total_parcelles_metrics?: number;
 }
 
 /** Ligne renvoyée par GET /pool/{idu}/metrics */

@@ -1,9 +1,18 @@
 import { useEffect, useState } from "react";
-import { deleteProject, fetchProjectHistory, type ProjectHistorySummary } from "../api";
+import {
+  deleteProject,
+  fetchProjectHistory,
+  fetchPoolRunsList,
+  fetchProjects,
+  type ProjectHistorySummary,
+  type ProjectSummary,
+} from "../api";
+import type { PoolRunListItem } from "../types";
 
 type ProjectSelectorProps = {
   value: string | null;
   onSelect: (projectId: string | null) => void;
+  onOpenRun?: (projectId: string, runId: string) => void;
   disabled?: boolean;
   className?: string;
 };
@@ -11,27 +20,76 @@ type ProjectSelectorProps = {
 export function ProjectSelector({
   value,
   onSelect,
+  onOpenRun,
   disabled = false,
   className = "",
 }: ProjectSelectorProps) {
-  const [projects, setProjects] = useState<ProjectHistorySummary[]>([]);
+  type ProjectLike = ProjectHistorySummary | (ProjectSummary & { history?: null });
+  const [projects, setProjects] = useState<ProjectLike[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [poolRuns, setPoolRuns] = useState<PoolRunListItem[]>([]);
+  const [poolRunsLoading, setPoolRunsLoading] = useState(false);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
   function loadProjects() {
     setLoading(true);
     setError(null);
-    fetchProjectHistory()
-      .then((list) => setProjects(list))
-      .catch((err) => setError(err instanceof Error ? err.message : "Erreur chargement projets"))
-      .finally(() => setLoading(false));
+    void (async () => {
+      try {
+        const list = await fetchProjectHistory();
+        setProjects(list);
+      } catch {
+        // Fallback robuste si /api/projects/history est en timeout côté backend.
+        // On garde une liste chargeable pour que l'UI filtre reste utilisable.
+        try {
+          const basic = await fetchProjects();
+          setProjects(basic);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Erreur chargement projets");
+        }
+      } finally {
+        setLoading(false);
+      }
+    })();
   }
 
   useEffect(() => {
     loadProjects();
   }, []);
+
+  useEffect(() => {
+    if (!value) {
+      setPoolRuns([]);
+      setSelectedRunId(null);
+      setPoolRunsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setPoolRunsLoading(true);
+    setPoolRuns([]);
+    setSelectedRunId(null);
+    fetchPoolRunsList(value, 100)
+      .then((r) => {
+        if (cancelled) return;
+        const runs = (r.runs ?? []).filter((x) => x.scope === "parcelles");
+        setPoolRuns(runs);
+        setSelectedRunId(runs[0]?.id ?? null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setPoolRuns([]);
+        setSelectedRunId(null);
+      })
+      .finally(() => {
+        if (!cancelled) setPoolRunsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [value]);
 
   if (loading) {
     return (
@@ -146,6 +204,50 @@ export function ProjectSelector({
         </div>
         {value && (
           <div className="project-selector-actions">
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 8 }}>
+              <span style={{ fontSize: 12, color: "#64748b" }}>Run pool du projet sélectionné</span>
+              <select
+                value={selectedRunId ?? ""}
+                onChange={(e) => setSelectedRunId(e.target.value || null)}
+                disabled={disabled || deletingId !== null || poolRunsLoading || poolRuns.length === 0}
+                title="Sélectionner un run à consulter"
+                style={{ minHeight: 32 }}
+              >
+                {!poolRuns.length && (
+                  <option value="">
+                    {poolRunsLoading ? "Chargement des runs…" : "Aucun run disponible"}
+                  </option>
+                )}
+                {poolRuns.map((run) => (
+                  <option key={run.id} value={run.id}>
+                    {new Date(run.created_at).toLocaleString("fr-FR", {
+                      dateStyle: "short",
+                      timeStyle: "short",
+                    })}{" "}
+                    ({run.total_count} parc.)
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="project-history-toggle"
+                onClick={() => {
+                  if (!value || !selectedRunId || !onOpenRun) return;
+                  onOpenRun(value, selectedRunId);
+                }}
+                disabled={
+                  disabled ||
+                  deletingId !== null ||
+                  poolRunsLoading ||
+                  !value ||
+                  !selectedRunId ||
+                  !onOpenRun
+                }
+                title="Ouvrir la page de résultats du run sélectionné"
+              >
+                Consulter le pool du run
+              </button>
+            </div>
             <button
               type="button"
               className="project-selector-delete"

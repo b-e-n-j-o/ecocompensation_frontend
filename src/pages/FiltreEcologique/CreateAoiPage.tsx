@@ -4,10 +4,11 @@ import {
   createProjectFromFoncierUpload,
   createProjectFromParcelle,
   fetchLayers,
+  fetchProjects,
   previewFoncierUpload,
   startFetch,
 } from "../../api";
-import type { FromParcelleBody, LayerInfo, ParcelleRef } from "../../api";
+import type { FromParcelleBody, LayerInfo, ParcelleRef, ProjectSummary } from "../../api";
 import type { Feature, MultiPolygon, Polygon } from "geojson";
 import { SliderField } from "../../components/FilterPanel/shared";
 import { CartoAoi } from "./CartoAoi";
@@ -63,6 +64,10 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
   const [ufMinAreaHa, setUfMinAreaHa] = useState(7);
   /** Couches du dernier fetch (ordre serveur) — alimente le tableau de suivi. */
   const [activeFetchKeys, setActiveFetchKeys] = useState<string[]>([]);
+  const [historyProjects, setHistoryProjects] = useState<ProjectSummary[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [selectedExistingProjectId, setSelectedExistingProjectId] = useState<string>("");
   const lastFetchLayerKeysRef = useRef<string[]>([]);
   const logEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -81,6 +86,28 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
         if (!cancelled) {
           setLayersLoadError(e instanceof Error ? e.message : "Impossible de charger la liste des couches");
         }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setHistoryLoading(true);
+    setHistoryError(null);
+    fetchProjects()
+      .then((projects) => {
+        if (cancelled) return;
+        setHistoryProjects(projects);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setHistoryError(e instanceof Error ? e.message : "Impossible de charger les projets existants");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setHistoryLoading(false);
       });
     return () => {
       cancelled = true;
@@ -322,6 +349,7 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
     (!faunaLayerSelected || faunaSpecies.length > 0) &&
     (sourceMode === "parcelle" ? (ufParcelles.length > 0 || (!!codeInsee.trim() && !!section.trim() && !!numero.trim())) : !!uploadedFile) &&
     layersReady;
+  const canLoadExistingProject = !!selectedExistingProjectId && step === "form";
   const willSkipUfLayers = bufferKm > 5;
 
   async function handleSearchParcelle() {
@@ -436,6 +464,50 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
             Choisissez une source (référence cadastrale ou fichier ZIP/GPKG), puis définissez le buffer AOI.
             La carte affiche la géométrie source et le périmètre bufferisé.
           </p>
+          <div className="section-block create-aoi-block">
+            <div className="section-header">
+              <span className="section-title">Charger un projet existant</span>
+            </div>
+            <div className="section-body">
+              {historyLoading ? (
+                <div className="create-aoi-parcel-status is-missing">Chargement des projets…</div>
+              ) : historyError ? (
+                <div className="create-aoi-error">{historyError}</div>
+              ) : historyProjects.length === 0 ? (
+                <div className="create-aoi-parcel-status is-missing">Aucun projet existant.</div>
+              ) : (
+                <>
+                  <div className="create-aoi-row">
+                    <label className="create-aoi-label">Projet</label>
+                    <select
+                      className="create-aoi-input"
+                      value={selectedExistingProjectId}
+                      onChange={(e) => setSelectedExistingProjectId(e.target.value)}
+                      disabled={step === "creating" || step === "fetching"}
+                    >
+                      <option value="">Sélectionner un projet…</option>
+                      {historyProjects.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} · {new Date(p.created_at).toLocaleDateString("fr-FR")}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-run create-aoi-search-btn"
+                    disabled={!canLoadExistingProject}
+                    onClick={() => {
+                      if (!selectedExistingProjectId) return;
+                      onDone(selectedExistingProjectId);
+                    }}
+                  >
+                    Ouvrir le projet en filtrage
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
           <form id="create-aoi-form" onSubmit={handleSubmit} className="create-aoi-form">
             <div className="section-block create-aoi-block">
               <div className="section-header">

@@ -42,6 +42,7 @@ const shell: CSSProperties = {
 interface FilterPanelProps {
   projectId: string | null;
   onProjectChange: (projectId: string | null) => void;
+  onOpenRun?: (projectId: string, runId: string) => void;
   onSubmit: (options: FilterOptions, scoreOnlyMode: boolean) => void;
   onNavigateToCreate?: () => void;
   isLoading?: boolean;
@@ -54,6 +55,7 @@ interface FilterPanelProps {
 export function FilterPanel({
   projectId,
   onProjectChange,
+  onOpenRun,
   onSubmit,
   onNavigateToCreate,
   isLoading = false,
@@ -153,7 +155,12 @@ export function FilterPanel({
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-        <ProjectSelector value={projectId} onSelect={onProjectChange} disabled={isLoading} />
+        <ProjectSelector
+          value={projectId}
+          onSelect={onProjectChange}
+          onOpenRun={onOpenRun}
+          disabled={isLoading}
+        />
 
         <ExclusionsSection
           projectId={projectId}
