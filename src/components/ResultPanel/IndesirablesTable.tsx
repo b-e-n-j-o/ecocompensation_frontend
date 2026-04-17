@@ -1,5 +1,6 @@
 // ─── Table des parcelles « pool indésirables » (sous le classement principal) ─
 import { Fragment, useEffect, useMemo, useState } from "react";
+import { exportCsv, exportShp } from "../../api";
 import type { ParcelleResult, ParcelPoolMetricRow } from "../../types";
 import { RankingLine } from "./RankingLine";
 
@@ -24,6 +25,7 @@ function parseIdu(idu: string, codeInseeFallback?: string): ParsedIdu {
 }
 
 interface IndesirablesTableProps {
+  projectId?: string | null;
   parcelles: ParcelleResult[];
   poolRunId: string;
   poolMetricsByIdu: Record<string, ParcelPoolMetricRow[]> | null;
@@ -33,6 +35,7 @@ interface IndesirablesTableProps {
 }
 
 export function IndesirablesTable({
+  projectId,
   parcelles,
   poolRunId,
   poolMetricsByIdu,
@@ -42,6 +45,8 @@ export function IndesirablesTable({
 }: IndesirablesTableProps) {
   const [hoveredIdu, setHoveredIdu] = useState<string | null>(null);
   const [expandedIdus, setExpandedIdus] = useState<Set<string>>(() => new Set());
+  const [exportChoice, setExportChoice] = useState<"" | "csv" | "shp">("");
+  const [exporting, setExporting] = useState(false);
 
   const identity = useMemo(
     () => [...parcelles].map((p) => p.idu).sort().join("|"),
@@ -68,6 +73,38 @@ export function IndesirablesTable({
       <div className="ranking-header">
         <span className="ranking-title ranking-title--indesirable">Pool indésirables</span>
         <div className="ranking-header-actions">
+          <label className="ranking-sort-label">
+            Exporter
+            <select
+              value={exportChoice}
+              disabled={!projectId || exporting}
+              onChange={async (e) => {
+                const v = e.target.value as "" | "csv" | "shp";
+                if (!v || !projectId) return;
+                setExportChoice(v);
+                setExporting(true);
+                try {
+                  if (v === "csv") await exportCsv(projectId, "indesirables");
+                  else await exportShp(projectId, "indesirables");
+                } catch (err) {
+                  console.error("Export indésirables:", err);
+                  alert(
+                    err instanceof Error
+                      ? err.message
+                      : "Erreur lors de l'export. Voir la console.",
+                  );
+                } finally {
+                  setExporting(false);
+                  setExportChoice("");
+                }
+              }}
+              onClick={(ev) => ev.stopPropagation()}
+            >
+              <option value="">—</option>
+              <option value="csv">CSV</option>
+              <option value="shp">Shapefile (ZIP)</option>
+            </select>
+          </label>
           {poolMetricsLoading && (
             <span className="ranking-pool-loading" title="Chargement des métriques du pool">
               Métriques…

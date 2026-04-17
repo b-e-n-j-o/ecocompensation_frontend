@@ -532,10 +532,22 @@ export async function fetchPoolRunMetricsBulk(
 /** Parcelles marquées indésirables pour ce run (persistées). */
 export async function fetchPoolIndesirables(
   projectId: string,
-  runId: string,
-): Promise<{ run_id: string; idus: string[]; total: number }> {
-  const q = new URLSearchParams({ run_id: runId });
-  const res = await fetch(`${API}/api/projects/${projectId}/pool/indesirables?${q}`);
+): Promise<{
+  project_id: string;
+  idus: string[];
+  parcelles: FilterResponse["parcelles"];
+  by_idu: Record<string, ParcelPoolMetricRow[]>;
+  total: number;
+}> {
+  const res = await fetch(`${API}/api/projects/${projectId}/pool/indesirables`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function fetchPoolIndesirablesCount(
+  projectId: string,
+): Promise<{ project_id: string; total: number }> {
+  const res = await fetch(`${API}/api/projects/${projectId}/pool/indesirables-count`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -556,12 +568,10 @@ export async function addPoolIndesirables(
 
 export async function removePoolIndesirable(
   projectId: string,
-  runId: string,
   idu: string,
 ): Promise<void> {
-  const q = new URLSearchParams({ run_id: runId });
   const res = await fetch(
-    `${API}/api/projects/${projectId}/pool/indesirables/${encodeURIComponent(idu)}?${q}`,
+    `${API}/api/projects/${projectId}/pool/indesirables/${encodeURIComponent(idu)}`,
     { method: "DELETE" },
   );
   if (!res.ok) await throwHttpError(res);
@@ -673,7 +683,7 @@ export async function fetchFoncierGeojson(
 }
 
 /** `parcelles` = classement parcelles ; `uf` = sous-ensembles du classement UF */
-export type ExportScope = "parcelles" | "uf";
+export type ExportScope = "parcelles" | "uf" | "indesirables";
 
 export async function exportCsv(
   projectId: string,

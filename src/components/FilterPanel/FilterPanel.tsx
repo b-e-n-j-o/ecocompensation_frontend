@@ -155,7 +155,11 @@ export function FilterPanel({
       <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
         <ProjectSelector value={projectId} onSelect={onProjectChange} disabled={isLoading} />
 
-        <ExclusionsSection value={opts.excluded_layers} onChange={(v: string[]) => patch({ excluded_layers: v })} />
+        <ExclusionsSection
+          projectId={projectId}
+          value={opts.excluded_layers}
+          onChange={(v: string[]) => patch({ excluded_layers: v })}
+        />
 
         <GeometrySection
           miller={opts.miller_threshold}

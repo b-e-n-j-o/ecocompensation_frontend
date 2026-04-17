@@ -5,6 +5,7 @@
 import type { CSSProperties } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SectionCard, filterTheme, Hint } from "../shared";
+import { fetchPoolIndesirablesCount } from "../../../api";
 
 interface LayerInfo {
   key: string;
@@ -13,16 +14,29 @@ interface LayerInfo {
 }
 
 interface ExclusionsSectionProps {
+  projectId: string | null;
   value: string[];
   onChange: (v: string[]) => void;
 }
 
-export function ExclusionsSection({ value, onChange }: ExclusionsSectionProps) {
+export function ExclusionsSection({ projectId, value, onChange }: ExclusionsSectionProps) {
   const [layers, setLayers] = useState<LayerInfo[]>([]);
+  const [projectIndesirablesCount, setProjectIndesirablesCount] = useState(0);
   const strippedLegacyNatura = useRef(false);
+  const PROJECT_INDESIRABLES_KEY = "project_indesirables";
 
   /** Natura 2000 : filtre dédié plus bas, pas dans les exclusions scoring. */
-  const selectableLayers = useMemo(() => layers.filter((l) => l.key !== "natura2000"), [layers]);
+  const selectableLayers = useMemo(() => {
+    const base = layers.filter((l) => l.key !== "natura2000");
+    return [
+      ...base,
+      {
+        key: PROJECT_INDESIRABLES_KEY,
+        label: `Parcelles indésirables du projet (${projectIndesirablesCount})`,
+        fast: true,
+      },
+    ];
+  }, [layers, projectIndesirablesCount]);
 
   useEffect(() => {
     const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -31,6 +45,24 @@ export function ExclusionsSection({ value, onChange }: ExclusionsSectionProps) {
       .then((data: LayerInfo[]) => setLayers(data))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!projectId) {
+      setProjectIndesirablesCount(0);
+      return;
+    }
+    let cancelled = false;
+    fetchPoolIndesirablesCount(projectId)
+      .then((r) => {
+        if (!cancelled) setProjectIndesirablesCount(Number(r.total ?? 0));
+      })
+      .catch(() => {
+        if (!cancelled) setProjectIndesirablesCount(0);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
 
   /** Ancien état pouvait contenir natura2000 : on le retire du modèle (une fois). */
   useEffect(() => {

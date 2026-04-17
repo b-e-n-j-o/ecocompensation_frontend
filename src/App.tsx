@@ -191,6 +191,8 @@ function EcoCompensationApp({
   const [rankingSortKey, setRankingSortKey] = useState<RankingSortKey>("rank");
   /** IDU exclus du classement (pool indésirables), aligné sur `results.pool_run_id`. */
   const [indesirableIdus, setIndesirableIdus] = useState<string[]>([]);
+  const [indesirableParcellesStored, setIndesirableParcellesStored] = useState<FilterResponse["parcelles"]>([]);
+  const [indesirableMetricsByIdu, setIndesirableMetricsByIdu] = useState<Record<string, ParcelPoolMetricRow[]>>({});
   const hasParcellesFunnel = (results?.funnel ?? []).some((s) => s.count >= 0);
   const hasUfFunnel = (ufResults?.funnel ?? []).some((s) => s.count >= 0);
 
@@ -417,6 +419,8 @@ function EcoCompensationApp({
     setLastFilterOptions(null);
     setRankingSortKey("rank");
     setIndesirableIdus([]);
+    setIndesirableParcellesStored([]);
+    setIndesirableMetricsByIdu({});
   }
 
   useEffect(() => {
@@ -438,38 +442,54 @@ function EcoCompensationApp({
   }, [projectId]);
 
   useEffect(() => {
-    if (!projectId || !results?.pool_run_id) {
+    if (!projectId) {
       setIndesirableIdus([]);
+      setIndesirableParcellesStored([]);
+      setIndesirableMetricsByIdu({});
       return;
     }
     let cancelled = false;
-    fetchPoolIndesirables(projectId, results.pool_run_id)
+    fetchPoolIndesirables(projectId)
       .then((r) => {
-        if (!cancelled) setIndesirableIdus(r.idus);
+        if (!cancelled) {
+          setIndesirableIdus(r.idus ?? []);
+          setIndesirableParcellesStored(r.parcelles ?? []);
+          setIndesirableMetricsByIdu(r.by_idu ?? {});
+        }
       })
       .catch(() => {
-        if (!cancelled) setIndesirableIdus([]);
+        if (!cancelled) {
+          setIndesirableIdus([]);
+          setIndesirableParcellesStored([]);
+          setIndesirableMetricsByIdu({});
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [projectId, results?.pool_run_id]);
+  }, [projectId]);
 
   async function handleMarkIndesirable(idu: string) {
     if (!projectId || !results?.pool_run_id) return;
     try {
       await addPoolIndesirables(projectId, results.pool_run_id, [idu]);
-      setIndesirableIdus((prev) => (prev.includes(idu) ? prev : [...prev, idu]));
+      const next = await fetchPoolIndesirables(projectId);
+      setIndesirableIdus(next.idus ?? []);
+      setIndesirableParcellesStored(next.parcelles ?? []);
+      setIndesirableMetricsByIdu(next.by_idu ?? {});
     } catch (e) {
       alert(e instanceof Error ? e.message : "Impossible de marquer la parcelle comme indésirable.");
     }
   }
 
   async function handleRestoreIndesirable(idu: string) {
-    if (!projectId || !results?.pool_run_id) return;
+    if (!projectId) return;
     try {
-      await removePoolIndesirable(projectId, results.pool_run_id, idu);
-      setIndesirableIdus((prev) => prev.filter((x) => x !== idu));
+      await removePoolIndesirable(projectId, idu);
+      const next = await fetchPoolIndesirables(projectId);
+      setIndesirableIdus(next.idus ?? []);
+      setIndesirableParcellesStored(next.parcelles ?? []);
+      setIndesirableMetricsByIdu(next.by_idu ?? {});
     } catch (e) {
       alert(e instanceof Error ? e.message : "Impossible de réintégrer la parcelle au classement.");
     }
@@ -488,6 +508,8 @@ function EcoCompensationApp({
     setLastFilterOptions(null);
     setRankingSortKey("rank");
     setIndesirableIdus([]);
+    setIndesirableParcellesStored([]);
+    setIndesirableMetricsByIdu({});
     try {
       let runUf = false;
       if (sousEnsemblesStatus === "yes") {
@@ -731,12 +753,8 @@ function EcoCompensationApp({
   ]);
 
   const indesirableParcelles = useMemo(() => {
-    if (!results?.parcelles?.length || !indesirableIdus.length) return [];
-    const set = new Set(indesirableIdus);
-    return results.parcelles
-      .filter((p) => set.has(p.idu))
-      .sort((a, b) => a.rank - b.rank);
-  }, [results?.parcelles, indesirableIdus]);
+    return [...indesirableParcellesStored].sort((a, b) => a.rank - b.rank);
+  }, [indesirableParcellesStored]);
 
   /** Carte : couleurs = score v1 normalisé dès que les métriques sont là ; sinon /geojson (rang distance). */
   const parcellesMapGeojson = useMemo(() => {
@@ -1050,9 +1068,10 @@ function EcoCompensationApp({
                   </div>
                   {results.pool_run_id && (
                     <IndesirablesTable
+                      projectId={projectId}
                       parcelles={indesirableParcelles}
                       poolRunId={results.pool_run_id}
-                      poolMetricsByIdu={poolMetricsByIdu}
+                      poolMetricsByIdu={indesirableMetricsByIdu}
                       poolMetricsLoading={!!results.pool_run_id && poolMetricsByIdu === null}
                       onRestore={handleRestoreIndesirable}
                       onRowDoubleClick={handleTableRowDoubleClick}
