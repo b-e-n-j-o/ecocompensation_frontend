@@ -49,6 +49,20 @@ interface WFSFeatureProps {
   prefixe?: string;
 }
 
+interface MunicipalityProps {
+  name?: string;
+  insee?: string;
+  is_rnu?: boolean;
+  is_deleted?: boolean;
+  is_coastline?: boolean;
+}
+
+interface MunicipalityInfo {
+  name: string;
+  insee: string;
+  is_rnu: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Constantes
 // ---------------------------------------------------------------------------
@@ -56,6 +70,7 @@ interface WFSFeatureProps {
 // Nouveau endpoint Géoplateforme IGN (l'ancien wxs.ign.fr est mort)
 const IGN_WFS_URL = "https://data.geopf.fr/wfs/ows";
 const BBOX_HALF_M = 250; // → bbox 500m×500m
+const MUNICIPALITY_BBOX_HALF_M = 40; // petit bbox autour du clic
 
 const SOURCE_ID = "cadastre";
 const LAYER_FILL_ID = "cadastre-fill";
@@ -127,14 +142,31 @@ function buildWFSUrl(lng: number, lat: number): string {
   return `${IGN_WFS_URL}?${params.toString()}`;
 }
 
+/** URL WFS IGN Urbanisme pour récupérer la commune au point cliqué */
+function buildMunicipalityWFSUrl(lng: number, lat: number): string {
+  const bbox = bboxWGS84(lng, lat, MUNICIPALITY_BBOX_HALF_M);
+  const params = new URLSearchParams({
+    SERVICE: "WFS",
+    VERSION: "2.0.0",
+    REQUEST: "GetFeature",
+    typeNames: "wfs_du:municipality",
+    outputFormat: "application/json",
+    SRSNAME: "CRS:84",
+    BBOX: `${bbox},CRS:84`,
+    COUNT: "10",
+  });
+  return `${IGN_WFS_URL}?${params.toString()}`;
+}
+
 /** Extrait les métadonnées parcellaires depuis les propriétés WFS */
 function extractParcelleInput(
   props: WFSFeatureProps,
+  municipality: MunicipalityInfo | null = null,
 ): IdentiteFonciereParcelleInput | null {
   let insee = props.code_insee ?? props.insee ?? "";
   let section = props.section ?? "";
   let numero = props.numero ?? "";
-  const commune = props.commune ?? "";
+  const commune = props.commune ?? municipality?.name ?? "";
 
   // Fallback sur le champ `idu` (format: IIIIISSSNNNN où I=insee, S=section, N=numero)
   // ex: "33522AC0042"
@@ -145,6 +177,7 @@ function extractParcelleInput(
     if (!numero) numero = idu.slice(8);
   }
 
+  if (!insee && municipality?.insee) insee = municipality.insee;
   if (!insee || !section || !numero) return null;
   return { commune: commune || insee, insee, section, numero };
 }
@@ -171,6 +204,46 @@ export default function CadastreMap({
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [parcelleCount, setParcelleCount] = useState<number | null>(null);
+  const [municipalityInfo, setMunicipalityInfo] = useState<MunicipalityInfo | null>(
+    null,
+  );
+  const fetchMunicipality = useCallback(async (lng: number, lat: number) => {
+    const url = buildMunicipalityWFSUrl(lng, lat);
+    // Retry léger silencieux (WFS parfois instable).
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`Municipality WFS ${resp.status}`);
+        const geojson = (await resp.json()) as {
+          features?: Array<{ properties?: MunicipalityProps }>;
+        };
+        const candidates = (geojson.features ?? [])
+          .map((f) => f.properties)
+          .filter(
+            (p): p is MunicipalityProps =>
+              !!p &&
+              !p.is_deleted &&
+              typeof p.insee === "string" &&
+              p.insee.trim() !== "",
+          );
+        const first = candidates[0];
+        if (!first) return null;
+        return {
+          name: (first.name ?? "").trim() || first.insee!.trim(),
+          insee: first.insee!.trim(),
+          is_rnu: Boolean(first.is_rnu),
+        } satisfies MunicipalityInfo;
+      } catch {
+        if (attempt === 0) {
+          await new Promise((r) => setTimeout(r, 180));
+          continue;
+        }
+        return null;
+      }
+    }
+    return null;
+  }, []);
+
 
   // Set des clés sélectionnées (pour colorer sur la carte)
   const selectedKeys = new Set(selectedParcelles.map(parcelleKey));
@@ -365,8 +438,11 @@ export default function CadastreMap({
     const map = mapRef.current;
 
     // Attend que les couches soient chargées
-    const onMapClick = (e: MapMouseEvent) => {
+    const onMapClick = async (e: MapMouseEvent) => {
       if (!map.isStyleLoaded()) return;
+
+      const municipality = await fetchMunicipality(e.lngLat.lng, e.lngLat.lat);
+      setMunicipalityInfo(municipality);
 
       // Vérifie si on a cliqué sur une parcelle déjà affichée
       const features = map.queryRenderedFeatures(e.point, {
@@ -377,7 +453,7 @@ export default function CadastreMap({
         // Clic sur une parcelle → sélection
         const feat = features[0];
         const props = feat.properties as WFSFeatureProps & { selected?: boolean };
-        const input = extractParcelleInput(props);
+        const input = extractParcelleInput(props, municipality);
         if (input) {
           onParcelleSelect(input);
           // Met à jour visuellement `selected` dans la source
@@ -437,7 +513,7 @@ export default function CadastreMap({
       map.off("mousemove", onMouseMove);
       map.off("mouseleave", LAYER_FILL_ID, onMouseLeave);
     };
-  }, [fetchCadastre, onParcelleSelect, selectedKeys]);
+  }, [fetchCadastre, fetchMunicipality, onParcelleSelect, selectedKeys]);
 
   // -------------------------------------------------------------------------
   // Mise à jour de l'état `selected` quand selectedParcelles change
@@ -486,6 +562,32 @@ export default function CadastreMap({
           {parcelleCount === 0
             ? "Aucune parcelle dans cette zone"
             : `${parcelleCount} parcelle${parcelleCount > 1 ? "s" : ""} — cliquez pour sélectionner`}
+        </div>
+      )}
+
+      {/* Informations commune (couche municipality) */}
+      {municipalityInfo && !loading && (
+        <div
+          style={{
+            position: "absolute",
+            top: 12,
+            left: 12,
+            background: "rgba(255,255,255,0.95)",
+            color: "#0f172a",
+            border: "1px solid #e2e8f0",
+            borderRadius: 8,
+            padding: "8px 10px",
+            fontSize: 12,
+            lineHeight: 1.35,
+            pointerEvents: "none",
+            boxShadow: "0 2px 10px rgba(15,23,42,0.08)",
+          }}
+        >
+          <div style={{ fontWeight: 600 }}>{municipalityInfo.name}</div>
+          <div style={{ color: "#475569" }}>
+            INSEE {municipalityInfo.insee} ·{" "}
+            {municipalityInfo.is_rnu ? "RNU" : "PLU / document d'urbanisme"}
+          </div>
         </div>
       )}
 

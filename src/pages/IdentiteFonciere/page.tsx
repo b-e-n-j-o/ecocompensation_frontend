@@ -108,6 +108,9 @@ export default function IdentiteFoncierePage() {
   const [parcelles, setParcelles] = useState<IdentiteFonciereParcelleInput[]>(
     [],
   );
+  const [manualInsee, setManualInsee] = useState("");
+  const [manualSection, setManualSection] = useState("");
+  const [manualNumero, setManualNumero] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -136,6 +139,34 @@ export default function IdentiteFoncierePage() {
     setError(null);
     setSuccess(null);
   };
+
+  const handleAddManualParcelle = useCallback(() => {
+    const insee = manualInsee.trim();
+    const section = manualSection.trim().toUpperCase().padStart(2, "0");
+    const numero = manualNumero.trim().padStart(4, "0");
+
+    if (!insee || !section || !numero) {
+      setError("Renseignez INSEE, section et numéro.");
+      setSuccess(null);
+      return;
+    }
+
+    const p: IdentiteFonciereParcelleInput = {
+      commune: insee, // fallback visuel si commune inconnue
+      insee,
+      section,
+      numero,
+    };
+    const key = parcelleKey(p);
+    setParcelles((prev) => {
+      if (prev.some((x) => parcelleKey(x) === key)) return prev;
+      return [...prev, p];
+    });
+    setManualSection("");
+    setManualNumero("");
+    setError(null);
+    setSuccess(null);
+  }, [manualInsee, manualNumero, manualSection]);
 
   // ---- Génération PDF ----
 
@@ -207,9 +238,74 @@ export default function IdentiteFoncierePage() {
           >
             Identité foncière
           </h1>
-          <p style={{ margin: "4px 0 0", fontSize: 12, color: "#64748b" }}>
-            Cliquez sur la carte pour charger le cadastre, puis sur les parcelles pour les sélectionner.
-          </p>
+          <div
+            style={{
+              marginTop: 12,
+              padding: 10,
+              border: "1px solid #e2e8f0",
+              borderRadius: 8,
+              background: "#f8fafc",
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+            }}
+          >
+            <input
+              placeholder="INSEE"
+              value={manualInsee}
+              onChange={(e) => setManualInsee(e.target.value)}
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                padding: "8px 10px",
+                border: "1px solid #cbd5e1",
+                borderRadius: 6,
+                fontSize: 12,
+              }}
+            />
+            <input
+              placeholder="Section"
+              value={manualSection}
+              onChange={(e) => setManualSection(e.target.value)}
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                padding: "8px 10px",
+                border: "1px solid #cbd5e1",
+                borderRadius: 6,
+                fontSize: 12,
+              }}
+            />
+            <input
+              placeholder="Numéro"
+              value={manualNumero}
+              onChange={(e) => setManualNumero(e.target.value)}
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                padding: "8px 10px",
+                border: "1px solid #cbd5e1",
+                borderRadius: 6,
+                fontSize: 12,
+              }}
+            />
+            <button
+              type="button"
+              onClick={handleAddManualParcelle}
+              style={{
+                border: "1px solid #0f172a",
+                background: "#0f172a",
+                color: "#fff",
+                borderRadius: 6,
+                padding: "9px 10px",
+                fontSize: 12,
+                cursor: "pointer",
+                width: "100%",
+              }}
+            >
+              Ajouter
+            </button>
+          </div>
         </div>
 
         {/* Liste des parcelles sélectionnées */}
