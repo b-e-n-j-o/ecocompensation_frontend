@@ -303,9 +303,14 @@ export default function CadastreMap({
         source: SOURCE_ID,
         paint: {
           "fill-color": "#3b82f6",
-          "fill-opacity": 0.35,
+          // On garde la parcelle sélectionnée visuellement (même intensité que le hover).
+          "fill-opacity": [
+            "case",
+            ["boolean", ["feature-state", "selected"], false],
+            0.3,
+            0,
+          ],
         },
-        filter: ["==", ["get", "selected"], true],
       });
 
       // Contours

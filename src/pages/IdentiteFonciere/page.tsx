@@ -526,10 +526,10 @@ export default function IdentiteFoncierePage() {
           <div
             style={{
               position: "absolute",
-              top: 12,
-              right: 12,
-              bottom: 12,
-              width: "min(58vw, 860px)",
+              top: 8,
+              right: 8,
+              bottom: 8,
+              left: 8,
               background: "#ffffff",
               border: "1px solid #cbd5e1",
               borderRadius: 10,
