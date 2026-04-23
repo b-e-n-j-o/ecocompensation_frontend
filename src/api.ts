@@ -805,6 +805,23 @@ export type IdentiteFonciereRequest = {
   options?: IdentiteFonciereOptionsInput;
 };
 
+export type UrbanDocFile = {
+  name: string;
+  url: string;
+  score_reglement: number;
+};
+
+export type UrbanDocsResponse = {
+  insee: string;
+  commune: string;
+  idurba: string;
+  gpu_doc_id: string;
+  typedoc: string;
+  files: UrbanDocFile[];
+  reglement_name?: string | null;
+  reglement_url?: string | null;
+};
+
 function parseFilenameFromContentDisposition(header: string | null): string {
   if (!header) return "identite_fonciere.pdf";
   const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
@@ -844,6 +861,28 @@ export async function generateIdentiteFoncierePdf(
     res.headers.get("Content-Disposition"),
   );
   return { blob, filename };
+}
+
+export async function fetchUrbanDocumentsForInsee(
+  insee: string,
+): Promise<UrbanDocsResponse> {
+  const path = `/api/identite-fonciere/urban-documents/${encodeURIComponent(insee.trim())}`;
+  const url = apiUrlForFetch(path);
+  const res = await fetch(url, { method: "GET" });
+  if (!res.ok) {
+    const raw = await res.text();
+    try {
+      const parsed = JSON.parse(raw) as { detail?: unknown };
+      const detail =
+        typeof parsed.detail === "string"
+          ? parsed.detail
+          : JSON.stringify(parsed.detail ?? parsed);
+      throw new Error(detail || "Erreur lors du chargement des documents d'urbanisme");
+    } catch {
+      throw new Error(raw || "Erreur lors du chargement des documents d'urbanisme");
+    }
+  }
+  return res.json();
 }
 
 /**

@@ -9,12 +9,13 @@
  * le payload du POST /rapport.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   generateIdentiteFoncierePdf,
   type IdentiteFonciereParcelleInput,
 } from "../../api";
 import CadastreMap from "./CadastreMap";
+import UrbanismeDocsPanel from "./UrbanismeDocsPanel";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -114,6 +115,13 @@ export default function IdentiteFoncierePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const selectedInsee = useMemo(
+    () => {
+      const last = parcelles[parcelles.length - 1];
+      return last?.insee?.trim() || null;
+    },
+    [parcelles],
+  );
 
   // ---- Gestion de la liste ----
 
@@ -316,6 +324,7 @@ export default function IdentiteFoncierePage() {
             padding: "12px 16px",
           }}
         >
+          <UrbanismeDocsPanel insee={selectedInsee} />
           {parcelles.length === 0 ? (
             <div
               style={{
