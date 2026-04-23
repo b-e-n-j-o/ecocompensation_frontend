@@ -323,6 +323,38 @@
   max-width: min(240px, 55vw);
 }
 
+.ranking-btn-pdf {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid #1b4332;
+  background: linear-gradient(180deg, #2d6a4f 0%, #1b4332 100%);
+  color: #ffffff;
+  cursor: pointer;
+  white-space: nowrap;
+  min-width: 118px;
+  transition: opacity 0.15s ease, transform 0.1s ease;
+}
+
+.ranking-btn-pdf:hover:not(:disabled) {
+  opacity: 0.95;
+  transform: translateY(-1px);
+}
+
+.ranking-btn-pdf:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.ranking-pdf-rss-hint {
+  font-size: 11px;
+  color: #64748b;
+  margin-left: 2px;
+  white-space: nowrap;
+}
+
 .ranking-pool-loading {
   font-size: 11px;
   color: #64748b;
@@ -509,6 +541,8 @@
 /* Colonnes */
 .col-rank { width: 50px; text-align: center; }
 .col-idu { min-width: 120px; }
+.col-espece { min-width: 150px; max-width: 240px; }
+.col-dist-espece { width: 96px; text-align: right; }
 .col-dist, .col-surf, .col-miller, .col-hydro { width: 80px; text-align: right; }
 .col-indesirable {
   width: 36px;

@@ -786,6 +786,171 @@
   cursor: not-allowed;
 }
 
+/* ─── ProjectSelector v2 (projet + run, sélecteurs natifs) ─────────────────── */
+.project-selector-block .ps-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.project-selector-block .ps-card {
+  background: #1e2229;
+  border: 1px solid #2f3542;
+  border-radius: 8px;
+  padding: 12px 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.project-selector-block .ps-card--muted {
+  color: #9ca3af;
+  font-size: 12px;
+  padding: 14px;
+}
+
+.project-selector-block .ps-card--error {
+  color: #fecaca;
+  border-color: #991b1b;
+  font-size: 12px;
+  padding: 14px;
+}
+
+.project-selector-block .ps-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9ca3af;
+}
+
+.project-selector-block .ps-sub {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #6b7280;
+}
+
+.project-selector-block .ps-hint {
+  margin: 0;
+  font-size: 10px;
+  color: #6b7280;
+}
+
+.project-selector-block .ps-muted {
+  color: #9ca3af;
+}
+
+.project-selector-block .ps-select {
+  width: 100%;
+  box-sizing: border-box;
+  appearance: none;
+  background: #14171c url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 10px center;
+  color: #e5e7eb;
+  border: 1px solid #374151;
+  border-radius: 6px;
+  padding: 8px 32px 8px 10px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.project-selector-block .ps-select:hover:not(:disabled) {
+  border-color: #3b82f6;
+}
+
+.project-selector-block .ps-select:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+}
+
+.project-selector-block .ps-select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.project-selector-block .ps-run-filter-wrap {
+  margin-top: 6px;
+}
+
+.project-selector-block .ps-run-filter-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+.project-selector-block .ps-run-detail {
+  margin: 0;
+  padding: 10px 12px 10px 1.5rem;
+  list-style: disc;
+  list-style-position: outside;
+  background: #14171c;
+  border-radius: 6px;
+  border: 1px solid #2f3542;
+}
+
+.project-selector-block .ps-run-detail .ps-run-line {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #cbd5e1;
+  margin-bottom: 6px;
+  padding-left: 2px;
+}
+
+.project-selector-block .ps-run-detail .ps-run-line:last-child {
+  margin-bottom: 0;
+}
+
+.project-selector-block .ps-btn-primary {
+  margin-top: 4px;
+  width: 100%;
+  padding: 9px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
+  border: 1px solid #1e40af;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: filter 0.15s ease, opacity 0.15s ease;
+}
+
+.project-selector-block .ps-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.project-selector-block .ps-btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.project-selector-block .ps-btn-danger {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #fca5a5;
+  background: transparent;
+  border: 1px solid rgba(127, 29, 29, 0.6);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.project-selector-block .ps-btn-danger:hover:not(:disabled) {
+  background: rgba(185, 28, 28, 0.15);
+  color: #fecaca;
+}
+
+.project-selector-block .ps-btn-danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* ─── Page Création AOI ─────────────────────────────────────────────────────── */
 .create-aoi-page {
   display: flex;

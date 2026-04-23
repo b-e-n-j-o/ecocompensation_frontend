@@ -115,10 +115,6 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
   }, []);
 
   useEffect(() => {
-    if (bufferKm > 5) setUfEnabled(false);
-  }, [bufferKm]);
-
-  useEffect(() => {
     if (!faunaLayerSelected && faunaSpecies.length > 0) {
       setFaunaSpecies([]);
     }
@@ -246,7 +242,7 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
       return;
     }
 
-    const ufActive = ufEnabled && bufferKm <= 5;
+    const ufActive = ufEnabled;
     const orderedKeys = buildFetchLayerKeys(
       registryLayers,
       new Set(selectedLayerKeys),
@@ -350,7 +346,6 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
     (sourceMode === "parcelle" ? (ufParcelles.length > 0 || (!!codeInsee.trim() && !!section.trim() && !!numero.trim())) : !!uploadedFile) &&
     layersReady;
   const canLoadExistingProject = !!selectedExistingProjectId && step === "form";
-  const willSkipUfLayers = bufferKm > 5;
 
   async function handleSearchParcelle() {
     setError(null);
@@ -686,11 +681,6 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
                   unit=" km"
                   onChange={setBufferKm}
                 />
-                {willSkipUfLayers && (
-                  <div className="create-aoi-parcel-status is-missing">
-                    Buffer &gt; 5 km : les couches "Unités foncières" et "Sous-ensembles UF" seront ignorées.
-                  </div>
-                )}
               </div>
             </div>
 

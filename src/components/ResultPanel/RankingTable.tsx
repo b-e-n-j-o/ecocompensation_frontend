@@ -1,13 +1,13 @@
 // ─── RankingTable ─────────────────────────────────────────────────────────────
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { exportCsv, exportShp } from "../../api";
+import { exportCsv, exportRapportPdf, exportShp } from "../../api";
 import type { ParcelleResult, ParcelPoolMetricRow, RankingSortKey } from "../../types";
 import { RankingLine } from "./RankingLine";
 
 const PAGE_SIZE = 50;
 
 /** Nombre de colonnes fixes du tableau principal (hors colonne indésirable optionnelle). */
-const RANKING_BASE_COL_COUNT = 11;
+const RANKING_BASE_COL_COUNT = 13;
 
 interface RankingTableProps {
   parcelles: ParcelleResult[];
@@ -54,26 +54,83 @@ function parseIdu(idu: string, codeInseeFallback?: string): ParsedIdu {
 function getDureteScore(metrics: ParcelPoolMetricRow[] | undefined): number | null {
   const row = (metrics ?? []).find((m) => m.metric_key === "durete_fonciere");
   const raw = row?.metric_value_jsonb?.score_final;
-  return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return null;
+  if (raw < 0 || raw > 100) return null;
+  return raw;
 }
 
 function getEcologicalScore(metrics: ParcelPoolMetricRow[] | undefined): { score: number; max: number } | null {
-  const row = (metrics ?? []).find((m) => m.metric_key === "parcel_score_v1");
+  const row = (metrics ?? []).find((m) => m.metric_key === "score_eco");
   const rawScore = row?.metric_value_jsonb?.total_score;
   const rawMax = row?.metric_value_jsonb?.max_score;
   if (typeof rawScore !== "number" || !Number.isFinite(rawScore)) return null;
-  const max = typeof rawMax === "number" && Number.isFinite(rawMax) && rawMax > 0 ? rawMax : 9;
+  const max = typeof rawMax === "number" && Number.isFinite(rawMax) && rawMax > 0 ? rawMax : 6;
   return { score: rawScore, max };
 }
 
-function getCompositeScore(
-  metrics: ParcelPoolMetricRow[] | undefined,
-): { score: number; redhibitoire: boolean } | null {
+type EspecesCell = {
+  espece: string | null;
+  distanceM: number | null;
+};
+
+function getEspecesCell(metrics: ParcelPoolMetricRow[] | undefined): EspecesCell {
+  const row = (metrics ?? []).find((m) => m.metric_key === "especes_faune");
+  const payload = row?.metric_value_jsonb;
+  if (!payload || typeof payload !== "object") {
+    return { espece: null, distanceM: null };
+  }
+
+  const nearestRaw = (payload as { nearest_species?: unknown }).nearest_species;
+  const nearest = typeof nearestRaw === "string" && nearestRaw.trim() ? nearestRaw.trim() : null;
+
+  const distRaw = (payload as { nearest_observation_distance_m?: unknown }).nearest_observation_distance_m;
+  const distanceMRaw =
+    typeof distRaw === "number" && Number.isFinite(distRaw) && distRaw >= 0 ? distRaw : null;
+
+  const intersects = (payload as { intersects_any?: unknown }).intersects_any === true;
+  const interRaw = (payload as { intersections_by_species?: unknown }).intersections_by_species;
+  let topIntersectionSpecies: string | null = null;
+  if (intersects && interRaw && typeof interRaw === "object") {
+    const ranked = Object.entries(interRaw as Record<string, unknown>)
+      .map(([label, cnt]) => ({
+        label: String(label ?? "").trim(),
+        count: typeof cnt === "number" && Number.isFinite(cnt) ? cnt : Number.NaN,
+      }))
+      .filter((x) => x.label && Number.isFinite(x.count) && x.count > 0)
+      .sort((a, b) => (b.count === a.count ? a.label.localeCompare(b.label, "fr") : b.count - a.count));
+    topIntersectionSpecies = ranked.length ? ranked[0].label : null;
+  }
+
+  return {
+    espece: topIntersectionSpecies ?? nearest,
+    distanceM: intersects ? 0 : distanceMRaw,
+  };
+}
+
+type CompositeCell =
+  | { kind: "score"; score: number; redhibitoire: boolean }
+  | { kind: "sans_foncier" }
+  | { kind: "empty" };
+
+function getCompositeScore(metrics: ParcelPoolMetricRow[] | undefined): CompositeCell {
   const row = (metrics ?? []).find((m) => m.metric_key === "composite_score_v1");
-  const rawScore = row?.metric_value_jsonb?.score_composite;
-  const rawRedhib = row?.metric_value_jsonb?.foncier_redhibitoire;
-  if (typeof rawScore !== "number" || !Number.isFinite(rawScore)) return null;
-  return { score: rawScore, redhibitoire: rawRedhib === true };
+  const v = row?.metric_value_jsonb;
+  if (!v || typeof v !== "object") return { kind: "empty" };
+  const rawScore = (v as { score_composite?: unknown }).score_composite;
+  const rawRedhib = (v as { foncier_redhibitoire?: unknown }).foncier_redhibitoire;
+  const status = (v as { composite_status?: unknown }).composite_status;
+  if (
+    typeof rawScore === "number" &&
+    Number.isFinite(rawScore) &&
+    rawScore >= 0 &&
+    rawScore <= 100
+  ) {
+    return { kind: "score", score: rawScore, redhibitoire: rawRedhib === true };
+  }
+  if (status === "sans_foncier") {
+    return { kind: "sans_foncier" };
+  }
+  return { kind: "empty" };
 }
 
 function ecologicalBadgeStyle(scorePayload: { score: number; max: number } | null): { bg: string; fg: string } {
@@ -94,10 +151,11 @@ function dureteBadgeStyle(score: number | null): { bg: string; fg: string } {
   return { bg: "#d1fae5", fg: "#065f46" };
 }
 
-function compositeBadgeStyle(scorePayload: { score: number; redhibitoire: boolean } | null): { bg: string; fg: string } {
-  if (scorePayload == null) return { bg: "#e5e7eb", fg: "#374151" };
-  if (scorePayload.redhibitoire) return { bg: "#fee2e2", fg: "#991b1b" };
-  const s = scorePayload.score;
+function compositeBadgeStyle(cell: CompositeCell): { bg: string; fg: string } {
+  if (cell.kind === "empty") return { bg: "#e5e7eb", fg: "#374151" };
+  if (cell.kind === "sans_foncier") return { bg: "#e0e7ff", fg: "#3730a3" };
+  if (cell.redhibitoire) return { bg: "#fee2e2", fg: "#991b1b" };
+  const s = cell.score;
   if (s >= 75) return { bg: "#dcfce7", fg: "#166534" };
   if (s >= 55) return { bg: "#bbf7d0", fg: "#166534" };
   if (s >= 35) return { bg: "#fef3c7", fg: "#92400e" };
@@ -126,6 +184,9 @@ export function RankingTable({
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [exportChoice, setExportChoice] = useState<"" | "csv" | "shp">("");
   const [exporting, setExporting] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
+  /** Δ RSS serveur (Mo) pour la dernière génération PDF réussie — voir en-tête `X-Rapport-Rss-Delta-Mb`. */
+  const [lastPdfRssDeltaMb, setLastPdfRssDeltaMb] = useState<number | null>(null);
 
   /** Identifiant stable du jeu de parcelles affiché (ordre ignoré) — pour ne pas fermer les déploiements au seul changement de tri. */
   const parcellesIdentity = useMemo(
@@ -207,7 +268,7 @@ export function RankingTable({
             Exporter
             <select
               value={exportChoice}
-              disabled={!projectId || exporting}
+              disabled={!projectId || exporting || exportingPdf}
               onChange={async (e) => {
                 const v = e.target.value as "" | "csv" | "shp";
                 if (!v || !projectId) return;
@@ -235,6 +296,43 @@ export function RankingTable({
               <option value="shp">Shapefile (ZIP)</option>
             </select>
           </label>
+          <button
+            type="button"
+            className="ranking-btn-pdf"
+            disabled={!projectId || exporting || exportingPdf}
+            title="Génère le rapport PDF (même périmètre que CSV / SHP pour ce run)"
+            onClick={async (e) => {
+              e.stopPropagation();
+              if (!projectId) return;
+              setExportingPdf(true);
+              setLastPdfRssDeltaMb(null);
+              try {
+                const { rssDeltaMb } = await exportRapportPdf(projectId, exportPoolRunId ?? null);
+                setLastPdfRssDeltaMb(rssDeltaMb);
+              } catch (err) {
+                console.error("Rapport PDF:", err);
+                alert(
+                  err instanceof Error
+                    ? err.message
+                    : "Erreur lors de la génération du rapport PDF.",
+                );
+              } finally {
+                setExportingPdf(false);
+              }
+            }}
+          >
+            {exportingPdf
+              ? "Génération du rapport… (téléchargement)"
+              : "Rapport PDF"}
+          </button>
+          {lastPdfRssDeltaMb != null && Number.isFinite(lastPdfRssDeltaMb) && (
+            <span
+              className="ranking-pdf-rss-hint mono"
+              title="Δ RSS processus serveur pendant export SHP + PDF (approximation, pas pic mémoire)"
+            >
+              Δ RAM serveur ~{lastPdfRssDeltaMb.toFixed(1)} Mo
+            </span>
+          )}
           {poolMetricsLoading && (
             <span className="ranking-pool-loading" title="Chargement des métriques du pool">
               Métriques…
@@ -261,6 +359,8 @@ export function RankingTable({
               <th className="col-section">Section</th>
               <th className="col-numero">Numéro</th>
               <th className="col-idu">IDU</th>
+              <th className="col-espece">Espèce</th>
+              <th className="col-dist-espece">Dist espèce</th>
               <th className="col-dist">Dist.</th>
               <th className="col-eco">Score éco</th>
               <th className="col-composite">Composite</th>
@@ -285,6 +385,7 @@ export function RankingTable({
               const compositeStyle = compositeBadgeStyle(compositeScore);
               const dureteScore = getDureteScore(poolMetricsByIdu?.[p.idu]);
               const dureteStyle = dureteBadgeStyle(dureteScore);
+              const especesCell = getEspecesCell(poolMetricsByIdu?.[p.idu]);
 
               return (
                 <Fragment key={p.idu}>
@@ -307,6 +408,19 @@ export function RankingTable({
                         <span className="idu-main mono">{p.idu}</span>
                         <span className="idu-sub">{p.code_insee}</span>
                       </div>
+                    </td>
+                    <td className="col-espece" title={especesCell.espece ?? "Espèce non renseignée"}>
+                      {especesCell.espece ?? "—"}
+                    </td>
+                    <td className="col-dist-espece mono">
+                      {especesCell.distanceM == null ? (
+                        "—"
+                      ) : (
+                        <>
+                          {Math.round(especesCell.distanceM).toLocaleString("fr-FR")}
+                          <span className="unit"> m</span>
+                        </>
+                      )}
                     </td>
                     <td className="col-dist mono">
                       {p.distance_km.toFixed(1)}<span className="unit"> km</span>
@@ -351,14 +465,20 @@ export function RankingTable({
                           fontSize: 12,
                         }}
                         title={
-                          compositeScore == null
+                          compositeScore.kind === "empty"
                             ? "Score composite non disponible"
-                            : compositeScore.redhibitoire
-                              ? `Score composite: ${compositeScore.score}/100 — dureté rédhibitoire`
-                              : `Score composite: ${compositeScore.score}/100`
+                            : compositeScore.kind === "sans_foncier"
+                              ? "Score composite non calculé : dureté foncière non applicable (hors personnes morales). Voir le score écologique."
+                              : compositeScore.redhibitoire
+                                ? `Score composite: ${compositeScore.score}/100 — dureté rédhibitoire`
+                                : `Score composite: ${compositeScore.score}/100`
                         }
                       >
-                        {compositeScore == null ? "—" : compositeScore.score.toFixed(1)}
+                        {compositeScore.kind === "empty"
+                          ? "—"
+                          : compositeScore.kind === "sans_foncier"
+                            ? "n/c"
+                            : compositeScore.score.toFixed(1)}
                       </span>
                     </td>
                     <td className="col-durete">

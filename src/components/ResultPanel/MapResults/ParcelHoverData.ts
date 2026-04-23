@@ -108,7 +108,7 @@ export function buildParcelHoverHtml(
   metrics: ParcelPoolMetricRow[] | null | undefined,
   scoreRatio?: number | null,
 ): string {
-  const scoreRow = metrics?.find((m) => m.metric_key === "parcel_score_v1");
+  const scoreRow = metrics?.find((m) => m.metric_key === "score_eco");
   const scorePayload = scoreRow ? parseParcelScorePayload(scoreRow.metric_value_jsonb ?? {}) : null;
   const dureteRow = metrics?.find((m) => m.metric_key === "durete_fonciere");
   const duretePayload = dureteRow ? parseDureteFoncierePayload(dureteRow.metric_value_jsonb ?? {}) : null;

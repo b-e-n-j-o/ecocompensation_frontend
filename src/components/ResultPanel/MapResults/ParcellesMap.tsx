@@ -117,6 +117,11 @@ const BASE_STYLE: maplibregl.StyleSpecification = {
 
 function emptyFC(): FeatureCollection { return { type: "FeatureCollection", features: [] }; }
 
+function toFiniteNumber(value: unknown): number | null {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 // ─── Composant ────────────────────────────────────────────────────────────────
 
 export function ParcellesMap({
@@ -147,7 +152,7 @@ export function ParcellesMap({
       ...geojson,
       features: geojson.features.map((f) => {
         const idu = typeof f.properties?.idu === "string" ? f.properties.idu : "";
-        const scoreMetric = (poolMetricsByIdu?.[idu] ?? []).find((m) => m.metric_key === "parcel_score_v1");
+        const scoreMetric = (poolMetricsByIdu?.[idu] ?? []).find((m) => m.metric_key === "score_eco");
         const raw = (scoreMetric?.metric_value_jsonb ?? {}) as Record<string, unknown>;
         const totalScore = typeof raw.total_score === "number" ? raw.total_score : Number(raw.total_score ?? NaN);
         const maxScore = typeof raw.max_score === "number" ? raw.max_score : Number(raw.max_score ?? NaN);
@@ -157,9 +162,10 @@ export function ParcellesMap({
             : Number(f.properties?.score_norm ?? 0);
         const dureteMetric = (poolMetricsByIdu?.[idu] ?? []).find((m) => m.metric_key === "durete_fonciere");
         const rawD = (dureteMetric?.metric_value_jsonb ?? {}) as Record<string, unknown>;
+        const scoreFinal = toFiniteNumber(rawD.score_final);
         const foncierScore =
-          rawD.eligible === true && typeof rawD.score_final === "number" && Number.isFinite(rawD.score_final)
-            ? rawD.score_final
+          rawD.eligible === true && scoreFinal != null
+            ? scoreFinal
             : -1;
         return {
           ...f,
@@ -172,6 +178,18 @@ export function ParcellesMap({
       }),
     };
   }, [geojson, poolMetricsByIdu]);
+
+  const foncierCoverage = useMemo(() => {
+    const features = geojsonWithScoreRatio?.features ?? [];
+    const total = features.length;
+    if (total === 0) return { withFoncier: 0, total: 0 };
+    let withFoncier = 0;
+    for (const f of features) {
+      const val = (f.properties as Record<string, unknown> | undefined)?.foncier_score;
+      if (typeof val === "number" && Number.isFinite(val) && val >= 0) withFoncier += 1;
+    }
+    return { withFoncier, total };
+  }, [geojsonWithScoreRatio]);
 
   // Reset au changement de projet
   useEffect(() => {
@@ -592,6 +610,23 @@ export function ParcellesMap({
         >
           Score foncier
         </button>
+        {scoreColorMode === "foncier" && (
+          <span
+            title="Parcelles avec un score foncier disponible"
+            style={{
+              marginLeft: 4,
+              padding: "4px 6px",
+              borderRadius: 4,
+              border: "1px solid #475569",
+              background: "rgba(15, 23, 42, 0.55)",
+              color: "#cbd5e1",
+              fontSize: 11,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Foncier dispo: {foncierCoverage.withFoncier}/{foncierCoverage.total}
+          </span>
+        )}
       </div>
       <div
         ref={mapContainer}

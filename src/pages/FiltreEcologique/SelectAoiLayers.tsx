@@ -7,7 +7,7 @@ export interface SelectAoiLayersProps {
   layers: LayerInfo[];
   selectedKeys: string[];
   onSelectedKeysChange: (keys: string[]) => void;
-  /** Buffer AOI (km) : au-delà de 5 km, UF / sous-ensembles sont ignorés côté serveur. */
+  /** Buffer AOI (km), conservé pour affichage/compatibilité. */
   bufferKm: number;
   ufEnabled: boolean;
   onUfEnabledChange: (value: boolean) => void;
@@ -30,7 +30,7 @@ export function SelectAoiLayers({
   layers,
   selectedKeys,
   onSelectedKeysChange,
-  bufferKm,
+  bufferKm: _bufferKm,
   ufEnabled,
   onUfEnabledChange,
   ufMaxParcelles,
@@ -50,7 +50,6 @@ export function SelectAoiLayers({
   const allSelected = allKeys.length > 0 && allKeys.every((k) => selectedSet.has(k));
   const noneSelected = selectedKeys.length === 0;
 
-  const ufBlockedByBuffer = bufferKm > 5;
   const ufLocked = disabled;
 
   function toggleKey(key: string) {
@@ -158,14 +157,14 @@ export function SelectAoiLayers({
       </div>
 
       <div
-        className={`select-aoi-layers__uf-block ${ufBlockedByBuffer ? "select-aoi-layers__uf-block--blocked" : ""}`}
+        className="select-aoi-layers__uf-block"
       >
         <div className="select-aoi-layers__uf-title">Unités foncières (personnes morales)</div>
         <label className="select-aoi-layers__uf-row">
           <input
             type="checkbox"
-            checked={ufEnabled && !ufBlockedByBuffer}
-            disabled={disabled || ufBlockedByBuffer}
+            checked={ufEnabled}
+            disabled={disabled}
             onChange={(e) => onUfEnabledChange(e.target.checked)}
           />
           <span className="select-aoi-layers__row-label">
@@ -183,7 +182,7 @@ export function SelectAoiLayers({
             max={10}
             step={1}
             value={ufMaxParcelles}
-            disabled={ufLocked || !ufEnabled || ufBlockedByBuffer}
+            disabled={ufLocked || !ufEnabled}
             onChange={(e) => onUfMaxParcellesChange(Number(e.target.value))}
           />
           <span className="select-aoi-layers__uf-k-range">5 — 10</span>
@@ -199,7 +198,7 @@ export function SelectAoiLayers({
             min={1}
             step={0.5}
             value={ufMinAreaHa}
-            disabled={ufLocked || !ufEnabled || ufBlockedByBuffer}
+            disabled={ufLocked || !ufEnabled}
             onChange={(e) => onUfMinAreaHaChange(Number(e.target.value) || 1)}
           />
         </div>
@@ -208,11 +207,6 @@ export function SelectAoiLayers({
           possibles de sous-ensembles de parcelles (contiguës). Des valeurs plus élevées augmentent fortement
           le coût de calcul.
         </p>
-        {ufBlockedByBuffer && (
-          <p className="select-aoi-layers__uf-buffer-warn">
-            Buffer AOI &gt; 5 km : les unités foncières et sous-ensembles ne sont pas calculés (serveur).
-          </p>
-        )}
       </div>
     </div>
   );

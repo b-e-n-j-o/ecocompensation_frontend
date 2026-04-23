@@ -3,28 +3,23 @@
  * Voir `layers/` pour adapter couche par couche sans fichier monolithique.
  */
 import type { CSSProperties } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { buildFilterRequestPayload } from "../../api";
 import { DEFAULT_FILTER } from "../../types";
 import type {
-  ArrachageVignesMode,
-  CarhabNomEunis,
   FauneCriterion,
   FilterOptions,
   LayerIntersectMode,
-  ZoneHumideMode,
+  VegetationHybrideValue,
 } from "../../types";
 import { ProjectSelector } from "../ProjectSelector";
 import {
   ExclusionsSection,
   FauneSection,
-  VegetationHybrideSection,
-  ArrachageVignesSection,
-  ZoneHumideSection,
-  RemonteeNappesSection,
   LayerIntersectSection,
-  CarhabSection,
   HydroSection,
   GeometrySection,
+  VegetationHybrideSection,
 } from "./layers";
 
 const shell: CSSProperties = {
@@ -43,7 +38,9 @@ interface FilterPanelProps {
   projectId: string | null;
   onProjectChange: (projectId: string | null) => void;
   onOpenRun?: (projectId: string, runId: string) => void;
-  onSubmit: (options: FilterOptions, scoreOnlyMode: boolean) => void;
+  /** Run affiché côté résultats (URL ou dernier filtre) — aligne le sélecteur de runs. */
+  activeRunId?: string | null;
+  onSubmit: (options: FilterOptions, scoreOnlyMode: boolean, ufOnlyMode: boolean) => void;
   onNavigateToCreate?: () => void;
   isLoading?: boolean;
   loadingText?: string | null;
@@ -56,6 +53,7 @@ export function FilterPanel({
   projectId,
   onProjectChange,
   onOpenRun,
+  activeRunId = null,
   onSubmit,
   onNavigateToCreate,
   isLoading = false,
@@ -65,6 +63,8 @@ export function FilterPanel({
 }: FilterPanelProps) {
   const [opts, setOpts] = useState<FilterOptions>(DEFAULT_FILTER);
   const [scoreOnlyMode, setScoreOnlyMode] = useState(false);
+  const [ufOnlyMode, setUfOnlyMode] = useState(false);
+  const [showDebugPayload, setShowDebugPayload] = useState(false);
 
   useEffect(() => {
     if (initialOptions) {
@@ -76,10 +76,24 @@ export function FilterPanel({
     setOpts((prev) => ({ ...prev, ...p }));
   }
 
+  const debugPayloadText = useMemo(() => {
+    const payload = buildFilterRequestPayload(opts);
+    return JSON.stringify(
+      {
+        endpoint: ufOnlyMode ? "/api/projects/{project_id}/filter/uf" : "/api/projects/{project_id}/filter",
+        payload,
+        scoreOnlyMode,
+        ufOnlyMode,
+      },
+      null,
+      2,
+    );
+  }, [opts, scoreOnlyMode, ufOnlyMode]);
+
   const runBtn = (
     <button
       type="button"
-      onClick={() => onSubmit(opts, scoreOnlyMode)}
+      onClick={() => onSubmit(opts, scoreOnlyMode, ufOnlyMode)}
       disabled={disabled || isLoading}
       style={{
         width: 220,
@@ -106,7 +120,7 @@ export function FilterPanel({
       ) : (
         <>
           <span>▶</span>
-          Lancer le filtre
+          {ufOnlyMode ? "Lancer le filtre UF" : "Lancer le filtre"}
         </>
       )}
     </button>
@@ -159,6 +173,7 @@ export function FilterPanel({
           value={projectId}
           onSelect={onProjectChange}
           onOpenRun={onOpenRun}
+          activeRunId={activeRunId}
           disabled={isLoading}
         />
 
@@ -166,6 +181,11 @@ export function FilterPanel({
           projectId={projectId}
           value={opts.excluded_layers}
           onChange={(v: string[]) => patch({ excluded_layers: v })}
+        />
+
+        <VegetationHybrideSection
+          value={opts.vegetation_hybride}
+          onChange={(v: VegetationHybrideValue) => patch({ vegetation_hybride: v })}
         />
 
         <GeometrySection
@@ -178,21 +198,6 @@ export function FilterPanel({
           projectId={projectId}
           value={opts.faune_criteria}
           onChange={(v: FauneCriterion[]) => patch({ faune_criteria: v })}
-        />
-
-        <VegetationHybrideSection
-          value={opts.vegetation_hybride}
-          onChange={(v) => patch({ vegetation_hybride: v })}
-        />
-
-        <ZoneHumideSection
-          value={opts.zone_humide_mode}
-          onChange={(v: ZoneHumideMode) => patch({ zone_humide_mode: v })}
-        />
-
-        <RemonteeNappesSection
-          value={opts.remontee_nappes_classefiab}
-          onChange={(v: string[]) => patch({ remontee_nappes_classefiab: v })}
         />
 
         <LayerIntersectSection
@@ -239,13 +244,15 @@ export function FilterPanel({
           surfaceRadius={opts.surface_hydro_radius_m}
           onChange={patch}
         />
-        
-        <ArrachageVignesSection
-          value={opts.arrachage_vignes_mode}
-          onChange={(v: ArrachageVignesMode) => patch({ arrachage_vignes_mode: v })}
-        />
 
-      <CarhabSection value={opts.carhab_nom_eunis} onChange={(v: CarhabNomEunis[]) => patch({ carhab_nom_eunis: v })} />
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#9ca3af", cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={ufOnlyMode}
+            onChange={(e) => setUfOnlyMode(e.target.checked)}
+          />
+          Lancer uniquement le filtrage unités foncières (UF)
+        </label>
 
         <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#9ca3af", cursor: "pointer" }}>
           <input
@@ -263,6 +270,43 @@ export function FilterPanel({
           />
           Recalculer uniquement le scoring (debug perf)
         </label>
+
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#9ca3af", cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={showDebugPayload}
+            onChange={(e) => setShowDebugPayload(e.target.checked)}
+          />
+          Afficher payload backend (debug 422)
+        </label>
+
+        {showDebugPayload && (
+          <div
+            style={{
+              marginTop: 4,
+              border: "1px solid #2a2f3d",
+              borderRadius: 6,
+              background: "#111827",
+              padding: 8,
+            }}
+          >
+            <div style={{ fontSize: 11, color: "#93c5fd", marginBottom: 6 }}>
+              Requête réellement envoyée par le front
+            </div>
+            <pre
+              style={{
+                margin: 0,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                fontSize: 11,
+                lineHeight: 1.35,
+                color: "#cbd5e1",
+              }}
+            >
+              {debugPayloadText}
+            </pre>
+          </div>
+        )}
 
       </div>
 

@@ -9,6 +9,9 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
+        /** Rapport PDF : génération longue — évite coupure « Failed to fetch » côté proxy */
+        timeout: 900_000,
+        proxyTimeout: 900_000,
       },
       '/ws': {
         target: 'ws://localhost:8000',

@@ -2,7 +2,7 @@
 import type { ParcelPoolMetricRow, VegetationHybridePoolMetricPayload } from "../../types";
 
 const METRIC_LABELS: Record<string, string> = {
-  parcel_score_v1: "Score parcelle",
+  score_eco: "Score écologique",
   composite_score_v1: "Score composite",
   durete_fonciere: "Dureté foncière (personne morale)",
   especes_faune: "Espèces faune",
@@ -15,7 +15,7 @@ const METRIC_LABELS: Record<string, string> = {
 
 /** Ordre d’affichage des blocs métriques dans le détail de ligne. */
 const METRIC_DISPLAY_ORDER = [
-  "parcel_score_v1",
+  "score_eco",
   "composite_score_v1",
   "durete_fonciere",
   "especes_faune",
@@ -268,8 +268,9 @@ type ParcelScoreBreakdownItem = {
   reason?: string;
   distance_km?: number;
   bucket?: string;
-  surface_ha?: number;
-  target_ha?: number;
+  nearest_observation_distance_m?: number;
+  buffer_radius_max_m?: number;
+  buffer_half_m?: number;
 };
 
 type ParcelScorePayload = {
@@ -278,10 +279,6 @@ type ParcelScorePayload = {
   breakdown: {
     especes: ParcelScoreBreakdownItem;
     distance: ParcelScoreBreakdownItem;
-    surface: ParcelScoreBreakdownItem;
-    arrachage: ParcelScoreBreakdownItem;
-    /** +1 si parcelle répertoriée base PPM (absent sur anciens scores max 8) */
-    personnes_morales?: ParcelScoreBreakdownItem;
   };
 };
 
@@ -299,23 +296,25 @@ function parseParcelScorePayload(v: Record<string, unknown>): ParcelScorePayload
       reason: typeof rec.reason === "string" ? rec.reason : undefined,
       distance_km: typeof rec.distance_km === "number" && Number.isFinite(rec.distance_km) ? rec.distance_km : undefined,
       bucket: typeof rec.bucket === "string" ? rec.bucket : undefined,
-      surface_ha: typeof rec.surface_ha === "number" && Number.isFinite(rec.surface_ha) ? rec.surface_ha : undefined,
-      target_ha: typeof rec.target_ha === "number" && Number.isFinite(rec.target_ha) ? rec.target_ha : undefined,
+      nearest_observation_distance_m:
+        typeof rec.nearest_observation_distance_m === "number" && Number.isFinite(rec.nearest_observation_distance_m)
+          ? rec.nearest_observation_distance_m
+          : undefined,
+      buffer_radius_max_m:
+        typeof rec.buffer_radius_max_m === "number" && Number.isFinite(rec.buffer_radius_max_m)
+          ? rec.buffer_radius_max_m
+          : undefined,
+      buffer_half_m:
+        typeof rec.buffer_half_m === "number" && Number.isFinite(rec.buffer_half_m) ? rec.buffer_half_m : undefined,
     };
   };
 
-  const br = b as Record<string, unknown>;
   return {
     total_score: v.total_score,
     max_score: v.max_score,
     breakdown: {
       especes: getItem("especes"),
       distance: getItem("distance"),
-      surface: getItem("surface"),
-      arrachage: getItem("arrachage"),
-      ...(Object.prototype.hasOwnProperty.call(br, "personnes_morales")
-        ? { personnes_morales: getItem("personnes_morales") }
-        : {}),
     },
   };
 }
@@ -337,50 +336,37 @@ function ScoreBlock({ payload }: { payload: ParcelScorePayload }) {
           ? "rgba(245,158,11,0.14)"
           : "rgba(107,114,128,0.12)";
 
-  const pm = payload.breakdown.personnes_morales;
-  const pmPoints = pm?.points ?? 0;
-  const pmDetail =
-    pm === undefined
-      ? "(non inclus dans cet ancien calcul de score)"
-      : pm.reason === "repertoire_pm"
-        ? "Parcelle répertoriée en base personnes morales"
-        : "Non répertoriée en base personnes morales";
+  const es = payload.breakdown.especes;
+  const esDetail = (() => {
+    const r = es.reason;
+    if (r === "intersection") return "Observation dans la parcelle";
+    if (r === "within_half_buffer") {
+      const d = es.nearest_observation_distance_m;
+      const h = es.buffer_half_m;
+      return `Plus proche observation ≤ demi-buffer (${d != null ? `${Math.round(d)} m` : "?"} / ${h != null ? `${Math.round(h)} m` : "?"})`;
+    }
+    if (r === "within_buffer") {
+      const d = es.nearest_observation_distance_m;
+      const b = es.buffer_radius_max_m;
+      return `Plus proche observation dans le buffer (${d != null ? `${Math.round(d)} m` : "?"} ≤ ${b != null ? `${Math.round(b)} m` : "?"})`;
+    }
+    if (r === "beyond_buffer") return "Observation au-delà du buffer du filtre";
+    if (r === "no_faune_criteria") return "Aucune espèce ciblée dans le filtre";
+    if (r === "no_buffer_in_filter") return "Buffer non défini (mode filtre sans rayon)";
+    if (r === "no_observation") return "Pas d'observation géolocalisée pour les espèces du filtre";
+    return "Hors critères";
+  })();
 
   const lines: { label: string; points: number; detail: string }[] = [
     {
-      label: "Espèces faune",
-      points: payload.breakdown.especes.points,
-      detail:
-        payload.breakdown.especes.reason === "intersection"
-          ? "Observation dans la parcelle"
-          : payload.breakdown.especes.reason === "adjacent_to_intersection"
-            ? "Parcelle adjacente à une parcelle avec observation"
-            : payload.breakdown.especes.reason === "within_buffer"
-              ? "Observation dans le buffer du filtre"
-              : "Hors buffer / aucune observation",
+      label: "Espèces faune (proximité)",
+      points: es.points,
+      detail: esDetail,
     },
     {
-      label: "Distance au centre",
+      label: "Distance au projet",
       points: payload.breakdown.distance.points,
       detail: `${payload.breakdown.distance.distance_km?.toFixed(1) ?? "?"} km (${payload.breakdown.distance.bucket ?? "n/a"})`,
-    },
-    {
-      label: "Superficie",
-      points: payload.breakdown.surface.points,
-      detail: `${payload.breakdown.surface.surface_ha?.toFixed(2) ?? "?"} ha (cible ${payload.breakdown.surface.target_ha?.toFixed(2) ?? "?"} ha)`,
-    },
-    {
-      label: "Arrachage vigne",
-      points: payload.breakdown.arrachage.points,
-      detail:
-        payload.breakdown.arrachage.reason === "renaturation"
-          ? "Concernée par arrachage (renaturation)"
-          : "N'est pas concernée par l'arrachage de vigne",
-    },
-    {
-      label: "Personnes morales (PPM)",
-      points: pmPoints,
-      detail: pmDetail,
     },
   ];
 
@@ -447,6 +433,8 @@ type DureteFoncierePayload = {
 
 type CompositeScorePayload = {
   score_composite?: number | null;
+  composite_status?: string | null;
+  message?: string | null;
   eco_score_raw?: number | null;
   eco_score_max?: number | null;
   eco_score_norm?: number | null;
@@ -457,13 +445,23 @@ type CompositeScorePayload = {
 };
 
 function parseCompositeScorePayload(v: Record<string, unknown>): CompositeScorePayload | null {
-  const score = v.score_composite;
-  if (typeof score !== "number" || !Number.isFinite(score)) return null;
+  const scoreRaw = v.score_composite;
+  const score =
+    typeof scoreRaw === "number" && Number.isFinite(scoreRaw) && scoreRaw >= 0 && scoreRaw <= 100
+      ? scoreRaw
+      : null;
+  const hasEco =
+    typeof v.eco_score_norm === "number" && Number.isFinite(v.eco_score_norm) ? v.eco_score_norm : null;
+  const status = typeof v.composite_status === "string" ? v.composite_status : null;
+  const message = typeof v.message === "string" ? v.message : null;
+  if (score == null && hasEco == null && !status && !message) return null;
   return {
     score_composite: score,
+    composite_status: status,
+    message,
     eco_score_raw: typeof v.eco_score_raw === "number" && Number.isFinite(v.eco_score_raw) ? v.eco_score_raw : null,
     eco_score_max: typeof v.eco_score_max === "number" && Number.isFinite(v.eco_score_max) ? v.eco_score_max : null,
-    eco_score_norm: typeof v.eco_score_norm === "number" && Number.isFinite(v.eco_score_norm) ? v.eco_score_norm : null,
+    eco_score_norm: hasEco,
     durete_fonciere:
       typeof v.durete_fonciere === "number" && Number.isFinite(v.durete_fonciere) ? v.durete_fonciere : null,
     attractivite_fonciere:
@@ -509,13 +507,17 @@ function parseDureteFoncierePayload(v: Record<string, unknown>): DureteFonciereP
   };
 }
 
+function dureteNonEligibleLabel(reason: string | null | undefined): string {
+  const r = reason ?? "not_pm";
+  if (r === "not_pm") {
+    return "Non applicable : parcelle hors répertoire personnes morales (pas de SIREN exploitable). Le score de dureté foncière ne s’affiche pas ; le classement peut s’appuyer sur le score écologique et le composite lorsque celui-ci est calculé.";
+  }
+  return `Non concernée par la dureté foncière (code : ${r}).`;
+}
+
 function DureteFonciereBlock({ payload }: { payload: DureteFoncierePayload }) {
   if (!payload.eligible) {
-    return (
-      <p className="ranking-line-empty">
-        Non concernée par la dureté foncière (raison: {payload.reason ?? "not_pm"}).
-      </p>
-    );
+    return <p className="ranking-line-empty">{dureteNonEligibleLabel(payload.reason)}</p>;
   }
 
   const score = payload.score_final;
@@ -603,9 +605,11 @@ function DureteFonciereBlock({ payload }: { payload: DureteFoncierePayload }) {
 function CompositeScoreBlock({ payload }: { payload: CompositeScorePayload }) {
   const score = payload.score_composite ?? null;
   const redhib = payload.foncier_redhibitoire === true;
+  const sansFoncier = payload.composite_status === "sans_foncier" || (score == null && payload.attractivite_fonciere == null);
   const color = redhib ? "#991b1b" : score != null && score >= 75 ? "#166534" : score != null && score >= 55 ? "#15803d" : "#374151";
   const bg = redhib ? "rgba(127,29,29,0.08)" : "rgba(15, 23, 42, 0.04)";
   const threshold = payload.redhibitoire_threshold ?? 20;
+  const headline = score != null ? `Score composite : ${score.toFixed(1)}/100` : "Score composite : non calculé";
 
   return (
     <div
@@ -613,15 +617,24 @@ function CompositeScoreBlock({ payload }: { payload: CompositeScorePayload }) {
       style={{ border: `1px solid ${color}`, borderRadius: 8, background: bg, padding: 10 }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 8 }}>
-        <strong style={{ color, fontSize: 14 }}>
-          Score composite: {score == null ? "?" : score.toFixed(1)}/100
-        </strong>
+        <strong style={{ color, fontSize: 14 }}>{headline}</strong>
         {redhib && (
           <span className="mono" style={{ color: "#991b1b", fontSize: 12 }}>
             Dureté rédhibitoire
           </span>
         )}
       </div>
+      {payload.message && (
+        <p className="ranking-line-empty" style={{ marginBottom: 8 }}>
+          {payload.message}
+        </p>
+      )}
+      {!payload.message && score == null && sansFoncier && (
+        <p className="ranking-line-empty" style={{ marginBottom: 8 }}>
+          La dimension « foncier » du composite n’est pas disponible (parcelle hors personnes morales ou dureté
+          non calculée). Utilisez le score écologique normalisé ci-dessous comme référence.
+        </p>
+      )}
       <div style={{ display: "grid", gap: 6 }}>
         <div>
           <span style={{ color: "#6b7280" }}>Score éco normalisé</span>{" "}
@@ -825,7 +838,7 @@ export function RankingLine({
             row.metric_key === "carhab_eunis_ratio" ||
             row.metric_key === "arrachage_vignes_ratio";
           const zonagePayload = isZonageRatio ? parseVegetationPayload(val) : null;
-          const scorePayload = row.metric_key === "parcel_score_v1" ? parseParcelScorePayload(val) : null;
+          const scorePayload = row.metric_key === "score_eco" ? parseParcelScorePayload(val) : null;
           const compositePayload = row.metric_key === "composite_score_v1" ? parseCompositeScorePayload(val) : null;
           const especesFaunePayload = row.metric_key === "especes_faune" ? parseEspecesFaunePayload(val) : null;
           const dureteFoncierePayload =

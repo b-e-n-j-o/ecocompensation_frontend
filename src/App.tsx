@@ -47,6 +47,7 @@ import { CreateAoiPage } from "./pages/FiltreEcologique/CreateAoiPage";
 import { ProjectContextMap } from "./components/ProjectContextMap";
 import Bancarisation from "./pages/Bancarisation/page";
 import AnalyseEcologiquePage from "./pages/AnalyseEcologique/page";
+import IdentiteFoncierePage from "./pages/IdentiteFonciere/page";
 
 import "./App.css";
 import "./components/FilterPanel/filter-panel.css";
@@ -56,7 +57,7 @@ import type { FeatureCollection, GeoJsonProperties, Geometry } from "geojson";
 /** Onglets principaux : Parcelles | Unités foncières */
 type MainResultsTab = "parcelles" | "unites";
 /** Sous-vues : entonnoir | tableau | carte */
-type ResultsSubView = "entonnoir" | "classement" | "carte";
+type ResultsSubView = "entonnoir" | "classement" | "classement_combine" | "carte";
 type FilterLoadingStage = "idle" | "filtering" | "profiling" | "metrics_loading";
 
 /** Présence de lignes dans ecocompensation_results.sous_ensembles pour le projet (filtre UF possible). */
@@ -76,10 +77,10 @@ interface EcoCompensationAppProps {
 }
 
 /**
- * Recalcule `score_norm` (0–1, meilleur = plus vert sur la carte) à partir de `parcel_score_v1`
+ * Recalcule `score_norm` (0–1, meilleur = plus vert sur la carte) à partir de `score_eco`
  * dès que les métriques pool sont chargées, sans refaire un GET /geojson.
  */
-function applyParcelScoreV1ToParcellesGeojson(
+function applyScoreEcoToParcellesGeojson(
   base: ParcellesGeoJSON | null,
   poolMetricsByIdu: Record<string, ParcelPoolMetricRow[]> | null,
 ): ParcellesGeoJSON | null {
@@ -90,7 +91,7 @@ function applyParcelScoreV1ToParcellesGeojson(
     const idu = String(f.properties?.idu ?? "");
     if (!idu) continue;
     const rows = poolMetricsByIdu[idu];
-    const row = rows?.find((r) => r.metric_key === "parcel_score_v1");
+    const row = rows?.find((r) => r.metric_key === "score_eco");
     const raw = row?.metric_value_jsonb;
     const ts =
       raw && typeof raw === "object" && raw !== null && "total_score" in raw
@@ -120,7 +121,7 @@ function applyParcelScoreV1ToParcellesGeojson(
           ...f.properties,
           total_score: t,
           score_norm,
-          score_norm_source: "parcel_score_v1",
+          score_norm_source: "score_eco",
         },
       };
     }),
@@ -146,6 +147,15 @@ function applyPoolIndesirableToParcellesGeojson(
         },
       };
     }),
+  };
+}
+
+function parseIduParts(raw: string): { codeInsee: string; section: string; numero: string } {
+  const idu = String(raw ?? "").trim();
+  return {
+    codeInsee: idu.slice(0, 5) || "",
+    section: idu.slice(8, 10) || "",
+    numero: idu.slice(-4) || "",
   };
 }
 
@@ -188,7 +198,7 @@ function EcoCompensationApp({
   const [poolMetricsByIdu, setPoolMetricsByIdu] = useState<Record<string, ParcelPoolMetricRow[]> | null>(null);
   /** Options du dernier filtre réussi (pour tri priorité végétation = même ordre que `last_filter` en base). */
   const [lastFilterOptions, setLastFilterOptions] = useState<FilterOptions | null>(null);
-  const [rankingSortKey, setRankingSortKey] = useState<RankingSortKey>("rank");
+  const [rankingSortKey, setRankingSortKey] = useState<RankingSortKey>("composite_score");
   /** IDU exclus du classement (pool indésirables), aligné sur `results.pool_run_id`. */
   const [indesirableIdus, setIndesirableIdus] = useState<string[]>([]);
   const [indesirableParcellesStored, setIndesirableParcellesStored] = useState<FilterResponse["parcelles"]>([]);
@@ -432,7 +442,7 @@ function EcoCompensationApp({
     setThematicPreload(null);
     setPoolMetricsByIdu(null);
     setLastFilterOptions(null);
-    setRankingSortKey("rank");
+    setRankingSortKey("composite_score");
     setIndesirableIdus([]);
     setIndesirableParcellesStored([]);
     setIndesirableMetricsByIdu({});
@@ -510,7 +520,7 @@ function EcoCompensationApp({
     }
   }
 
-  async function handleSubmit(opts: FilterOptions, scoreOnlyMode = false) {
+  async function handleSubmit(opts: FilterOptions, scoreOnlyMode = false, ufOnlyMode = false) {
     if (!projectId) return;
     setLoading(true);
     setFilterLoadingStage("filtering");
@@ -521,7 +531,7 @@ function EcoCompensationApp({
     setUfGeojson(null);
     setPoolMetricsByIdu(null);
     setLastFilterOptions(null);
-    setRankingSortKey("rank");
+    setRankingSortKey("composite_score");
     setIndesirableIdus([]);
     setIndesirableParcellesStored([]);
     setIndesirableMetricsByIdu({});
@@ -536,54 +546,70 @@ function EcoCompensationApp({
         setSousEnsemblesStatus(st.has_sous_ensembles ? "yes" : "no");
       }
 
-      const data = await runFilter(projectId, opts);
-      setResults(data);
-      setLastFilterOptions(opts);
-      createdPoolRunId = data.pool_run_id ?? null;
+      if (!ufOnlyMode) {
+        const data = await runFilter(projectId, opts);
+        setResults(data);
+        setLastFilterOptions(opts);
+        createdPoolRunId = data.pool_run_id ?? null;
 
-      if (data.pool_run_id) {
-        setFilterLoadingStage("profiling");
-        try {
-          if (scoreOnlyMode) await computePoolRunScoreOnly(projectId, data.pool_run_id);
-          else await computePoolRunMetrics(projectId, data.pool_run_id);
-        } catch (e) {
-          console.warn("Calcul métriques pool):", e);
-        }
-        setFilterLoadingStage("metrics_loading");
-        try {
-          const bulk = await fetchPoolRunMetricsBulk(projectId, data.pool_run_id);
-          setPoolMetricsByIdu(bulk.by_idu);
-        } catch (e) {
-          console.warn("Métriques pool (bulk):", e);
+        if (data.pool_run_id) {
+          setFilterLoadingStage("profiling");
+          try {
+            if (scoreOnlyMode) await computePoolRunScoreOnly(projectId, data.pool_run_id);
+            else await computePoolRunMetrics(projectId, data.pool_run_id);
+          } catch (e) {
+            console.warn("Calcul métriques pool):", e);
+          }
+          setFilterLoadingStage("metrics_loading");
+          try {
+            const bulk = await fetchPoolRunMetricsBulk(projectId, data.pool_run_id);
+            setPoolMetricsByIdu(bulk.by_idu);
+          } catch (e) {
+            console.warn("Métriques pool (bulk):", e);
+            setPoolMetricsByIdu({});
+          }
+        } else {
           setPoolMetricsByIdu({});
         }
-      } else {
-        setPoolMetricsByIdu({});
-      }
 
-      // GeoJSON seulement si des parcelles sont présentes
-      if (data.parcelles?.length) {
-        try {
-          const geo = await fetchParcellesGeojson(projectId);
-          setGeojson(geo as ParcellesGeoJSON);
-        } catch (err) {
-          console.warn("GeoJSON parcelles indisponible:", err);
-          setGeojson(null);
+        // GeoJSON seulement si des parcelles sont présentes
+        if (data.parcelles?.length) {
+          try {
+            const geo = await fetchParcellesGeojson(projectId);
+            setGeojson(geo as ParcellesGeoJSON);
+          } catch (err) {
+            console.warn("GeoJSON parcelles indisponible:", err);
+            setGeojson(null);
+          }
         }
-      }
 
-      // Foncier : best-effort (peut être null si aucun foncier)
-      try {
-        const foncier = await fetchFoncierGeojson(projectId);
-        setFoncierGeojson(foncier);
-      } catch (err) {
-        console.warn("GeoJSON foncier indisponible:", err);
+        // Foncier : best-effort (peut être null si aucun foncier)
+        try {
+          const foncier = await fetchFoncierGeojson(projectId);
+          setFoncierGeojson(foncier);
+        } catch (err) {
+          console.warn("GeoJSON foncier indisponible:", err);
+        }
+      } else {
+        // Mode UF-only : on garde un shell de résultats pour afficher le panneau résultats.
+        setResults({
+          total: 0,
+          final_radius_km: 0,
+          parcelles: [],
+          funnel: [],
+          pool_run_id: null,
+        });
+        setPoolMetricsByIdu({});
       }
 
       if (runUf) {
         const uf = await runFilterUF(projectId, opts);
         const ufTyped = uf as UfFilterResponse;
         setUfResults(ufTyped);
+        if (ufOnlyMode) {
+          setMainResultsTab("unites");
+          setUfSubView("classement");
+        }
 
         const hasSubsets = (ufTyped.unites_foncieres ?? []).some(
           (u) => (u.sous_ensembles ?? []).length > 0,
@@ -697,7 +723,7 @@ function EcoCompensationApp({
     const indesirableSet = new Set(indesirableIdus);
     const getParcelScore = (idu: string): number => {
       const rows = poolMetricsByIdu?.[idu] ?? [];
-      const scoreRow = rows.find((r) => r.metric_key === "parcel_score_v1");
+      const scoreRow = rows.find((r) => r.metric_key === "score_eco");
       const raw = scoreRow?.metric_value_jsonb?.total_score;
       return typeof raw === "number" && Number.isFinite(raw) ? raw : Number.NEGATIVE_INFINITY;
     };
@@ -705,13 +731,17 @@ function EcoCompensationApp({
       const rows = poolMetricsByIdu?.[idu] ?? [];
       const dRow = rows.find((r) => r.metric_key === "durete_fonciere");
       const raw = dRow?.metric_value_jsonb?.score_final;
-      return typeof raw === "number" && Number.isFinite(raw) ? raw : Number.POSITIVE_INFINITY;
+      if (typeof raw !== "number" || !Number.isFinite(raw)) return Number.POSITIVE_INFINITY;
+      if (raw < 0 || raw > 100) return Number.POSITIVE_INFINITY;
+      return raw;
     };
     const getCompositeScore = (idu: string): number => {
       const rows = poolMetricsByIdu?.[idu] ?? [];
       const cRow = rows.find((r) => r.metric_key === "composite_score_v1");
       const raw = cRow?.metric_value_jsonb?.score_composite;
-      return typeof raw === "number" && Number.isFinite(raw) ? raw : Number.NEGATIVE_INFINITY;
+      if (typeof raw !== "number" || !Number.isFinite(raw)) return Number.NEGATIVE_INFINITY;
+      if (raw < 0 || raw > 100) return Number.NEGATIVE_INFINITY;
+      return raw;
     };
     const cap = Math.max(1, distanceCursorKm);
     let list = results.parcelles.filter(
@@ -774,13 +804,38 @@ function EcoCompensationApp({
     indesirableIdus,
   ]);
 
+  const displayedCombinedCandidates = useMemo(() => {
+    const parcelles = displayedParcelles;
+    if (!ufResults?.unites_foncieres?.length) return parcelles;
+
+    const subsetCandidates = ufResults.unites_foncieres.flatMap((uf) =>
+      (uf.sous_ensembles ?? []).map((ss, idx) => {
+        const firstIdu = ss.idus?.[0] ?? "";
+        const ref = parseIduParts(firstIdu);
+        return {
+          rank: parcelles.length + idx + 1 + uf.rang * 1000,
+          idu: `UF:${ss.subset_id}`,
+          code_insee: ref.codeInsee || "UF",
+          section: ref.section || "",
+          numero: ref.numero || "",
+          surface_ha: Number(ss.surface_ha ?? 0),
+          miller: Number(ss.miller ?? 0),
+          distance_km: Number(ss.distance_centre_km ?? 0),
+          dist_hydro_m: ss.dist_hydro_m ?? null,
+        };
+      }),
+    );
+
+    return [...parcelles, ...subsetCandidates];
+  }, [displayedParcelles, ufResults]);
+
   const indesirableParcelles = useMemo(() => {
     return [...indesirableParcellesStored].sort((a, b) => a.rank - b.rank);
   }, [indesirableParcellesStored]);
 
   /** Carte : couleurs = score v1 normalisé dès que les métriques sont là ; sinon /geojson (rang distance). */
   const parcellesMapGeojson = useMemo(() => {
-    const withScore = applyParcelScoreV1ToParcellesGeojson(geojson, poolMetricsByIdu);
+    const withScore = applyScoreEcoToParcellesGeojson(geojson, poolMetricsByIdu);
     return applyPoolIndesirableToParcellesGeojson(withScore, indesirableIdus);
   }, [geojson, poolMetricsByIdu, indesirableIdus]);
 
@@ -793,6 +848,7 @@ function EcoCompensationApp({
         projectId={projectId}
         onProjectChange={handleProjectChange}
         onOpenRun={(pid, runId) => navigate(`/projects/${pid}/runs/${runId}`)}
+        activeRunId={initialRunId ?? results?.pool_run_id ?? null}
         onSubmit={handleSubmit}
         onNavigateToCreate={onNavigateToCreate}
         isLoading={loading}
@@ -880,6 +936,8 @@ function EcoCompensationApp({
                 {mainResultsTab === "parcelles" && parcelSubView === "entonnoir" && "Parcelles — entonnoir de filtre"}
                 {mainResultsTab === "parcelles" && parcelSubView === "classement" &&
                   `Parcelles — classement (${displayedParcelles.length})`}
+                {mainResultsTab === "parcelles" && parcelSubView === "classement_combine" &&
+                  `Classement combiné — parcelles + subsets (${displayedCombinedCandidates.length})`}
                 {mainResultsTab === "parcelles" && parcelSubView === "carte" &&
                   `Parcelles — carte (${results.total})`}
                 {mainResultsTab === "unites" && ufSubView === "entonnoir" &&
@@ -942,6 +1000,14 @@ function EcoCompensationApp({
                   onClick={() => setParcelSubView("classement")}
                 >
                   Classement
+                </button>
+                <button
+                  type="button"
+                  className={`results-tab ${parcelSubView === "classement_combine" ? "active" : ""}`}
+                  onClick={() => setParcelSubView("classement_combine")}
+                  title="Candidats combinés : parcelles seules + sous-ensembles UF"
+                >
+                  Classement combiné
                 </button>
                 <button
                   type="button"
@@ -1103,6 +1169,24 @@ function EcoCompensationApp({
                 </>
               )}
 
+              {mainResultsTab === "parcelles" && parcelSubView === "classement_combine" && (
+                <div className="ranking-table-shell">
+                  <RankingTable
+                    parcelles={displayedCombinedCandidates}
+                    projectId={null}
+                    exportPoolRunId={null}
+                    poolRunId={results.pool_run_id ?? null}
+                    poolMetricsByIdu={poolMetricsByIdu}
+                    poolMetricsLoading={!!results.pool_run_id && poolMetricsByIdu === null}
+                    rankingSortKey={rankingSortKey}
+                    onRankingSortChange={setRankingSortKey}
+                    scrollToIdu={scrollToIdu}
+                    selectedIdu={scrollToIdu}
+                    onMarkIndesirable={undefined}
+                  />
+                </div>
+              )}
+
               {mainResultsTab === "parcelles" && parcelSubView === "carte" && geojson && (
                 <ParcellesMap
                   geojson={parcellesMapGeojson ?? geojson}
@@ -1238,6 +1322,7 @@ export default function App() {
           <Link to="/" style={{ textDecoration: "none" }}>Étude</Link>
           <Link to="/ideco" style={{ textDecoration: "none" }}>Pré analyse écologique</Link>
           <Link to="/bancarisation" style={{ textDecoration: "none" }}>Bancarisation</Link>
+          <Link to="/cif" style={{ textDecoration: "none" }}>CIF</Link>
         </nav>
       </header>
 
@@ -1250,6 +1335,7 @@ export default function App() {
           <Route path="/projects/:projectId/runs/:runId" element={<ProjectRunRoutePage />} />
           <Route path="/ideco" element={<AnalyseEcologiquePage />} />
           <Route path="/bancarisation" element={<Bancarisation />} />
+          <Route path="/cif" element={<IdentiteFoncierePage />} />
         </Routes>
       </div>
     </div>

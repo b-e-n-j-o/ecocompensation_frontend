@@ -13,9 +13,19 @@ import {
   type ResultsThematicPreload,
 } from "./components/ResultPanel/MapResults/cartoCouchesRegistry";
 
-const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+/**
+ * Base URL du backend.
+ * En dev, chaîne vide → URLs relatives (`/api/...`) et proxy Vite : même origine, pas de CORS.
+ * Sinon `fetch` vers `http://localhost:8000` depuis le port 5173 peut échouer (« Failed to fetch »).
+ * Surcharger avec VITE_API_URL si besoin d’appeler le backend en direct.
+ */
+const API =
+  import.meta.env.VITE_API_URL?.trim() ||
+  (import.meta.env.DEV ? "" : "http://localhost:8000");
 const IDECO_API =
-  import.meta.env.VITE_IDECO_API_URL ?? import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+  import.meta.env.VITE_IDECO_API_URL?.trim() ||
+  import.meta.env.VITE_API_URL?.trim() ||
+  (import.meta.env.DEV ? "" : "http://localhost:8000");
 
 export type ProjectSummary = {
   id: string;
@@ -462,6 +472,11 @@ function sanitizeFilterOptionsForApi(options: FilterOptions): FilterOptions {
   };
 }
 
+export function buildFilterRequestPayload(options: FilterOptions): { options: FilterOptions } {
+  const safe = sanitizeFilterOptionsForApi(options);
+  return { options: safe };
+}
+
 async function throwHttpError(res: Response): Promise<never> {
   const text = await res.text();
   let parsed: { detail?: unknown } | null = null;
@@ -494,11 +509,11 @@ export async function runFilter(
   projectId: string,
   options: FilterOptions
 ): Promise<FilterResponse> {
-  const safe = sanitizeFilterOptionsForApi(options);
+  const payload = buildFilterRequestPayload(options);
   const res = await fetch(`${API}/api/projects/${projectId}/filter`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ options: safe }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) await throwHttpError(res);
   return res.json();
@@ -586,7 +601,7 @@ export async function computePoolRunMetrics(projectId: string, runId: string): P
   if (!res.ok) throw new Error(await res.text());
 }
 
-/** Lance uniquement le recalcul du score parcelle (`parcel_score_v1`) pour le run pool. */
+/** Lance uniquement le recalcul du score écologique (`score_eco`, /6) pour le run pool. */
 export async function computePoolRunScoreOnly(projectId: string, runId: string): Promise<void> {
   const res = await fetch(
     `${API}/api/projects/${projectId}/pool/runs/${runId}/recompute-score`,
@@ -599,11 +614,11 @@ export async function runFilterUF(
   projectId: string,
   options: FilterOptions
 ): Promise<UfFilterResponse> {
-  const safe = sanitizeFilterOptionsForApi(options);
+  const payload = buildFilterRequestPayload(options);
   const res = await fetch(`${API}/api/projects/${projectId}/filter/uf`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ options: safe }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) await throwHttpError(res);
   return res.json();
@@ -735,6 +750,153 @@ export async function exportShp(
   a.click();
   document.body.removeChild(a);
   window.URL.revokeObjectURL(url);
+}
+
+/**
+ * URL pour le téléchargement PDF : en **dev**, toujours `window.location.origin` + `/api/...`
+ * pour passer par le proxy Vite (évite CORS et coupure sur requêtes longues).
+ * Même si `.env` définit `VITE_API_URL=http://localhost:8000`, ce cas est contourné ici.
+ */
+function apiUrlForFetch(path: string): string {
+  const p = path.startsWith("/") ? path : `/${path}`;
+  if (import.meta.env.DEV && typeof window !== "undefined") {
+    return `${window.location.origin}${p}`;
+  }
+  const explicit = import.meta.env.VITE_API_URL?.trim();
+  if (explicit) {
+    return `${explicit.replace(/\/$/, "")}${p}`;
+  }
+  return `http://localhost:8000${p}`;
+}
+
+function isSameOriginAsPage(url: string): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return new URL(url).origin === window.location.origin;
+  } catch {
+    return false;
+  }
+}
+
+export type RapportPdfExportResult = {
+  /**
+   * Δ RSS du processus serveur (Mo) pendant SHP + PDF — approximation (pas pic mémoire).
+   * `null` si absent (ex. téléchargement natif même origine sans `fetch`).
+   */
+  rssDeltaMb: number | null;
+};
+
+export type IdentiteFonciereParcelleInput = {
+  section: string;
+  numero: string;
+  insee: string;
+  commune: string;
+};
+
+export type IdentiteFonciereOptionsInput = {
+  buffer_wfs_m?: number;
+  generer_carte_plu?: boolean;
+  dpi_carte?: number;
+  layers?: string[];
+};
+
+export type IdentiteFonciereRequest = {
+  parcelles: IdentiteFonciereParcelleInput[];
+  options?: IdentiteFonciereOptionsInput;
+};
+
+function parseFilenameFromContentDisposition(header: string | null): string {
+  if (!header) return "identite_fonciere.pdf";
+  const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) return decodeURIComponent(utf8Match[1]);
+  const asciiMatch = header.match(/filename="?([^"]+)"?/i);
+  if (asciiMatch?.[1]) return asciiMatch[1];
+  return "identite_fonciere.pdf";
+}
+
+export async function generateIdentiteFoncierePdf(
+  body: IdentiteFonciereRequest,
+): Promise<{ blob: Blob; filename: string }> {
+  const path = "/api/identite-fonciere/rapport";
+  const url = apiUrlForFetch(path);
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const raw = await res.text();
+    try {
+      const parsed = JSON.parse(raw) as { detail?: unknown };
+      const detail =
+        typeof parsed.detail === "string"
+          ? parsed.detail
+          : JSON.stringify(parsed.detail ?? parsed);
+      throw new Error(detail || "Erreur lors de la génération du rapport Identité Foncière");
+    } catch {
+      throw new Error(raw || "Erreur lors de la génération du rapport Identité Foncière");
+    }
+  }
+
+  const blob = await res.blob();
+  const filename = parseFilenameFromContentDisposition(
+    res.headers.get("Content-Disposition"),
+  );
+  return { blob, filename };
+}
+
+/**
+ * Rapport PDF — même jeu de données que CSV/SHP parcelles (run optionnel).
+ * En **même origine** (dev via proxy Vite) : lien `<a download>` pour éviter
+ * « TypeError: Failed to fetch » sur gros binaires / proxy. Sinon `fetch` + blob.
+ */
+export async function exportRapportPdf(
+  projectId: string,
+  poolRunId?: string | null,
+): Promise<RapportPdfExportResult> {
+  const q = new URLSearchParams();
+  if (poolRunId) q.set("run_id", poolRunId);
+  const qs = q.toString();
+  const path = `/api/projects/${projectId}/export/rapport-pdf${qs ? `?${qs}` : ""}`;
+  const url = apiUrlForFetch(path);
+  const filename = `rapport_${projectId.slice(0, 8)}.pdf`;
+
+  if (isSameOriginAsPage(url)) {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.rel = "noopener noreferrer";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    return { rssDeltaMb: null };
+  }
+
+  const res = await fetch(url, {
+    method: "GET",
+    mode: "cors",
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "Erreur lors de la génération du rapport PDF");
+  }
+  const rssRaw = res.headers.get("X-Rapport-Rss-Delta-Mb");
+  const rssParsed =
+    rssRaw != null && rssRaw.trim() !== "" ? Number.parseFloat(rssRaw.trim()) : NaN;
+  const rssDeltaMb = Number.isFinite(rssParsed) ? rssParsed : null;
+  const blob = await res.blob();
+  const blobUrl = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = blobUrl;
+  a.download = filename;
+  a.rel = "noopener noreferrer";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  window.URL.revokeObjectURL(blobUrl);
+  return { rssDeltaMb };
 }
 
 export async function fetchResultsLayerGeojson(
