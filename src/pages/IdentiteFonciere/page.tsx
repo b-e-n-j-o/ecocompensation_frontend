@@ -9,7 +9,7 @@
  * le payload du POST /rapport.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   generateIdentiteFoncierePdf,
   type IdentiteFonciereParcelleInput,
@@ -20,18 +20,6 @@ import UrbanismeDocsPanel from "./UrbanismeDocsPanel";
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function triggerDownload(blob: Blob, filename: string): void {
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename || "identite_fonciere.pdf";
-  a.rel = "noopener noreferrer";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  window.URL.revokeObjectURL(url);
-}
 
 function parcelleKey(p: IdentiteFonciereParcelleInput): string {
   return `${p.insee}-${p.section}-${p.numero}`;
@@ -115,6 +103,8 @@ export default function IdentiteFoncierePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
+  const [pdfFilename, setPdfFilename] = useState<string>("identite_fonciere.pdf");
   const selectedInsee = useMemo(
     () => {
       const last = parcelles[parcelles.length - 1];
@@ -122,6 +112,14 @@ export default function IdentiteFoncierePage() {
     },
     [parcelles],
   );
+
+  useEffect(() => {
+    return () => {
+      if (pdfPreviewUrl) {
+        window.URL.revokeObjectURL(pdfPreviewUrl);
+      }
+    };
+  }, [pdfPreviewUrl]);
 
   // ---- Gestion de la liste ----
 
@@ -190,8 +188,13 @@ export default function IdentiteFoncierePage() {
       const { blob, filename } = await generateIdentiteFoncierePdf({
         parcelles,
       });
-      triggerDownload(blob, filename);
-      setSuccess(`Rapport généré (${parcelles.length} parcelle${parcelles.length > 1 ? "s" : ""}).`);
+      const nextUrl = window.URL.createObjectURL(blob);
+      setPdfPreviewUrl((prev) => {
+        if (prev) window.URL.revokeObjectURL(prev);
+        return nextUrl;
+      });
+      setPdfFilename(filename || "identite_fonciere.pdf");
+      setSuccess(`Rapport généré (${parcelles.length} parcelle${parcelles.length > 1 ? "s" : ""}) — aperçu prêt.`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erreur inconnue");
     } finally {
@@ -519,6 +522,93 @@ export default function IdentiteFoncierePage() {
           selectedParcelles={parcelles}
           style={{ height: "100%" }}
         />
+        {pdfPreviewUrl && (
+          <div
+            style={{
+              position: "absolute",
+              top: 12,
+              right: 12,
+              bottom: 12,
+              width: "min(58vw, 860px)",
+              background: "#ffffff",
+              border: "1px solid #cbd5e1",
+              borderRadius: 10,
+              boxShadow: "0 14px 38px rgba(2,6,23,0.20)",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+              zIndex: 500,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "8px 10px",
+                borderBottom: "1px solid #e2e8f0",
+                background: "#f8fafc",
+                gap: 8,
+              }}
+            >
+              <strong
+                style={{
+                  fontSize: 12,
+                  color: "#0f172a",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+                title={pdfFilename}
+              >
+                Aperçu PDF — {pdfFilename}
+              </strong>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <a
+                  href={pdfPreviewUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{
+                    fontSize: 11,
+                    color: "#334155",
+                    textDecoration: "none",
+                    border: "1px solid #cbd5e1",
+                    borderRadius: 6,
+                    padding: "4px 8px",
+                    background: "#fff",
+                  }}
+                >
+                  Ouvrir
+                </a>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPdfPreviewUrl((prev) => {
+                      if (prev) window.URL.revokeObjectURL(prev);
+                      return null;
+                    });
+                  }}
+                  style={{
+                    border: "1px solid #cbd5e1",
+                    background: "#fff",
+                    borderRadius: 6,
+                    padding: "4px 8px",
+                    fontSize: 11,
+                    color: "#334155",
+                    cursor: "pointer",
+                  }}
+                >
+                  Fermer
+                </button>
+              </div>
+            </div>
+            <iframe
+              title="Aperçu rapport identité foncière"
+              src={pdfPreviewUrl}
+              style={{ width: "100%", height: "100%", border: "none", background: "#f1f5f9" }}
+            />
+          </div>
+        )}
       </main>
     </div>
   );
