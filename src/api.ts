@@ -820,6 +820,10 @@ export type UrbanDocsResponse = {
   files: UrbanDocFile[];
   reglement_name?: string | null;
   reglement_url?: string | null;
+  reglement_qualite_verdict?: string | null;
+  reglement_qualite_utilisable?: boolean | null;
+  reglement_qualite_detail?: string | null;
+  reglement_qualite_tokens_estimes?: number | null;
 };
 
 function parseFilenameFromContentDisposition(header: string | null): string {

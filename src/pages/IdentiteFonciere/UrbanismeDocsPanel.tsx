@@ -123,6 +123,22 @@ export default function UrbanismeDocsPanel({ insee }: Props) {
                       "non identifié"
                     )}
                   </div>
+                  {docs.reglement_qualite_verdict && (
+                    <div style={{ marginBottom: 6, lineHeight: 1.35 }}>
+                      <strong>Qualité du règlement :</strong>{" "}
+                      <span>
+                        {docs.reglement_qualite_verdict}
+                        {typeof docs.reglement_qualite_utilisable === "boolean"
+                          ? docs.reglement_qualite_utilisable
+                            ? " (utilisable)"
+                            : " (non utilisable)"
+                          : ""}
+                      </span>
+                      {docs.reglement_qualite_detail ? (
+                        <div style={{ color: "#64748b" }}>{docs.reglement_qualite_detail}</div>
+                      ) : null}
+                    </div>
+                  )}
                   <div style={{ maxHeight: 110, overflowY: "auto", borderTop: "1px dashed #cbd5e1", paddingTop: 6 }}>
                     {docs.files.map((f) => (
                       <div key={f.name} style={{ marginBottom: 3 }}>
