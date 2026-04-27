@@ -11,7 +11,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  fetchCommunesEnBase,
   generateIdentiteFoncierePdf,
+  type CommuneEnBaseItem,
   type IdentiteFonciereParcelleInput,
 } from "../../api";
 import CadastreMap from "./CadastreMap";
@@ -98,8 +100,16 @@ export default function IdentiteFoncierePage() {
     [],
   );
   const [manualInsee, setManualInsee] = useState("");
+  const [communeQuery, setCommuneQuery] = useState("");
+  const [communesEnBase, setCommunesEnBase] = useState<CommuneEnBaseItem[]>([]);
+  const [loadingCommunesEnBase, setLoadingCommunesEnBase] = useState(false);
+  const [communesEnBaseError, setCommunesEnBaseError] = useState<string | null>(null);
   const [manualSection, setManualSection] = useState("");
   const [manualNumero, setManualNumero] = useState("");
+  const [communeToDisplay, setCommuneToDisplay] = useState<{
+    insee: string;
+    trigger: number;
+  } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -120,6 +130,41 @@ export default function IdentiteFoncierePage() {
       }
     };
   }, [pdfPreviewUrl]);
+
+  useEffect(() => {
+    const q = communeQuery.trim();
+    if (q.length < 2) {
+      setCommunesEnBase([]);
+      setCommunesEnBaseError(null);
+      setLoadingCommunesEnBase(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingCommunesEnBase(true);
+    setCommunesEnBaseError(null);
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const data = await fetchCommunesEnBase(q, 25);
+        if (!cancelled) setCommunesEnBase(data);
+      } catch (e) {
+        if (!cancelled) {
+          setCommunesEnBaseError(
+            e instanceof Error ? e.message : "Erreur recherche communes",
+          );
+          setCommunesEnBase([]);
+        }
+      } finally {
+        if (!cancelled) setLoadingCommunesEnBase(false);
+      }
+    }, 220);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [communeQuery]);
 
   // ---- Gestion de la liste ----
 
@@ -173,6 +218,16 @@ export default function IdentiteFoncierePage() {
     setError(null);
     setSuccess(null);
   }, [manualInsee, manualNumero, manualSection]);
+
+  const handleDisplayCommuneCadastre = useCallback(() => {
+    const insee = manualInsee.trim();
+    if (!insee) {
+      setError("Renseignez un code INSEE pour afficher le cadastre communal.");
+      return;
+    }
+    setError(null);
+    setCommuneToDisplay({ insee, trigger: Date.now() });
+  }, [manualInsee]);
 
   // ---- Génération PDF ----
 
@@ -262,6 +317,69 @@ export default function IdentiteFoncierePage() {
             }}
           >
             <input
+              placeholder="Rechercher une commune en base (nom ou INSEE)"
+              value={communeQuery}
+              onChange={(e) => setCommuneQuery(e.target.value)}
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                padding: "8px 10px",
+                border: "1px solid #cbd5e1",
+                borderRadius: 6,
+                fontSize: 12,
+              }}
+              title="Recherche communes en base"
+            />
+            {loadingCommunesEnBase && (
+              <div style={{ fontSize: 11, color: "#64748b" }}>
+                Recherche en cours...
+              </div>
+            )}
+            {communesEnBaseError && (
+              <div style={{ fontSize: 11, color: "#b91c1c" }}>
+                {communesEnBaseError}
+              </div>
+            )}
+            {!loadingCommunesEnBase &&
+              !communesEnBaseError &&
+              communeQuery.trim().length >= 2 &&
+              communesEnBase.length > 0 && (
+                <div
+                  style={{
+                    maxHeight: 150,
+                    overflowY: "auto",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 6,
+                    background: "#fff",
+                  }}
+                >
+                  {communesEnBase.map((c) => (
+                    <button
+                      key={c.code_insee}
+                      type="button"
+                      onClick={() => {
+                        setManualInsee(c.code_insee);
+                        setCommuneQuery(c.nom_commune || c.code_insee);
+                      }}
+                      style={{
+                        width: "100%",
+                        textAlign: "left",
+                        border: "none",
+                        borderBottom: "1px solid #f1f5f9",
+                        background: "transparent",
+                        padding: "7px 10px",
+                        cursor: "pointer",
+                        fontSize: 12,
+                        color: "#0f172a",
+                      }}
+                    >
+                      {(c.nom_commune || c.code_insee)} ({c.code_insee}) -{" "}
+                      {c.nb_parcelles.toLocaleString()} parcelles
+                    </button>
+                  ))}
+                </div>
+              )}
+            <input
               placeholder="INSEE"
               value={manualInsee}
               onChange={(e) => setManualInsee(e.target.value)}
@@ -274,6 +392,22 @@ export default function IdentiteFoncierePage() {
                 fontSize: 12,
               }}
             />
+            <button
+              type="button"
+              onClick={handleDisplayCommuneCadastre}
+              style={{
+                border: "1px solid #2563eb",
+                background: "#eff6ff",
+                color: "#1d4ed8",
+                borderRadius: 6,
+                padding: "9px 10px",
+                fontSize: 12,
+                cursor: "pointer",
+                width: "100%",
+              }}
+            >
+              Afficher cadastre de la commune
+            </button>
             <input
               placeholder="Section"
               value={manualSection}
@@ -520,6 +654,7 @@ export default function IdentiteFoncierePage() {
         <CadastreMap
           onParcelleSelect={handleParcelleSelect}
           selectedParcelles={parcelles}
+          communeToDisplay={communeToDisplay}
           style={{ height: "100%" }}
         />
         {pdfPreviewUrl && (

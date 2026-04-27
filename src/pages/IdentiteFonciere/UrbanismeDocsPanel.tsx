@@ -45,6 +45,9 @@ export default function UrbanismeDocsPanel({ insee }: Props) {
 
   if (!insee) return null;
 
+  const files = docs?.files ?? [];
+  const reglementUrl = docs?.reglement_url;
+
   return (
     <div
       style={{
@@ -139,26 +142,64 @@ export default function UrbanismeDocsPanel({ insee }: Props) {
                       ) : null}
                     </div>
                   )}
-                  <div style={{ maxHeight: 110, overflowY: "auto", borderTop: "1px dashed #cbd5e1", paddingTop: 6 }}>
-                    {docs.files.map((f) => (
-                      <div key={f.name} style={{ marginBottom: 3 }}>
+                  <div
+                    style={{
+                      maxHeight: 170,
+                      overflowY: "auto",
+                      borderTop: "1px dashed #cbd5e1",
+                      paddingTop: 8,
+                      display: "grid",
+                      gap: 6,
+                    }}
+                  >
+                    {files.map((f) => {
+                      const isReglement = !!reglementUrl && f.url === reglementUrl;
+                      return (
                         <a
+                          key={f.name}
                           href={f.url}
                           target="_blank"
                           rel="noreferrer"
+                          title={f.name}
                           style={{
                             display: "block",
-                            maxWidth: "100%",
-                            whiteSpace: "nowrap",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
+                            width: "100%",
+                            boxSizing: "border-box",
+                            borderRadius: 8,
+                            border: isReglement ? "1px solid #86efac" : "1px solid #e2e8f0",
+                            background: isReglement ? "#dcfce7" : "#f8fafc",
+                            color: "#0f172a",
+                            padding: "8px 10px",
+                            textDecoration: "none",
+                            lineHeight: 1.35,
                           }}
-                          title={f.name}
                         >
-                          {f.name}
+                          <div
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 700,
+                              letterSpacing: 0.2,
+                              textTransform: "uppercase",
+                              color: isReglement ? "#166534" : "#64748b",
+                              marginBottom: 2,
+                            }}
+                          >
+                            {isReglement ? "Reglement elu" : "Document"}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: 11,
+                              fontWeight: 600,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {f.name}
+                          </div>
                         </a>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </>
               )}

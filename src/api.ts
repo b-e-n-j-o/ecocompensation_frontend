@@ -826,6 +826,21 @@ export type UrbanDocsResponse = {
   reglement_qualite_tokens_estimes?: number | null;
 };
 
+export type CommuneEnBaseItem = {
+  code_insee: string;
+  code_dep: string;
+  nom_commune?: string | null;
+  nb_parcelles: number;
+};
+
+export type CadastreCommuneMeta = {
+  code_insee: string;
+  nb_parcelles: number;
+  threshold: number;
+  mode: "geojson" | "mvt";
+  bbox_wgs84: [number, number, number, number] | null;
+};
+
 function parseFilenameFromContentDisposition(header: string | null): string {
   if (!header) return "identite_fonciere.pdf";
   const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
@@ -885,6 +900,64 @@ export async function fetchUrbanDocumentsForInsee(
     } catch {
       throw new Error(raw || "Erreur lors du chargement des documents d'urbanisme");
     }
+  }
+  return res.json();
+}
+
+export async function fetchCommunesEnBase(
+  q?: string,
+  limit = 2000,
+): Promise<CommuneEnBaseItem[]> {
+  const qs = new URLSearchParams();
+  if (q?.trim()) qs.set("q", q.trim());
+  qs.set("limit", String(limit));
+  const path = `/api/identite-fonciere/communes-en-base${qs.toString() ? `?${qs.toString()}` : ""}`;
+  const url = apiUrlForFetch(path);
+  const res = await fetch(url, { method: "GET" });
+  if (!res.ok) {
+    const raw = await res.text();
+    try {
+      const parsed = JSON.parse(raw) as { detail?: unknown };
+      const detail =
+        typeof parsed.detail === "string"
+          ? parsed.detail
+          : JSON.stringify(parsed.detail ?? parsed);
+      throw new Error(detail || "Erreur lors du chargement des communes en base");
+    } catch {
+      throw new Error(raw || "Erreur lors du chargement des communes en base");
+    }
+  }
+  return res.json();
+}
+
+export async function fetchCadastreCommuneMeta(
+  insee: string,
+): Promise<CadastreCommuneMeta> {
+  const qs = new URLSearchParams({ insee: insee.trim() });
+  const path = `/api/cadastre/commune-meta?${qs.toString()}`;
+  const url = apiUrlForFetch(path);
+  const res = await fetch(url, { method: "GET" });
+  if (!res.ok) {
+    const raw = await res.text();
+    throw new Error(raw || "Erreur lors du chargement des métadonnées cadastre");
+  }
+  return res.json();
+}
+
+export async function fetchCadastreCommuneGeojson(
+  insee: string,
+  limit = 5000,
+): Promise<FeatureCollection<Geometry, GeoJsonProperties>> {
+  const qs = new URLSearchParams({
+    insee: insee.trim(),
+    limit: String(limit),
+  });
+  const path = `/api/cadastre/commune?${qs.toString()}`;
+  const url = apiUrlForFetch(path);
+  const res = await fetch(url, { method: "GET" });
+  if (!res.ok) {
+    const raw = await res.text();
+    throw new Error(raw || "Erreur lors du chargement du cadastre communal");
   }
   return res.json();
 }

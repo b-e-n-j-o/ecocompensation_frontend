@@ -3,7 +3,7 @@
  *
  * Composant carte cadastrale interactive.
  * - Navigation libre sur la France (MapLibre GL JS)
- * - Clic sur la carte → fetch WFS IGN parcellaire sur bbox 500m
+ * - Clic sur la carte → fetch API backend (bbox 500m)
  * - Affichage des parcelles en overlay GeoJSON
  * - Clic sur une parcelle → callback onParcelleSelect avec ses métadonnées
  *
@@ -15,7 +15,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import maplibregl, { Map, MapMouseEvent } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import type { IdentiteFonciereParcelleInput } from "../../api";
+import {
+  fetchCadastreCommuneGeojson,
+  fetchCadastreCommuneMeta,
+  type IdentiteFonciereParcelleInput,
+} from "../../api";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -26,6 +30,7 @@ export interface CadastreMapProps {
   onParcelleSelect: (p: IdentiteFonciereParcelleInput) => void;
   /** Parcelles déjà sélectionnées — pour les colorier différemment sur la carte */
   selectedParcelles: IdentiteFonciereParcelleInput[];
+  communeToDisplay?: { insee: string; trigger: number } | null;
   className?: string;
   style?: React.CSSProperties;
 }
@@ -67,46 +72,35 @@ interface MunicipalityInfo {
 // Constantes
 // ---------------------------------------------------------------------------
 
-// Nouveau endpoint Géoplateforme IGN (l'ancien wxs.ign.fr est mort)
+// Endpoint WFS IGN utilisé uniquement pour la commune au clic
 const IGN_WFS_URL = "https://data.geopf.fr/wfs/ows";
+const CADASTRE_API =
+  import.meta.env.VITE_API_URL?.trim() ||
+  (import.meta.env.DEV ? "" : "http://localhost:8000");
 const BBOX_HALF_M = 250; // → bbox 500m×500m
 const MUNICIPALITY_BBOX_HALF_M = 40; // petit bbox autour du clic
 
 const SOURCE_ID = "cadastre";
+const VT_SOURCE_ID = "cadastre-vt";
+const BBOX_SOURCE_ID = "cadastre-bbox-preview";
 const LAYER_FILL_ID = "cadastre-fill";
 const LAYER_FILL_SELECTED_ID = "cadastre-fill-selected";
 const LAYER_STROKE_ID = "cadastre-stroke";
 const LAYER_HOVER_ID = "cadastre-hover";
 const LAYER_LABEL_ID = "cadastre-label";
+const VT_LAYER_FILL_ID = "cadastre-vt-fill";
+const VT_LAYER_FILL_SELECTED_ID = "cadastre-vt-fill-selected";
+const VT_LAYER_STROKE_ID = "cadastre-vt-stroke";
+const VT_LAYER_HOVER_ID = "cadastre-vt-hover";
+const VT_LAYER_LABEL_ID = "cadastre-vt-label";
+const BBOX_FILL_LAYER_ID = "cadastre-bbox-fill";
+const BBOX_STROKE_LAYER_ID = "cadastre-bbox-stroke";
+const COMMUNE_TILE_TARGET_ZOOM = 13;
 
 // Fond de carte IGN Géoplateforme — Plan IGN (tuiles vectorielles, sans clé)
 // Fallback raster PLAN IGN si le style vectoriel pose problème
 const BASEMAP_STYLE_URL =
   "https://data.geopf.fr/annexes/ressources/vectorTiles/styles/PLAN.IGN/standard.json";
-
-// Style raster de secours (orthophotos IGN, sans clé requise)
-const BASEMAP_STYLE_ORTHO = {
-  version: 8 as const,
-  sources: {
-    ortho: {
-      type: "raster" as const,
-      tiles: [
-        "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=ORTHOIMAGERY.ORTHOPHOTOS&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image%2Fjpeg&STYLE=normal",
-      ],
-      tileSize: 256,
-      attribution: "© IGN Géoportail",
-      maxzoom: 19,
-    },
-  },
-  layers: [
-    {
-      id: "ortho",
-      type: "raster" as const,
-      source: "ortho",
-      paint: { "raster-saturation": -0.15 },
-    },
-  ],
-};
 
 // ---------------------------------------------------------------------------
 // Utilitaires
@@ -124,22 +118,19 @@ function bboxWGS84(lng: number, lat: number, halfMeters: number): string {
   return `${lng - dLng},${lat - dLat},${lng + dLng},${lat + dLat}`;
 }
 
-/** Construit l'URL WFS Géoplateforme pour la couche parcellaire */
-function buildWFSUrl(lng: number, lat: number): string {
-  const bbox = bboxWGS84(lng, lat, BBOX_HALF_M);
+function buildCadastreApiUrl(
+  lng: number,
+  lat: number,
+  municipalityInsee?: string | null,
+): string {
   const params = new URLSearchParams({
-    SERVICE: "WFS",
-    VERSION: "2.0.0",
-    REQUEST: "GetFeature",
-    // Géoplateforme : typeNames (pas TYPENAMES) en WFS 2.0
-    typeNames: "CADASTRALPARCELS.PARCELLAIRE_EXPRESS:parcelle",
-    outputFormat: "application/json",
-    // CRS:84 = WGS84 lon/lat — retourne du GeoJSON en lon/lat directement
-    SRSNAME: "CRS:84",
-    BBOX: `${bbox},CRS:84`,
-    COUNT: "300",
+    lng: String(lng),
+    lat: String(lat),
+    half_m: String(BBOX_HALF_M),
+    count: "300",
   });
-  return `${IGN_WFS_URL}?${params.toString()}`;
+  if (municipalityInsee) params.set("insee", municipalityInsee);
+  return `${CADASTRE_API}/api/cadastre/parcelles?${params.toString()}`;
 }
 
 /** URL WFS IGN Urbanisme pour récupérer la commune au point cliqué */
@@ -194,12 +185,17 @@ function parcelleKey(p: IdentiteFonciereParcelleInput): string {
 export default function CadastreMap({
   onParcelleSelect,
   selectedParcelles,
+  communeToDisplay,
   className,
   style,
 }: CadastreMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
   const hoveredIdRef = useRef<string | null>(null);
+  const selectedKeysRef = useRef<Set<string>>(new Set());
+  const previousSelectedKeysRef = useRef<Set<string>>(new Set());
+  const activeCommuneInseeRef = useRef<string | null>(null);
+  const activeCommuneModeRef = useRef<"geojson" | "mvt" | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -207,6 +203,7 @@ export default function CadastreMap({
   const [municipalityInfo, setMunicipalityInfo] = useState<MunicipalityInfo | null>(
     null,
   );
+  const [displayModeLabel, setDisplayModeLabel] = useState<string | null>(null);
   const fetchMunicipality = useCallback(async (lng: number, lat: number) => {
     const url = buildMunicipalityWFSUrl(lng, lat);
     // Retry léger silencieux (WFS parfois instable).
@@ -247,6 +244,7 @@ export default function CadastreMap({
 
   // Set des clés sélectionnées (pour colorer sur la carte)
   const selectedKeys = new Set(selectedParcelles.map(parcelleKey));
+  selectedKeysRef.current = selectedKeys;
 
   // -------------------------------------------------------------------------
   // Initialisation de la carte
@@ -263,10 +261,12 @@ export default function CadastreMap({
       attributionControl: false,
     });
 
-    // Fallback : si le style vectoriel IGN échoue (CORS en dev, etc.), bascule sur raster
-    map.once("error", () => {
-      console.warn("[CadastreMap] Style vectoriel IGN inaccessible, bascule sur ortho raster");
-      map.setStyle(BASEMAP_STYLE_ORTHO as Parameters<typeof map.setStyle>[0]);
+    // Ne pas basculer automatiquement de style sur un `error` générique :
+    // avec les couches MVT, certaines erreurs réseau ponctuelles peuvent survenir
+    // sans invalider le style global. Un setStyle() ici ferait disparaître
+    // temporairement les couches cadastre.
+    map.on("error", (ev) => {
+      console.warn("[CadastreMap] MapLibre error (style conservé):", ev.error);
     });
 
     map.addControl(new maplibregl.NavigationControl(), "top-right");
@@ -276,12 +276,45 @@ export default function CadastreMap({
     );
 
     map.on("load", () => {
+      // Preview visuel de la bbox de requête (500m x 500m)
+      map.addSource(BBOX_SOURCE_ID, {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+      map.addLayer({
+        id: BBOX_FILL_LAYER_ID,
+        type: "fill",
+        source: BBOX_SOURCE_ID,
+        paint: {
+          "fill-color": "#2563eb",
+          "fill-opacity": 0.06,
+        },
+      });
+      map.addLayer({
+        id: BBOX_STROKE_LAYER_ID,
+        type: "line",
+        source: BBOX_SOURCE_ID,
+        paint: {
+          "line-color": "#2563eb",
+          "line-width": 1,
+          "line-opacity": 0.45,
+          "line-dasharray": [2, 2],
+        },
+      });
+
       // Source GeoJSON vide — sera mise à jour au clic
       map.addSource(SOURCE_ID, {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
         generateId: false, // on utilise nos propres IDs via feature-state
         promoteId: "id", // champ id dans les propriétés
+      });
+      map.addSource(VT_SOURCE_ID, {
+        type: "vector",
+        tiles: [],
+        minzoom: 0,
+        maxzoom: 22,
+        promoteId: "idu",
       });
 
       // Remplissage de base
@@ -359,6 +392,84 @@ export default function CadastreMap({
           "text-halo-width": 1.5,
         },
       });
+      map.addLayer({
+        id: VT_LAYER_FILL_ID,
+        type: "fill",
+        source: VT_SOURCE_ID,
+        "source-layer": "parcelles",
+        minzoom: 13,
+        layout: { visibility: "none" },
+        paint: {
+          "fill-color": "#ffffff",
+          "fill-opacity": 0.15,
+        },
+      });
+      map.addLayer({
+        id: VT_LAYER_FILL_SELECTED_ID,
+        type: "fill",
+        source: VT_SOURCE_ID,
+        "source-layer": "parcelles",
+        minzoom: 13,
+        layout: { visibility: "none" },
+        paint: {
+          "fill-color": "#3b82f6",
+          "fill-opacity": [
+            "case",
+            ["boolean", ["feature-state", "selected"], false],
+            0.3,
+            0,
+          ],
+        },
+      });
+      map.addLayer({
+        id: VT_LAYER_STROKE_ID,
+        type: "line",
+        source: VT_SOURCE_ID,
+        "source-layer": "parcelles",
+        minzoom: 13,
+        layout: { visibility: "none" },
+        paint: {
+          "line-color": "#1e3a5f",
+          "line-width": 1.5,
+          "line-opacity": 0.8,
+        },
+      });
+      map.addLayer({
+        id: VT_LAYER_HOVER_ID,
+        type: "fill",
+        source: VT_SOURCE_ID,
+        "source-layer": "parcelles",
+        minzoom: 13,
+        layout: { visibility: "none" },
+        paint: {
+          "fill-color": "#3b82f6",
+          "fill-opacity": [
+            "case",
+            ["boolean", ["feature-state", "hover"], false],
+            0.3,
+            0,
+          ],
+        },
+      });
+      map.addLayer({
+        id: VT_LAYER_LABEL_ID,
+        type: "symbol",
+        source: VT_SOURCE_ID,
+        "source-layer": "parcelles",
+        minzoom: 16,
+        layout: {
+          visibility: "none",
+          "text-field": ["concat", ["get", "section"], ["get", "numero"]],
+          "text-size": 10,
+          "text-font": ["Open Sans Regular"],
+          "text-allow-overlap": false,
+        },
+        paint: {
+          "text-color": "#0f172a",
+          "text-halo-color": "#ffffff",
+          "text-halo-width": 1.5,
+        },
+      });
     });
 
     mapRef.current = map;
@@ -371,10 +482,10 @@ export default function CadastreMap({
   }, []);
 
   // -------------------------------------------------------------------------
-  // Fetch WFS + mise à jour source
+  // Fetch API cadastre + mise à jour source
   // -------------------------------------------------------------------------
   const fetchCadastre = useCallback(
-    async (lng: number, lat: number) => {
+    async (lng: number, lat: number, municipalityInsee?: string | null) => {
       if (!mapRef.current) return;
       const map = mapRef.current;
 
@@ -383,11 +494,12 @@ export default function CadastreMap({
       setParcelleCount(null);
 
       try {
-        const url = buildWFSUrl(lng, lat);
+        const url = buildCadastreApiUrl(lng, lat, municipalityInsee);
         const resp = await fetch(url);
-        if (!resp.ok)
-          throw new Error(`WFS ${resp.status}: ${resp.statusText}`);
+        if (!resp.ok) throw new Error(`API cadastre ${resp.status}: ${resp.statusText}`);
         const geojson = await resp.json();
+        setDisplayModeLabel(null);
+        setLayerVisibility(map, false);
 
         if (!geojson.features?.length) {
           setParcelleCount(0);
@@ -411,7 +523,7 @@ export default function CadastreMap({
                 properties: {
                   ...props,
                   id: key,
-                  selected: selectedKeys.has(key),
+                  selected: selectedKeysRef.current.has(key),
                 },
               };
             },
@@ -424,7 +536,7 @@ export default function CadastreMap({
         setParcelleCount(enriched.features.length);
       } catch (e) {
         setFetchError(
-          e instanceof Error ? e.message : "Erreur lors du fetch WFS",
+          e instanceof Error ? e.message : "Erreur lors du fetch API cadastre",
         );
       } finally {
         setLoading(false);
@@ -432,7 +544,87 @@ export default function CadastreMap({
     },
     // selectedKeys change si selectedParcelles change, on veut rerendre
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectedParcelles],
+    [],
+  );
+
+  const loadCommuneCadastre = useCallback(
+    async (insee: string) => {
+      if (!mapRef.current) return;
+      const map = mapRef.current;
+      const inseeValue = insee.trim();
+      if (!inseeValue) return;
+
+      setLoading(true);
+      setFetchError(null);
+      setParcelleCount(null);
+      try {
+        const meta = await fetchCadastreCommuneMeta(inseeValue);
+        setParcelleCount(meta.nb_parcelles);
+
+        // Evite un rechargement inutile quand on redemande la même commune
+        // déjà affichée dans le même mode.
+        if (
+          activeCommuneInseeRef.current === inseeValue &&
+          activeCommuneModeRef.current === meta.mode
+        ) {
+          if (meta.mode === "mvt" && meta.bbox_wgs84) {
+            fitToBoundsWithTargetZoom(map, meta.bbox_wgs84, COMMUNE_TILE_TARGET_ZOOM);
+          }
+          setDisplayModeLabel(
+            `Commune ${inseeValue} - mode ${meta.mode === "geojson" ? "GeoJSON" : "tuiles vectorielles"}`,
+          );
+          return;
+        }
+
+        if (meta.mode === "geojson") {
+          setLayerVisibility(map, false);
+          const geojson = await fetchCadastreCommuneGeojson(inseeValue, meta.threshold);
+          const enriched = {
+            ...geojson,
+            features: (geojson.features ?? []).map((f) => {
+              const props = (f.properties ?? {}) as WFSFeatureProps;
+              const key = `${props.code_insee ?? props.insee}-${props.section}-${props.numero}`;
+              return {
+                ...f,
+                id: key,
+                properties: {
+                  ...props,
+                  id: key,
+                  selected: selectedKeysRef.current.has(key),
+                },
+              };
+            }),
+          };
+          (map.getSource(SOURCE_ID) as maplibregl.GeoJSONSource)?.setData(
+            enriched as GeoJSON.FeatureCollection,
+          );
+          setDisplayModeLabel(`Commune ${inseeValue} - mode GeoJSON`);
+          fitToGeojson(map, enriched as GeoJSON.FeatureCollection);
+          activeCommuneInseeRef.current = inseeValue;
+          activeCommuneModeRef.current = "geojson";
+        } else {
+          (map.getSource(SOURCE_ID) as maplibregl.GeoJSONSource)?.setData({
+            type: "FeatureCollection",
+            features: [],
+          });
+          const tilesUrl = `${CADASTRE_API}/api/cadastre/tiles/{z}/{x}/{y}.mvt?insee=${encodeURIComponent(inseeValue)}`;
+          const vtSource = map.getSource(VT_SOURCE_ID) as maplibregl.VectorTileSource | undefined;
+          vtSource?.setTiles([tilesUrl]);
+          setLayerVisibility(map, true);
+          setDisplayModeLabel(`Commune ${inseeValue} - mode tuiles vectorielles`);
+          if (meta.bbox_wgs84) {
+            fitToBoundsWithTargetZoom(map, meta.bbox_wgs84, COMMUNE_TILE_TARGET_ZOOM);
+          }
+          activeCommuneInseeRef.current = inseeValue;
+          activeCommuneModeRef.current = "mvt";
+        }
+      } catch (e) {
+        setFetchError(e instanceof Error ? e.message : "Erreur chargement commune");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
   );
 
   // -------------------------------------------------------------------------
@@ -445,13 +637,21 @@ export default function CadastreMap({
     // Attend que les couches soient chargées
     const onMapClick = async (e: MapMouseEvent) => {
       if (!map.isStyleLoaded()) return;
+      setBboxPreview(map, e.lngLat.lng, e.lngLat.lat);
 
       const municipality = await fetchMunicipality(e.lngLat.lng, e.lngLat.lat);
       setMunicipalityInfo(municipality);
 
       // Vérifie si on a cliqué sur une parcelle déjà affichée
       const features = map.queryRenderedFeatures(e.point, {
-        layers: [LAYER_FILL_ID, LAYER_FILL_SELECTED_ID, LAYER_HOVER_ID],
+        layers: [
+          LAYER_FILL_ID,
+          LAYER_FILL_SELECTED_ID,
+          LAYER_HOVER_ID,
+          VT_LAYER_FILL_ID,
+          VT_LAYER_FILL_SELECTED_ID,
+          VT_LAYER_HOVER_ID,
+        ],
       });
 
       if (features.length > 0) {
@@ -462,11 +662,16 @@ export default function CadastreMap({
         if (input) {
           onParcelleSelect(input);
           // Met à jour visuellement `selected` dans la source
-          refreshSelectedState(map, new Set([...selectedKeys, parcelleKey(input)]));
+          refreshSelectedState(map, new Set([...selectedKeys, parcelleKey(input)]), [
+            SOURCE_ID,
+            VT_SOURCE_ID,
+          ]);
         }
       } else {
         // Clic ailleurs → nouveau fetch
-        fetchCadastre(e.lngLat.lng, e.lngLat.lat);
+        activeCommuneInseeRef.current = null;
+        activeCommuneModeRef.current = null;
+        fetchCadastre(e.lngLat.lng, e.lngLat.lat, municipality?.insee ?? null);
         // Zoom si nécessaire
         if (map.getZoom() < 16) {
           map.flyTo({ center: e.lngLat, zoom: 16.5, speed: 1.2 });
@@ -477,20 +682,18 @@ export default function CadastreMap({
     const onMouseMove = (e: MapMouseEvent) => {
       if (!map.isStyleLoaded()) return;
       const features = map.queryRenderedFeatures(e.point, {
-        layers: [LAYER_FILL_ID, LAYER_FILL_SELECTED_ID],
+        layers: [LAYER_FILL_ID, LAYER_FILL_SELECTED_ID, VT_LAYER_FILL_ID, VT_LAYER_FILL_SELECTED_ID],
       });
       map.getCanvas().style.cursor = features.length ? "pointer" : "crosshair";
 
-      const id = features[0]?.id as string | undefined;
+      const sourceName = (features[0]?.layer?.source as string) || SOURCE_ID;
+      const id = featureKeyFromRendered(features[0]);
       if (hoveredIdRef.current && hoveredIdRef.current !== id) {
-        map.setFeatureState(
-          { source: SOURCE_ID, id: hoveredIdRef.current },
-          { hover: false },
-        );
+        clearHoverState(map, hoveredIdRef.current);
         hoveredIdRef.current = null;
       }
       if (id) {
-        map.setFeatureState({ source: SOURCE_ID, id }, { hover: true });
+        setFeatureStateOnSource(map, sourceName, id, { hover: true });
         hoveredIdRef.current = id;
       }
     };
@@ -498,10 +701,7 @@ export default function CadastreMap({
     const onMouseLeave = () => {
       map.getCanvas().style.cursor = "crosshair";
       if (hoveredIdRef.current) {
-        map.setFeatureState(
-          { source: SOURCE_ID, id: hoveredIdRef.current },
-          { hover: false },
-        );
+        clearHoverState(map, hoveredIdRef.current);
         hoveredIdRef.current = null;
       }
     };
@@ -512,21 +712,47 @@ export default function CadastreMap({
     map.on("click", onMapClick);
     map.on("mousemove", onMouseMove);
     map.on("mouseleave", LAYER_FILL_ID, onMouseLeave);
+    map.on("mouseleave", VT_LAYER_FILL_ID, onMouseLeave);
 
     return () => {
       map.off("click", onMapClick);
       map.off("mousemove", onMouseMove);
       map.off("mouseleave", LAYER_FILL_ID, onMouseLeave);
+      map.off("mouseleave", VT_LAYER_FILL_ID, onMouseLeave);
     };
   }, [fetchCadastre, fetchMunicipality, onParcelleSelect, selectedKeys]);
+
+  useEffect(() => {
+    if (!communeToDisplay?.insee || !mapRef.current?.isStyleLoaded()) return;
+    loadCommuneCadastre(communeToDisplay.insee);
+  }, [communeToDisplay?.insee, communeToDisplay?.trigger, loadCommuneCadastre]);
 
   // -------------------------------------------------------------------------
   // Mise à jour de l'état `selected` quand selectedParcelles change
   // -------------------------------------------------------------------------
   useEffect(() => {
     if (!mapRef.current?.isStyleLoaded()) return;
-    refreshSelectedState(mapRef.current, selectedKeys);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const map = mapRef.current;
+    const prev = previousSelectedKeysRef.current;
+    const next = selectedKeys;
+
+    const added: string[] = [];
+    const removed: string[] = [];
+    next.forEach((k) => {
+      if (!prev.has(k)) added.push(k);
+    });
+    prev.forEach((k) => {
+      if (!next.has(k)) removed.push(k);
+    });
+
+    if (added.length || removed.length) {
+      [SOURCE_ID, VT_SOURCE_ID].forEach((sourceId) => {
+        added.forEach((id) => setFeatureStateOnSource(map, sourceId, id, { selected: true }));
+        removed.forEach((id) => setFeatureStateOnSource(map, sourceId, id, { selected: false }));
+      });
+    }
+
+    previousSelectedKeysRef.current = new Set(next);
   }, [selectedParcelles]);
 
   // -------------------------------------------------------------------------
@@ -567,6 +793,11 @@ export default function CadastreMap({
           {parcelleCount === 0
             ? "Aucune parcelle dans cette zone"
             : `${parcelleCount} parcelle${parcelleCount > 1 ? "s" : ""} — cliquez pour sélectionner`}
+        </div>
+      )}
+      {displayModeLabel && !loading && (
+        <div style={{ ...overlayPillStyle, bottom: 44, background: "rgba(37,99,235,0.88)" }}>
+          {displayModeLabel}
         </div>
       )}
 
@@ -624,29 +855,166 @@ export default function CadastreMap({
 // Helpers internes
 // ---------------------------------------------------------------------------
 
-function refreshSelectedState(map: Map, keys: Set<string>) {
-  const source = map.getSource(SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
-  if (!source) return;
-  // Récupère les données actuelles et met à jour le champ `selected`
-  // Note: MapLibre ne permet pas de lire les données d'une source GeoJSON directement,
-  // on passe par setData en reconstruisant. On stocke les données en dehors.
-  // Approche pragmatique : on utilise setFeatureState à la place (plus propre).
-  // Le filtre des layers est basé sur la propriété `selected` donc on doit
-  // passer par querySourceFeatures.
-  // → Alternative : on maintient un cache local des features courantes.
-  // Pour l'instant, on déclenche un re-fetch optionnel via l'effet.
-  // Les feature-state sont réinitialisés par setData(), donc on refait:
-  try {
-    const rendered = map.querySourceFeatures(SOURCE_ID);
-    rendered.forEach((f) => {
-      const id = f.id as string;
-      if (!id) return;
-      const isSelected = keys.has(id);
-      map.setFeatureState({ source: SOURCE_ID, id }, { selected: isSelected });
-    });
-  } catch {
-    // Silencieux si source pas encore prête
+function refreshSelectedState(map: Map, keys: Set<string>, sourceIds: string[]) {
+  sourceIds.forEach((sourceId) => {
+    try {
+      const rendered =
+        sourceId === VT_SOURCE_ID
+          ? map.querySourceFeatures(sourceId, { sourceLayer: "parcelles" })
+          : map.querySourceFeatures(sourceId);
+      rendered.forEach((f) => {
+        const props = (f.properties ?? {}) as WFSFeatureProps;
+        const inferredId =
+          (f.id as string | undefined) ??
+          `${props.code_insee ?? props.insee}-${props.section}-${props.numero}`;
+        if (!inferredId || inferredId.includes("undefined")) return;
+        setFeatureStateOnSource(map, sourceId, inferredId, { selected: keys.has(inferredId) });
+      });
+    } catch {
+      // Silencieux si source pas encore prête
+    }
+  });
+}
+
+function clearHoverState(map: Map, featureId: string) {
+  [SOURCE_ID, VT_SOURCE_ID].forEach((sourceId) => {
+    try {
+      setFeatureStateOnSource(map, sourceId, featureId, { hover: false });
+    } catch {
+      // ignore
+    }
+  });
+}
+
+function setLayerVisibility(map: Map, useVectorTiles: boolean) {
+  const geoVisibility: "visible" | "none" = useVectorTiles ? "none" : "visible";
+  const vtVisibility: "visible" | "none" = useVectorTiles ? "visible" : "none";
+  [LAYER_FILL_ID, LAYER_FILL_SELECTED_ID, LAYER_STROKE_ID, LAYER_HOVER_ID, LAYER_LABEL_ID].forEach(
+    (layerId) => {
+      if (map.getLayer(layerId)) map.setLayoutProperty(layerId, "visibility", geoVisibility);
+    },
+  );
+  [VT_LAYER_FILL_ID, VT_LAYER_FILL_SELECTED_ID, VT_LAYER_STROKE_ID, VT_LAYER_HOVER_ID, VT_LAYER_LABEL_ID].forEach(
+    (layerId) => {
+      if (map.getLayer(layerId)) map.setLayoutProperty(layerId, "visibility", vtVisibility);
+    },
+  );
+}
+
+function featureKeyFromRendered(feature?: maplibregl.MapGeoJSONFeature): string | undefined {
+  if (!feature) return undefined;
+  const fromId = feature.id;
+  if (typeof fromId === "string" && fromId) return fromId;
+  if (typeof fromId === "number") return String(fromId);
+  const props = (feature.properties ?? {}) as WFSFeatureProps;
+  const key = `${props.code_insee ?? props.insee}-${props.section}-${props.numero}`;
+  return key.includes("undefined") ? undefined : key;
+}
+
+function setFeatureStateOnSource(
+  map: Map,
+  sourceId: string,
+  id: string,
+  state: { hover?: boolean; selected?: boolean },
+) {
+  if (sourceId === VT_SOURCE_ID) {
+    map.setFeatureState({ source: sourceId, sourceLayer: "parcelles", id }, state);
+    return;
   }
+  map.setFeatureState({ source: sourceId, id }, state);
+}
+
+function fitToGeojson(map: Map, fc: GeoJSON.FeatureCollection) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  const walk = (coords: unknown) => {
+    if (!Array.isArray(coords)) return;
+    if (coords.length >= 2 && typeof coords[0] === "number" && typeof coords[1] === "number") {
+      const x = coords[0] as number;
+      const y = coords[1] as number;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+      return;
+    }
+    coords.forEach((c) => walk(c));
+  };
+  const walkGeometry = (geometry: GeoJSON.Geometry | null) => {
+    if (!geometry) return;
+    if (geometry.type === "GeometryCollection") {
+      geometry.geometries.forEach((g) => walkGeometry(g));
+      return;
+    }
+    walk((geometry as Exclude<GeoJSON.Geometry, GeoJSON.GeometryCollection>).coordinates);
+  };
+  fc.features.forEach((f) => walkGeometry((f.geometry as GeoJSON.Geometry | null) ?? null));
+  if (Number.isFinite(minX) && Number.isFinite(minY) && Number.isFinite(maxX) && Number.isFinite(maxY)) {
+    map.fitBounds(
+      [
+        [minX, minY],
+        [maxX, maxY],
+      ],
+      { padding: 40, duration: 500 },
+    );
+  }
+}
+
+function fitToBoundsWithTargetZoom(
+  map: Map,
+  bbox: [number, number, number, number],
+  targetZoom: number,
+) {
+  const [minLon, minLat, maxLon, maxLat] = bbox;
+  map.fitBounds(
+    [
+      [minLon, minLat],
+      [maxLon, maxLat],
+    ],
+    {
+      padding: 36,
+      duration: 1100,
+      maxZoom: targetZoom,
+      // easing "easeInOutCubic" pour un déplacement doux.
+      easing: (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2),
+    },
+  );
+}
+
+function setBboxPreview(map: Map, lng: number, lat: number) {
+  const source = map.getSource(BBOX_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+  if (!source) return;
+  source.setData(buildBboxFeatureCollection(lng, lat, BBOX_HALF_M));
+}
+
+function buildBboxFeatureCollection(lng: number, lat: number, halfMeters: number): GeoJSON.FeatureCollection {
+  const dLat = halfMeters / 111320;
+  const dLng = halfMeters / (111320 * Math.cos((lat * Math.PI) / 180));
+  const minLng = lng - dLng;
+  const minLat = lat - dLat;
+  const maxLng = lng + dLng;
+  const maxLat = lat + dLat;
+  return {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        properties: {},
+        geometry: {
+          type: "Polygon",
+          coordinates: [[
+            [minLng, minLat],
+            [maxLng, minLat],
+            [maxLng, maxLat],
+            [minLng, maxLat],
+            [minLng, minLat],
+          ]],
+        },
+      },
+    ],
+  };
 }
 
 const overlayPillStyle: React.CSSProperties = {
