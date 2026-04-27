@@ -95,7 +95,6 @@ const VT_LAYER_HOVER_ID = "cadastre-vt-hover";
 const VT_LAYER_LABEL_ID = "cadastre-vt-label";
 const BBOX_FILL_LAYER_ID = "cadastre-bbox-fill";
 const BBOX_STROKE_LAYER_ID = "cadastre-bbox-stroke";
-const COMMUNE_TILE_TARGET_ZOOM = 13;
 
 // Fond de carte IGN Géoplateforme — Plan IGN (tuiles vectorielles, sans clé)
 // Fallback raster PLAN IGN si le style vectoriel pose problème
@@ -312,7 +311,7 @@ export default function CadastreMap({
       map.addSource(VT_SOURCE_ID, {
         type: "vector",
         tiles: [],
-        minzoom: 0,
+        minzoom: 12,
         maxzoom: 22,
         promoteId: "idu",
       });
@@ -397,7 +396,7 @@ export default function CadastreMap({
         type: "fill",
         source: VT_SOURCE_ID,
         "source-layer": "parcelles",
-        minzoom: 13,
+        minzoom: 10,
         layout: { visibility: "none" },
         paint: {
           "fill-color": "#ffffff",
@@ -409,7 +408,7 @@ export default function CadastreMap({
         type: "fill",
         source: VT_SOURCE_ID,
         "source-layer": "parcelles",
-        minzoom: 13,
+        minzoom: 10,
         layout: { visibility: "none" },
         paint: {
           "fill-color": "#3b82f6",
@@ -426,7 +425,7 @@ export default function CadastreMap({
         type: "line",
         source: VT_SOURCE_ID,
         "source-layer": "parcelles",
-        minzoom: 13,
+        minzoom: 10,
         layout: { visibility: "none" },
         paint: {
           "line-color": "#1e3a5f",
@@ -439,7 +438,7 @@ export default function CadastreMap({
         type: "fill",
         source: VT_SOURCE_ID,
         "source-layer": "parcelles",
-        minzoom: 13,
+        minzoom: 10,
         layout: { visibility: "none" },
         paint: {
           "fill-color": "#3b82f6",
@@ -568,7 +567,7 @@ export default function CadastreMap({
           activeCommuneModeRef.current === meta.mode
         ) {
           if (meta.mode === "mvt" && meta.bbox_wgs84) {
-            fitToBoundsWithTargetZoom(map, meta.bbox_wgs84, COMMUNE_TILE_TARGET_ZOOM);
+            fitToBoundsWithTargetZoom(map, meta.bbox_wgs84);
           }
           setDisplayModeLabel(
             `Commune ${inseeValue} - mode ${meta.mode === "geojson" ? "GeoJSON" : "tuiles vectorielles"}`,
@@ -613,7 +612,7 @@ export default function CadastreMap({
           setLayerVisibility(map, true);
           setDisplayModeLabel(`Commune ${inseeValue} - mode tuiles vectorielles`);
           if (meta.bbox_wgs84) {
-            fitToBoundsWithTargetZoom(map, meta.bbox_wgs84, COMMUNE_TILE_TARGET_ZOOM);
+            fitToBoundsWithTargetZoom(map, meta.bbox_wgs84);
           }
           activeCommuneInseeRef.current = inseeValue;
           activeCommuneModeRef.current = "mvt";
@@ -965,7 +964,7 @@ function fitToGeojson(map: Map, fc: GeoJSON.FeatureCollection) {
 function fitToBoundsWithTargetZoom(
   map: Map,
   bbox: [number, number, number, number],
-  targetZoom: number,
+  targetZoom = 13,
 ) {
   const [minLon, minLat, maxLon, maxLat] = bbox;
   map.fitBounds(
@@ -974,13 +973,18 @@ function fitToBoundsWithTargetZoom(
       [maxLon, maxLat],
     ],
     {
-      padding: 36,
+      padding: 48,
       duration: 1100,
-      maxZoom: targetZoom,
+      maxZoom: 14,
       // easing "easeInOutCubic" pour un déplacement doux.
       easing: (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2),
     },
   );
+  map.once("moveend", () => {
+    if (map.getZoom() < targetZoom) {
+      map.easeTo({ zoom: targetZoom, duration: 260 });
+    }
+  });
 }
 
 function setBboxPreview(map: Map, lng: number, lat: number) {
