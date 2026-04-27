@@ -8,6 +8,58 @@ type Props = {
   insee: string | null;
 };
 
+type ReglementTone = {
+  border: string;
+  background: string;
+  badgeColor: string;
+  statusColor: string;
+};
+
+function getReglementTone(
+  verdict?: string | null,
+  utilisable?: boolean | null,
+): ReglementTone {
+  if (utilisable === true || verdict === "TEXTUEL") {
+    return {
+      border: "1px solid #86efac",
+      background: "#dcfce7",
+      badgeColor: "#166534",
+      statusColor: "#166534",
+    };
+  }
+
+  if (verdict === "ERREUR_ANALYSE" || verdict === "INVALIDE" || verdict === "VIDE") {
+    return {
+      border: "1px solid #fca5a5",
+      background: "#fee2e2",
+      badgeColor: "#991b1b",
+      statusColor: "#991b1b",
+    };
+  }
+
+  return {
+    border: "1px solid #fdba74",
+    background: "#ffedd5",
+    badgeColor: "#9a3412",
+    statusColor: "#9a3412",
+  };
+}
+
+function getVerdictLabel(verdict?: string | null, utilisable?: boolean | null): string {
+  if (!verdict) return "Vérification en attente";
+  if (utilisable === true || verdict === "TEXTUEL") return "Texte extractible";
+
+  const mapping: Record<string, string> = {
+    MIXTE: "Partiellement extractible",
+    SCANNE: "Non extractible (scan)",
+    TROP_COURT: "Non extractible (texte insuffisant)",
+    VIDE: "Non extractible (document vide)",
+    INVALIDE: "Document invalide",
+    ERREUR_ANALYSE: "Analyse impossible",
+  };
+  return mapping[verdict] ?? `Verdict: ${verdict}`;
+}
+
 export default function UrbanismeDocsPanel({ insee }: Props) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -154,6 +206,10 @@ export default function UrbanismeDocsPanel({ insee }: Props) {
                   >
                     {files.map((f) => {
                       const isReglement = !!reglementUrl && f.url === reglementUrl;
+                      const reglementTone = getReglementTone(
+                        docs?.reglement_qualite_verdict,
+                        docs?.reglement_qualite_utilisable,
+                      );
                       return (
                         <a
                           key={f.name}
@@ -166,8 +222,8 @@ export default function UrbanismeDocsPanel({ insee }: Props) {
                             width: "100%",
                             boxSizing: "border-box",
                             borderRadius: 8,
-                            border: isReglement ? "1px solid #86efac" : "1px solid #e2e8f0",
-                            background: isReglement ? "#dcfce7" : "#f8fafc",
+                            border: isReglement ? reglementTone.border : "1px solid #e2e8f0",
+                            background: isReglement ? reglementTone.background : "#f8fafc",
                             color: "#0f172a",
                             padding: "8px 10px",
                             textDecoration: "none",
@@ -180,7 +236,7 @@ export default function UrbanismeDocsPanel({ insee }: Props) {
                               fontWeight: 700,
                               letterSpacing: 0.2,
                               textTransform: "uppercase",
-                              color: isReglement ? "#166534" : "#64748b",
+                              color: isReglement ? reglementTone.badgeColor : "#64748b",
                               marginBottom: 2,
                             }}
                           >
@@ -197,6 +253,21 @@ export default function UrbanismeDocsPanel({ insee }: Props) {
                           >
                             {f.name}
                           </div>
+                          {isReglement && docs?.reglement_qualite_verdict && (
+                            <div
+                              style={{
+                                marginTop: 3,
+                                fontSize: 10,
+                                color: reglementTone.statusColor,
+                                whiteSpace: "normal",
+                              }}
+                            >
+                              {getVerdictLabel(
+                                docs.reglement_qualite_verdict,
+                                docs.reglement_qualite_utilisable,
+                              )}
+                            </div>
+                          )}
                         </a>
                       );
                     })}
