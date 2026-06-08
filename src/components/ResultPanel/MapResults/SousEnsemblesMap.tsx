@@ -2,8 +2,10 @@
  * SousEnsemblesMap.tsx
  * ─────────────────────
  * Carte MapLibre satellite affichant :
- *   1. Les sous-ensembles UF (lots de parcelles) colorés par score_norm
- *   2. Les couches thématiques de résultats (lazy, même registry que ParcellesMap)
+ *   1. Le foncier source (emprise projet)
+ *   2. Les sous-ensembles UF colorés par score écologique (score_ratio)
+ *   3. Les couches thématiques de résultats (lazy, même registry que ParcellesMap)
+ * Liaison table ↔ carte via focusSubsetId / onSubsetClick (même modèle que ParcellesMap).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -22,16 +24,21 @@ import {
   type ThematicLayerState,
 } from "./cartoCouchesRegistry";
 import { LegendeMapResultats } from "./LegendeMapResultats";
+import {
+  createMapHoverPopup,
+  hideMapHoverPopup,
+  showMapHoverPopup,
+} from "./mapHoverPopup";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function scoreNormColorExpression(): unknown[] {
   return [
-    "interpolate", ["linear"], ["get", "score_norm"],
-    0,    "#333a4d",
-    0.33, "#555f72",
-    0.66, "#f59e0b",
-    1,    "#3ecf8e",
+    "step", ["coalesce", ["get", "score_ratio"], 0],
+    "#6b7280",
+    0.2, "#f59e0b",
+    0.5, "#16a34a",
+    0.8, "#166534",
   ];
 }
 
@@ -60,31 +67,107 @@ const BASE_STYLE: maplibregl.StyleSpecification = {
 function emptyFC(): FeatureCollection { return { type: "FeatureCollection", features: [] }; }
 function round4(n: number) { return Math.round(n * 10000) / 10000; }
 
+function toFiniteNumber(value: unknown): number | null {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function extendBoundsFromFeature(bounds: maplibregl.LngLatBounds, f: GeoJSON.Feature) {
+  const geom = f.geometry;
+  if (!geom) return;
+  if (geom.type === "Polygon") {
+    geom.coordinates[0].forEach((c) => bounds.extend(c as [number, number]));
+  } else if (geom.type === "MultiPolygon") {
+    geom.coordinates.forEach((poly) => poly[0].forEach((c) => bounds.extend(c as [number, number])));
+  }
+}
+
+function focusFilterForSubsetId(subsetId: string | null | undefined): maplibregl.FilterSpecification {
+  if (!subsetId) return ["==", ["get", "subset_id"], "___none___"];
+  return ["==", ["get", "subset_id"], subsetId];
+}
+
+function ensureHighlightOutlineLayer(m: maplibregl.Map) {
+  if (m.getLayer("uf-subsets-highlight-outline")) return;
+  m.addLayer({
+    id: "uf-subsets-highlight-outline",
+    type: "line",
+    source: "uf-subsets",
+    filter: focusFilterForSubsetId(null),
+    paint: {
+      "line-color": "#fbbf24",
+      "line-width": 4,
+      "line-opacity": 1,
+    },
+  });
+}
+
+const SUBSET_HIT_LAYERS = ["uf-subsets-fill"];
+
+function pickSubsetAtPoint(m: maplibregl.Map, point: maplibregl.PointLike): Record<string, unknown> | null {
+  try {
+    if (!m.getLayer("uf-subsets-fill")) return null;
+    const features = m.queryRenderedFeatures(point, { layers: SUBSET_HIT_LAYERS });
+    if (!features.length) return null;
+    return (features[0].properties ?? null) as Record<string, unknown> | null;
+  } catch {
+    return null;
+  }
+}
+
+function subsetFillOpacityExpr(focusUfId: string | null): maplibregl.ExpressionSpecification {
+  if (focusUfId) {
+    return ["case", ["==", ["get", "uf_id"], focusUfId], 0.5, 0.15] as maplibregl.ExpressionSpecification;
+  }
+  return 0.4 as unknown as maplibregl.ExpressionSpecification;
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface SousEnsemblesMapProps {
   geojson: FeatureCollection<Geometry, Record<string, unknown>> | null;
-  subsetScores: Record<string, number> | null;
+  subsetScores?: Record<string, number> | null;
+  foncierGeojson?: unknown;
   projectId?: string | null;
   preloadedThematic?: ResultsThematicPreload | null;
   thematicPreloadLoading?: boolean;
+  focusSubsetId?: string | null;
+  focusUfId?: string | null;
+  onSubsetClick?: (subsetId: string) => void;
 }
 type BaseMapMode = "satellite" | "plan";
 
 // ─── Composant ────────────────────────────────────────────────────────────────
 
-export function SousEnsemblesMap({ geojson, subsetScores, projectId, preloadedThematic, thematicPreloadLoading = false }: SousEnsemblesMapProps) {
+export function SousEnsemblesMap({
+  geojson,
+  subsetScores,
+  foncierGeojson,
+  projectId,
+  preloadedThematic,
+  thematicPreloadLoading = false,
+  focusSubsetId = null,
+  focusUfId = null,
+  onSubsetClick,
+}: SousEnsemblesMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map          = useRef<maplibregl.Map | null>(null);
   const fetchedRef   = useRef<Set<string>>(new Set());
+  const onSubsetClickRef = useRef(onSubsetClick);
+  onSubsetClickRef.current = onSubsetClick;
+  const subsetPopupRef = useRef<maplibregl.Popup | null>(null);
+  const subsetHandlersBoundRef = useRef(false);
+  const didInitialFitRef = useRef(false);
 
   const [thematicState, setThematicState] = useState<Record<string, ThematicLayerState>>(buildInitialThematic);
+  const [subsetsVisible, setSubsetsVisible] = useState(true);
   const [baseMapMode, setBaseMapMode] = useState<BaseMapMode>("satellite");
 
   // Reset au changement de projet
   useEffect(() => {
     setThematicState(buildInitialThematic());
     fetchedRef.current = new Set();
+    didInitialFitRef.current = false;
   }, [projectId]);
 
   useEffect(() => {
@@ -121,21 +204,35 @@ export function SousEnsemblesMap({ geojson, subsetScores, projectId, preloadedTh
     });
   }, [preloadedThematic]);
 
-  // Normalisation des scores sur les features
-  const coloredGeojson = useMemo(() => {
+  const geojsonWithScores = useMemo(() => {
     if (!geojson?.features?.length) return null;
     const scores = Object.values(subsetScores ?? {});
     const minS = scores.length ? Math.min(...scores) : 0;
     const maxS = scores.length ? Math.max(...scores) : 1;
     const rng = maxS - minS || 1;
+
     return {
       ...geojson,
       features: geojson.features.map((f) => {
-        const sid = f.properties?.subset_id as string | undefined;
-        const score = sid && subsetScores ? subsetScores[sid] ?? 0 : 0;
+        const props = (f.properties ?? {}) as Record<string, unknown>;
+        const sid = props.subset_id ? String(props.subset_id) : undefined;
+        let scoreRatio = toFiniteNumber(props.score_ratio);
+        if (scoreRatio == null && sid && subsetScores && sid in subsetScores) {
+          scoreRatio = round4((subsetScores[sid] - minS) / rng);
+        }
+        const scoreEco = toFiniteNumber(props.score_eco);
+        const scoreMax = toFiniteNumber(props.score_eco_max) ?? 6;
+        if (scoreRatio == null && scoreEco != null && scoreMax > 0) {
+          scoreRatio = round4(scoreEco / scoreMax);
+        }
         return {
           ...f,
-          properties: { ...(f.properties ?? {}), subset_id: sid, score, score_norm: round4((score - minS) / rng) },
+          properties: {
+            ...props,
+            subset_id: sid,
+            score_ratio: scoreRatio ?? 0,
+            score_norm: scoreRatio ?? 0,
+          } as Record<string, unknown>,
         };
       }),
     };
@@ -150,37 +247,58 @@ export function SousEnsemblesMap({ geojson, subsetScores, projectId, preloadedTh
       center: [0, 47],
       zoom: 8,
     });
-    return () => { map.current?.remove(); map.current = null; };
+    return () => {
+      map.current?.remove();
+      map.current = null;
+      subsetHandlersBoundRef.current = false;
+    };
   }, []);
 
-  // ── Sync sous-ensembles ───────────────────────────────────────────────────
+  // ── Sync sous-ensembles + foncier ─────────────────────────────────────────
   useEffect(() => {
-    if (!map.current || !coloredGeojson?.features?.length) return;
+    if (!map.current || !geojsonWithScores?.features?.length) return;
 
     const apply = () => {
       if (!map.current) return;
 
-      // Sous-ensembles UF
+      if (foncierGeojson) {
+        if (map.current.getSource("foncier")) {
+          (map.current.getSource("foncier") as maplibregl.GeoJSONSource).setData(foncierGeojson as FeatureCollection);
+        } else {
+          map.current.addSource("foncier", { type: "geojson", data: foncierGeojson as FeatureCollection });
+          map.current.addLayer({ id: "foncier-fill", type: "fill", source: "foncier", paint: { "fill-color": "#ff4fa3", "fill-opacity": 0.25 } });
+          map.current.addLayer({ id: "foncier-outline", type: "line", source: "foncier", paint: { "line-color": "#ff4fa3", "line-width": 3 } });
+        }
+      }
+
+      const colorExpr = scoreNormColorExpression() as maplibregl.ExpressionSpecification;
+      const fillOpacityExpr = subsetFillOpacityExpr(focusUfId);
+
       if (map.current.getSource("uf-subsets")) {
-        (map.current.getSource("uf-subsets") as maplibregl.GeoJSONSource).setData(coloredGeojson as unknown as FeatureCollection);
+        (map.current.getSource("uf-subsets") as maplibregl.GeoJSONSource).setData(geojsonWithScores as unknown as FeatureCollection);
+        try {
+          map.current.setPaintProperty("uf-subsets-fill", "fill-color", colorExpr);
+          map.current.setPaintProperty("uf-subsets-outline", "line-color", colorExpr);
+          map.current.setPaintProperty("uf-subsets-fill", "fill-opacity", fillOpacityExpr);
+        } catch { /* layers pas encore montées */ }
       } else {
-        map.current.addSource("uf-subsets", { type: "geojson", data: coloredGeojson as unknown as FeatureCollection });
+        map.current.addSource("uf-subsets", { type: "geojson", data: geojsonWithScores as unknown as FeatureCollection });
         map.current.addLayer({
           id: "uf-subsets-fill", type: "fill", source: "uf-subsets",
           paint: {
-            "fill-color": scoreNormColorExpression() as maplibregl.ExpressionSpecification,
-            "fill-opacity": 0.4,
+            "fill-color": colorExpr,
+            "fill-opacity": fillOpacityExpr,
           },
         });
         map.current.addLayer({
           id: "uf-subsets-outline", type: "line", source: "uf-subsets",
           paint: {
-            "line-color": scoreNormColorExpression() as maplibregl.ExpressionSpecification,
+            "line-color": colorExpr,
             "line-width": 2,
           },
         });
+        ensureHighlightOutlineLayer(map.current);
 
-        // Couches thématiques — insérées AVANT uf-subsets (restent en dessous)
         for (const def of RESULTS_LAYERS) {
           const { sourceId, fillId, lineId } = thematicLayerIds(def.key);
           if (!map.current.getSource(sourceId)) {
@@ -196,8 +314,7 @@ export function SousEnsemblesMap({ geojson, subsetScores, projectId, preloadedTh
           }
         }
 
-        // Popup hover couches thématiques
-        const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, maxWidth: "260px" });
+        const popup = createMapHoverPopup("260px");
         const thematicFillIds = RESULTS_LAYERS.map((d) => thematicLayerIds(d.key).fillId);
 
         map.current.on("mousemove", (e) => {
@@ -205,9 +322,9 @@ export function SousEnsemblesMap({ geojson, subsetScores, projectId, preloadedTh
           const visible = thematicFillIds.filter((id) => {
             try { return map.current!.getLayoutProperty(id, "visibility") === "visible"; } catch { return false; }
           });
-          if (!visible.length) { popup.remove(); return; }
+          if (!visible.length) { hideMapHoverPopup(popup); return; }
           const features = map.current.queryRenderedFeatures(e.point, { layers: visible });
-          if (!features.length) { popup.remove(); return; }
+          if (!features.length) { hideMapHoverPopup(popup); return; }
           const f = features[0];
           const def = RESULTS_LAYERS.find((d) => thematicLayerIds(d.key).fillId === f.layer?.id);
           if (!def) return;
@@ -216,59 +333,125 @@ export function SousEnsemblesMap({ geojson, subsetScores, projectId, preloadedTh
             .map(({ field, label }) =>
               `<tr><th style="color:#64748b;padding-right:8px;font-weight:500;white-space:nowrap">${label}</th><td>${f.properties![field]}</td></tr>`
             ).join("");
-          popup.setLngLat(e.lngLat)
-            .setHTML(`<div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px">${def.label}</div><table style="font-size:12px;border-collapse:collapse">${rows}</table>`)
-            .addTo(map.current);
+          showMapHoverPopup(
+            popup,
+            map.current,
+            `<div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px">${def.label}</div><table style="font-size:12px;border-collapse:collapse">${rows}</table>`,
+          );
         });
-        map.current.on("mouseleave", () => { popup.remove(); });
+        map.current.on("mouseleave", () => { hideMapHoverPopup(popup); });
+      }
 
-        const subsetPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, maxWidth: "340px" });
-        map.current.on("mousemove", "uf-subsets-fill", (e) => {
+      if (!subsetHandlersBoundRef.current && map.current.getLayer("uf-subsets-fill")) {
+        const onSubsetMove = (e: maplibregl.MapLayerMouseEvent) => {
           if (!map.current) return;
           const props = (e.features?.[0]?.properties ?? {}) as Record<string, unknown>;
           const subsetId = props.subset_id ? String(props.subset_id) : "—";
+          const ufId = props.uf_id ? String(props.uf_id) : "—";
           const siren = props.siren ? String(props.siren) : "—";
           const denomination = props.denomination ? String(props.denomination) : "—";
-          const score = typeof props.score === "number" ? props.score : Number(props.score ?? NaN);
-          const scoreNorm = typeof props.score_norm === "number" ? props.score_norm : Number(props.score_norm ?? NaN);
+          const scoreEco = toFiniteNumber(props.score_eco);
+          const scoreMax = toFiniteNumber(props.score_eco_max) ?? 6;
+          const scoreRatio = toFiniteNumber(props.score_ratio);
+          const surface = toFiniteNumber(props.surface_ha);
+          const miller = toFiniteNumber(props.miller);
 
           const rows = [
             `<tr><th style="color:#64748b;padding-right:8px;font-weight:500;white-space:nowrap">subset_id</th><td class="mono">${subsetId}</td></tr>`,
+            `<tr><th style="color:#64748b;padding-right:8px;font-weight:500;white-space:nowrap">UF</th><td class="mono">${ufId}</td></tr>`,
             `<tr><th style="color:#64748b;padding-right:8px;font-weight:500;white-space:nowrap">SIREN</th><td class="mono">${siren}</td></tr>`,
             `<tr><th style="color:#64748b;padding-right:8px;font-weight:500;white-space:nowrap">Dénomination</th><td>${denomination}</td></tr>`,
-            `<tr><th style="color:#64748b;padding-right:8px;font-weight:500;white-space:nowrap">Score</th><td>${Number.isFinite(score) ? score.toFixed(4) : "—"}</td></tr>`,
-            `<tr><th style="color:#64748b;padding-right:8px;font-weight:500;white-space:nowrap">Score norm.</th><td>${Number.isFinite(scoreNorm) ? scoreNorm.toFixed(4) : "—"}</td></tr>`,
+            `<tr><th style="color:#64748b;padding-right:8px;font-weight:500;white-space:nowrap">Score éco</th><td>${scoreEco != null ? `${scoreEco.toFixed(2)}/${scoreMax}` : "—"}</td></tr>`,
+            `<tr><th style="color:#64748b;padding-right:8px;font-weight:500;white-space:nowrap">Ratio</th><td>${scoreRatio != null ? scoreRatio.toFixed(4) : "—"}</td></tr>`,
+            `<tr><th style="color:#64748b;padding-right:8px;font-weight:500;white-space:nowrap">Surface</th><td>${surface != null ? `${surface.toFixed(1)} ha` : "—"}</td></tr>`,
+            `<tr><th style="color:#64748b;padding-right:8px;font-weight:500;white-space:nowrap">Miller</th><td>${miller != null ? miller.toFixed(3) : "—"}</td></tr>`,
           ].join("");
 
-          subsetPopup
-            .setLngLat(e.lngLat)
-            .setHTML(`<div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px">Sous-ensemble UF</div><table style="font-size:12px;border-collapse:collapse">${rows}</table>`)
-            .addTo(map.current);
-        });
-        map.current.on("mouseenter", "uf-subsets-fill", () => map.current?.getCanvas().style.setProperty("cursor", "pointer"));
-        map.current.on("mouseleave", "uf-subsets-fill", () => {
+          if (!subsetPopupRef.current) {
+            subsetPopupRef.current = createMapHoverPopup("360px");
+          }
+          showMapHoverPopup(
+            subsetPopupRef.current,
+            map.current,
+            `<div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px">Sous-ensemble UF</div><table style="font-size:12px;border-collapse:collapse">${rows}</table>`,
+          );
+          map.current.getCanvas().style.cursor = "pointer";
+        };
+
+        const onSubsetLeave = () => {
+          subsetPopupRef.current?.remove();
           map.current?.getCanvas().style.removeProperty("cursor");
-          subsetPopup.remove();
-        });
+        };
+
+        const onSubsetClickHandler = (e: maplibregl.MapMouseEvent) => {
+          if (!map.current) return;
+          const props = pickSubsetAtPoint(map.current, e.point);
+          const sid = props?.subset_id;
+          if (sid && typeof sid === "string") {
+            onSubsetClickRef.current?.(sid);
+          }
+        };
+
+        map.current.on("mousemove", "uf-subsets-fill", onSubsetMove);
+        map.current.on("mouseleave", "uf-subsets-fill", onSubsetLeave);
+        map.current.on("click", "uf-subsets-fill", onSubsetClickHandler);
+        subsetHandlersBoundRef.current = true;
       }
 
-      // Fit bounds
-      const bounds = new maplibregl.LngLatBounds();
-      coloredGeojson.features.forEach((f: GeoJSON.Feature) => {
-        if (!f.geometry) return;
-        if (f.geometry.type === "Polygon") {
-          f.geometry.coordinates[0].forEach((c: number[]) => bounds.extend(c as [number, number]));
-        } else if (f.geometry.type === "MultiPolygon") {
-          (f.geometry.coordinates as number[][][][]).forEach((ring) =>
-            ring[0].forEach((c) => bounds.extend(c as [number, number]))
-          );
+      if (!didInitialFitRef.current) {
+        const bounds = new maplibregl.LngLatBounds();
+        geojsonWithScores.features.forEach((f: GeoJSON.Feature) => extendBoundsFromFeature(bounds, f));
+        if (!bounds.isEmpty()) {
+          map.current.fitBounds(bounds, { padding: 50 });
+          didInitialFitRef.current = true;
         }
-      });
-      if (!bounds.isEmpty()) map.current.fitBounds(bounds, { padding: 50 });
+      }
     };
 
     if (map.current.isStyleLoaded()) apply(); else map.current.once("load", apply);
-  }, [coloredGeojson]);
+  }, [geojsonWithScores, foncierGeojson, focusUfId]);
+
+  // ── Opacité UF focus (sans recréer les layers) ────────────────────────────
+  useEffect(() => {
+    if (!map.current || !map.current.isStyleLoaded()) return;
+    try {
+      map.current.setPaintProperty("uf-subsets-fill", "fill-opacity", subsetFillOpacityExpr(focusUfId));
+    } catch { /* layer pas monté */ }
+  }, [focusUfId]);
+
+  // ── Surbrillance sous-ensemble sélectionné ──────────────────────────────────
+  useEffect(() => {
+    if (!map.current || !map.current.isStyleLoaded()) return;
+    try {
+      ensureHighlightOutlineLayer(map.current);
+      map.current.setFilter("uf-subsets-highlight-outline", focusFilterForSubsetId(focusSubsetId));
+    } catch { /* layers pas encore montées */ }
+  }, [focusSubsetId]);
+
+  useEffect(() => {
+    if (!map.current || !geojsonWithScores?.features?.length) return;
+
+    if (focusSubsetId) {
+      const feature = geojsonWithScores.features.find(
+        (f) => String(f.properties?.subset_id ?? "") === focusSubsetId,
+      );
+      if (!feature) return;
+      const bounds = new maplibregl.LngLatBounds();
+      extendBoundsFromFeature(bounds, feature);
+      if (bounds.isEmpty()) return;
+      map.current.fitBounds(bounds, { padding: 72, maxZoom: 17, duration: 650 });
+      return;
+    }
+
+    if (focusUfId) {
+      const bounds = new maplibregl.LngLatBounds();
+      geojsonWithScores.features
+        .filter((f) => String(f.properties?.uf_id ?? "") === focusUfId)
+        .forEach((f) => extendBoundsFromFeature(bounds, f));
+      if (bounds.isEmpty()) return;
+      map.current.fitBounds(bounds, { padding: 60, maxZoom: 16, duration: 650 });
+    }
+  }, [focusSubsetId, focusUfId, geojsonWithScores]);
 
   // ── Fond de carte (satellite/plan) ────────────────────────────────────────
   useEffect(() => {
@@ -282,6 +465,19 @@ export function SousEnsemblesMap({ geojson, subsetScores, projectId, preloadedTh
       /* layers pas encore montées */
     }
   }, [baseMapMode]);
+
+  // ── Visibilité sous-ensembles ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!map.current || !map.current.isStyleLoaded()) return;
+    const vis = subsetsVisible ? "visible" : "none";
+    try {
+      map.current.setLayoutProperty("uf-subsets-fill", "visibility", vis);
+      map.current.setLayoutProperty("uf-subsets-outline", "visibility", vis);
+      if (map.current.getLayer("uf-subsets-highlight-outline")) {
+        map.current.setLayoutProperty("uf-subsets-highlight-outline", "visibility", vis);
+      }
+    } catch { /* layers pas encore montées */ }
+  }, [subsetsVisible]);
 
   // ── Sync couches thématiques ──────────────────────────────────────────────
   useEffect(() => {
@@ -415,12 +611,28 @@ export function SousEnsemblesMap({ geojson, subsetScores, projectId, preloadedTh
         >
           Plan
         </button>
+        <button
+          type="button"
+          onClick={() => setSubsetsVisible((v) => !v)}
+          style={{
+            border: "1px solid #475569",
+            background: subsetsVisible ? "#1d4ed8" : "#1f2937",
+            color: "#e2e8f0",
+            borderRadius: 4,
+            padding: "4px 8px",
+            fontSize: 11,
+            cursor: "pointer",
+          }}
+          title={subsetsVisible ? "Masquer les sous-ensembles UF" : "Afficher les sous-ensembles UF"}
+        >
+          Sous-ensembles
+        </button>
       </div>
       <div
         ref={mapContainer}
         className="parcelles-map"
         style={{ width: "100%", height: "100%" }}
-        title="Sous-ensembles UF (unités foncières) — colorés par score"
+        title="Sous-ensembles UF — colorés par score écologique"
       />
       <LegendeMapResultats
         layers={RESULTS_LAYERS}

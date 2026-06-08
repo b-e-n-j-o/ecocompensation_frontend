@@ -1,0 +1,141 @@
+.pipeline-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 0.35rem 0.65rem 0.5rem;
+}
+
+.pipeline-progress--compact {
+  padding: 0;
+  gap: 0.5rem;
+}
+
+.pipeline-stage {
+  border: 1px solid var(--eco-border, #e2e8f0);
+  border-radius: 0.5rem;
+  background: var(--eco-surface, #fff);
+  overflow: hidden;
+}
+
+.pipeline-stage-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 0.55rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  border-bottom: 1px solid var(--eco-border, #e2e8f0);
+  background: #f8fafc;
+}
+
+.pipeline-stage--running .pipeline-stage-head {
+  background: #fffbeb;
+}
+
+.pipeline-stage--done .pipeline-stage-head {
+  background: #f0fdf4;
+}
+
+.pipeline-stage--error .pipeline-stage-head {
+  background: #fef2f2;
+}
+
+.pipeline-stage-spinner {
+  flex-shrink: 0;
+  width: 13px;
+  height: 13px;
+  border: 2px solid #cbd5e1;
+  border-top-color: #b45309;
+  border-radius: 50%;
+  animation: pipeline-spin 0.75s linear infinite;
+}
+
+@keyframes pipeline-spin {
+  to { transform: rotate(360deg); }
+}
+
+.pipeline-stage-title {
+  flex: 1;
+}
+
+.pipeline-stage-count {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #15803d;
+}
+
+.pipeline-substeps {
+  list-style: none;
+  margin: 0;
+  padding: 0.35rem 0.5rem 0.45rem;
+}
+
+.pipeline-substep {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  padding: 0.2rem 0.15rem;
+  font-size: 0.74rem;
+  color: #64748b;
+  line-height: 1.35;
+}
+
+.pipeline-substep--running {
+  color: #92400e;
+}
+
+.pipeline-substep--done {
+  color: #166534;
+}
+
+.pipeline-substep--error {
+  color: #b91c1c;
+}
+
+.pipeline-substep-icon {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
+.pipeline-substep-icon--running {
+  border: 2px solid #cbd5e1;
+  border-top-color: #b45309;
+  border-radius: 50%;
+  animation: pipeline-spin 0.75s linear infinite;
+}
+
+.pipeline-substep-icon--done {
+  color: #15803d;
+}
+
+.pipeline-substep-icon--error {
+  color: #b91c1c;
+}
+
+.pipeline-substep-icon--pending {
+  width: 6px;
+  height: 6px;
+  margin-top: 5px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: #cbd5e1;
+}
+
+.results-tab-spinner {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  margin-left: 6px;
+  vertical-align: -1px;
+  border: 2px solid #cbd5e1;
+  border-top-color: #b45309;
+  border-radius: 50%;
+  animation: pipeline-spin 0.75s linear infinite;
+}

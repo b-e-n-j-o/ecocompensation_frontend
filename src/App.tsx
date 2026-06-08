@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Routes, Route, Link, Navigate, useNavigate, useParams } from "react-router-dom";
+import { Routes, Route, NavLink, Navigate, useNavigate, useParams, useLocation } from "react-router-dom";
 
-import { FilterPanel } from "./components/FilterPanel/FilterPanel";
 import { FunnelDisplay } from "./components/ResultPanel/FunnelDisplay";
+import { ResultsToolbar } from "./components/ResultPanel/ResultsToolbar";
 import { RankingTable } from "./components/ResultPanel/RankingTable";
 import { IndesirablesTable } from "./components/ResultPanel/IndesirablesTable";
 import { UnitesFoncieresTable } from "./components/ResultPanel/UnitesFoncieresTable";
 import { ParcellesMap } from "./components/ResultPanel/MapResults/ParcellesMap";
 import { SousEnsemblesMap } from "./components/ResultPanel/MapResults/SousEnsemblesMap";
+import { PipelineProgressPanel } from "./components/PipelineProgressPanel";
+import "./components/pipelineProgressPanel.css";
 import type { ParcellesGeoJSON } from "./components/ResultPanel/MapResults/ParcellesMap";
 import {
   runFilter,
@@ -19,6 +21,7 @@ import {
   fetchProjectContextGeometry,
   fetchFoncierGeojson,
   fetchUfSubsetsGeojson,
+  fetchUfResults,
   fetchSousEnsemblesStatus,
   prefetchAllResultsThematicLayers,
   fetchPoolIndesirables,
@@ -27,7 +30,9 @@ import {
   fetchPoolRunSnapshot,
   fetchPoolRunsList,
   fetchProjectStoredResults,
+  fetchProjects,
 } from "./api";
+import type { ProjectSummary } from "./api";
 import type { ResultsThematicPreload } from "./components/ResultPanel/MapResults/cartoCouchesRegistry";
 import type {
   FilterOptions,
@@ -39,19 +44,23 @@ import type {
 } from "./types";
 import {
   buildVegetationPriorityChain,
+  compareByPmCompensation,
+  compareByPmPersonneMorale,
+  compareByPmProspectDetail,
   compareByVegetationPriority,
   getDominantVegetationRatio,
+  normalizePoolMetricsByIdu,
 } from "./utils/poolMetrics";
 import { useFetchProgress } from "./hooks/useFetchProgress";
 import { CreateAoiPage } from "./pages/FiltreEcologique/CreateAoiPage";
 import { ProjectContextMap } from "./components/ProjectContextMap";
-import Bancarisation from "./pages/Bancarisation/page";
-import AnalyseEcologiquePage from "./pages/AnalyseEcologique/page";
-import IdentiteFoncierePage from "./pages/IdentiteFonciere/page";
+import FaunaMapPage from "./pages/FaunaMap/FaunaMapPage";
+
+const ROUTE_ECOCOMPENSATION = "/ecocompensation";
 
 import "./App.css";
-import "./components/FilterPanel/filter-panel.css";
 import "./components/ResultPanel/results.css";
+import "./components/ResultPanel/results-page.css";
 import type { FeatureCollection, GeoJsonProperties, Geometry } from "geojson";
 
 /** Onglets principaux : Parcelles | Unités foncières */
@@ -168,6 +177,8 @@ function EcoCompensationApp({
   const navigate = useNavigate();
   const [projectId, setProjectId] = useState<string | null>(fixedProjectId);
   const [poolRuns, setPoolRuns] = useState<PoolRunListItem[]>([]);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [filterLoadingStage, setFilterLoadingStage] = useState<FilterLoadingStage>("idle");
   const [ufResults, setUfResults] = useState<UfFilterResponse | null>(null);
@@ -178,17 +189,28 @@ function EcoCompensationApp({
   const [mainResultsTab, setMainResultsTab] = useState<MainResultsTab>("parcelles");
   /** Sous-onglets Entonnoir / Classement / Carte pour Parcelles */
   const [parcelSubView, setParcelSubView] = useState<ResultsSubView>("classement");
+  /** Carte visible dans la vue split Classement (60/40) — masquable pour tableau pleine largeur. */
+  const [splitMapVisible, setSplitMapVisible] = useState(true);
   /** Sous-onglets Entonnoir / Classement / Carte pour Unités foncières */
   const [ufSubView, setUfSubView] = useState<ResultsSubView>("classement");
   const [scrollToIdu, setScrollToIdu] = useState<string | null>(null);
-  const [, setMapFocusIdu] = useState<string | null>(null);
+  /** Incrémenté à chaque demande de scroll tableau (même IDU rejoué depuis la carte). */
+  const [scrollTableNonce, setScrollTableNonce] = useState(0);
+  /** Parcelle sélectionnée — surbrillance carte + ligne tableau. */
+  const [linkedIdu, setLinkedIdu] = useState<string | null>(null);
+  /** Sous-ensemble UF sélectionné — liaison table ↔ carte. */
+  const [linkedSubsetId, setLinkedSubsetId] = useState<string | null>(null);
+  const [linkedUfId, setLinkedUfId] = useState<string | null>(null);
+  const [scrollToSubsetId, setScrollToSubsetId] = useState<string | null>(null);
+  const [scrollUfTableNonce, setScrollUfTableNonce] = useState(0);
   const [distanceMaxKm, setDistanceMaxKm] = useState<number>(0);
   const [distanceCursorKm, setDistanceCursorKm] = useState<number>(0);
   const [surfaceMinHa, setSurfaceMinHa] = useState<number>(0);
   const [surfaceMaxHa, setSurfaceMaxHa] = useState<number>(0);
   const [sousEnsemblesStatus, setSousEnsemblesStatus] = useState<SousEnsemblesStatus>("idle");
   const [contextGeom, setContextGeom] = useState<Awaited<ReturnType<typeof fetchProjectContextGeometry>> | null>(null);
-  const { connected, progress } = useFetchProgress(projectId ?? "");
+  const { connected, progress, parcellesReady, ufReady, pipelineProgress, resetFetchPhases } =
+    useFetchProgress(projectId ?? "");
   const projectIdRef = useRef<string | null>(null);
   const thematicPrefetchSeqRef = useRef(0);
   const [thematicPreload, setThematicPreload] = useState<ResultsThematicPreload | null>(null);
@@ -203,6 +225,7 @@ function EcoCompensationApp({
   const [indesirableIdus, setIndesirableIdus] = useState<string[]>([]);
   const [indesirableParcellesStored, setIndesirableParcellesStored] = useState<FilterResponse["parcelles"]>([]);
   const [indesirableMetricsByIdu, setIndesirableMetricsByIdu] = useState<Record<string, ParcelPoolMetricRow[]>>({});
+  const [ufPoolLoading, setUfPoolLoading] = useState(false);
   const hasParcellesFunnel = (results?.funnel ?? []).some((s) => s.count >= 0);
   const hasUfFunnel = (ufResults?.funnel ?? []).some((s) => s.count >= 0);
 
@@ -233,6 +256,73 @@ function EcoCompensationApp({
       cancelled = true;
     };
   }, [projectId]);
+
+  useEffect(() => {
+    if (!projectId || !ufReady) return;
+
+    let cancelled = false;
+    setUfPoolLoading(true);
+
+    const cesbioLibelles =
+      lastFilterOptions?.vegetation_hybride?.cesbio_libelles?.filter(Boolean) ?? [
+        "Forêts de conifères",
+        "Forêts de feuillus",
+      ];
+    const faunaSpecies =
+      lastFilterOptions?.faune_criteria?.[0]?.tax_nom_val?.trim() ||
+      lastFilterOptions?.faune_criteria?.[0]?.species?.trim() ||
+      "";
+
+    void fetchUfResults(projectId, {
+      fauna_species: faunaSpecies || undefined,
+      cesbio_libelles: cesbioLibelles,
+      miller_thresh: lastFilterOptions?.miller_threshold ?? 0.39,
+    })
+      .then(async (uf) => {
+        if (cancelled) return;
+        setUfResults(uf);
+        setSousEnsemblesStatus("yes");
+        const hasSubsets = (uf.unites_foncieres ?? []).some(
+          (u) => (u.sous_ensembles ?? []).length > 0,
+        );
+        if (hasSubsets) {
+          try {
+            const ufGeo = await fetchUfSubsetsGeojson(projectId);
+            if (!cancelled) setUfGeojson(ufGeo);
+          } catch {
+            if (!cancelled) setUfGeojson(null);
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn("Pool UF (enrich_uf):", err);
+      })
+      .finally(() => {
+        if (!cancelled) setUfPoolLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, ufReady, lastFilterOptions]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setProjectsLoading(true);
+    fetchProjects()
+      .then((list) => {
+        if (!cancelled) setProjects(list);
+      })
+      .catch(() => {
+        if (!cancelled) setProjects([]);
+      })
+      .finally(() => {
+        if (!cancelled) setProjectsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!projectId) {
@@ -284,7 +374,6 @@ function EcoCompensationApp({
         }
 
         const rid = snap.pool_run_id;
-        const runIdForGeo = snap.pool_run_id ?? initialRunId;
 
         const loadMetrics = async () => {
           if (snap.by_idu && typeof snap.by_idu === "object") {
@@ -328,26 +417,6 @@ function EcoCompensationApp({
           }
         };
 
-        const loadGeo = async () => {
-          try {
-            const geo = await fetchParcellesGeojson(projectId, runIdForGeo);
-            if (active) setGeojson(geo as ParcellesGeoJSON);
-          } catch (err) {
-            console.warn("GeoJSON parcelles (run):", err);
-            if (active) setGeojson(null);
-          }
-        };
-
-        const loadFoncier = async () => {
-          try {
-            const foncier = await fetchFoncierGeojson(projectId);
-            if (active) setFoncierGeojson(foncier);
-          } catch (err) {
-            console.warn("GeoJSON foncier:", err);
-            if (active) setFoncierGeojson(null);
-          }
-        };
-
         const loadStored = async () => {
           try {
             const stored = await fetchProjectStoredResults(projectId);
@@ -384,22 +453,7 @@ function EcoCompensationApp({
         // Métriques d’abord (tableau + RankingLine) ; géométries / UF stockées sans bloquer.
         await loadMetrics();
 
-        const pid = projectId;
-        const prefetchSeq = thematicPrefetchSeqRef.current;
-        if (active) {
-          setThematicPreloadLoading(true);
-          void prefetchAllResultsThematicLayers(pid)
-            .then((data) => {
-              if (projectIdRef.current !== pid) return;
-              setThematicPreload(data);
-            })
-            .finally(() => {
-              if (thematicPrefetchSeqRef.current !== prefetchSeq) return;
-              setThematicPreloadLoading(false);
-            });
-        }
-
-        void Promise.all([loadGeo(), loadFoncier(), loadStored()]);
+        void loadStored();
       } catch (err) {
         console.error("Chargement run:", err);
         alert(err instanceof Error ? err.message : "Impossible de charger ce run.");
@@ -422,13 +476,14 @@ function EcoCompensationApp({
       return;
     }
     setProjectId(newProjectId);
+    resetFetchPhases();
     setResults(null);
     setUfResults(null);
     setUfGeojson(null);
     setGeojson(null);
     setFoncierGeojson(null);
     setScrollToIdu(null);
-    setMapFocusIdu(null);
+    setLinkedIdu(null);
     setDistanceMaxKm(0);
     setDistanceCursorKm(0);
     setSurfaceMinHa(0);
@@ -460,6 +515,155 @@ function EcoCompensationApp({
       })
       .catch(() => {
         if (!cancelled) setContextGeom(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  /** Après le nouveau pipeline (CreateAoiPage), charge last_results + UF sans relancer /filter. */
+  useEffect(() => {
+    if (!projectId || initialRunId || results) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const stored = await fetchProjectStoredResults(projectId);
+        if (cancelled) return;
+        const lr = stored.last_results;
+        if (
+          lr &&
+          typeof lr === "object" &&
+          Array.isArray((lr as FilterResponse).parcelles) &&
+          (lr as FilterResponse).parcelles.length > 0
+        ) {
+          setResults(lr as FilterResponse);
+          setPoolMetricsByIdu(null);
+        }
+
+        const lf = stored.last_filter;
+        if (lf && typeof lf === "object" && !lastFilterOptions) {
+          const raw = lf as Record<string, unknown>;
+          if (Array.isArray(raw.cesbio_libelles) || Array.isArray(raw.fauna_criteria)) {
+            setLastFilterOptions({
+              min_area_ha: Number(raw.min_area_ha ?? 7),
+              miller_threshold: Number(raw.miller_thresh ?? raw.miller_threshold ?? 0.39),
+              vegetation_hybride: {
+                cesbio_libelles: (raw.cesbio_libelles as string[]) ?? [],
+              },
+              faune_criteria: ((raw.fauna_criteria as Array<{ species?: string; dist_m?: number }>) ?? []).map(
+                (fc) => ({
+                  tax_nom_val: fc.species ?? "",
+                  dist_m: fc.dist_m ?? 1000,
+                }),
+              ),
+            } as FilterOptions);
+          }
+        }
+
+        const ufRaw = stored.last_results_uf;
+        if (ufRaw && typeof ufRaw === "object") {
+          setUfResults(ufRaw as UfFilterResponse);
+          const hasSubsets = (ufRaw as UfFilterResponse).unites_foncieres?.some(
+            (u) => (u.sous_ensembles ?? []).length > 0,
+          );
+          if (hasSubsets) {
+            try {
+              const ufGeo = await fetchUfSubsetsGeojson(projectId);
+              if (!cancelled) setUfGeojson(ufGeo);
+            } catch {
+              if (!cancelled) setUfGeojson(null);
+            }
+          }
+        }
+      } catch {
+        /* pas encore de résultats */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, initialRunId, results, lastFilterOptions]);
+
+  /**
+   * GeoJSON carte : toujours via GET /geojson?run_id=… quand un pool_run_id est connu.
+   * Sinon fallback last_results (même endpoint sans run_id).
+   */
+  useEffect(() => {
+    if (!projectId || !results?.parcelles?.length) {
+      setGeojson(null);
+      return;
+    }
+    const runId = initialRunId ?? results.pool_run_id ?? null;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const geo = await fetchParcellesGeojson(projectId, runId);
+        if (!cancelled) setGeojson(geo as ParcellesGeoJSON);
+      } catch (err) {
+        console.warn("GeoJSON parcelles (pool):", err);
+        if (!cancelled) setGeojson(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, initialRunId, results?.pool_run_id, results?.parcelles?.length, results?.total]);
+
+  /** Précharge CESBIO / faune / buffers (couches nationales clippées AOI) pour la légende carte. */
+  useEffect(() => {
+    if (!projectId || !results?.parcelles?.length) return;
+    const runId = initialRunId ?? results.pool_run_id ?? null;
+    const pid = projectId;
+    thematicPrefetchSeqRef.current += 1;
+    const prefetchSeq = thematicPrefetchSeqRef.current;
+    setThematicPreloadLoading(true);
+    void prefetchAllResultsThematicLayers(pid, runId)
+      .then((data) => {
+        if (projectIdRef.current !== pid) return;
+        setThematicPreload(data);
+      })
+      .finally(() => {
+        if (thematicPrefetchSeqRef.current !== prefetchSeq) return;
+        setThematicPreloadLoading(false);
+      });
+  }, [projectId, initialRunId, results?.pool_run_id, results?.parcelles?.length]);
+
+  /** Métriques pool (filter_enrich, scores…) — bulk par run_id. */
+  useEffect(() => {
+    const runId = initialRunId ?? results?.pool_run_id ?? null;
+    if (!projectId || !runId || !results?.parcelles?.length) return;
+
+    let cancelled = false;
+    setPoolMetricsByIdu(null);
+
+    void (async () => {
+      try {
+        const bulk = await fetchPoolRunMetricsBulk(projectId, runId);
+        if (cancelled) return;
+        setPoolMetricsByIdu(normalizePoolMetricsByIdu(bulk.by_idu));
+      } catch (e) {
+        console.warn("Métriques pool (bulk):", e);
+        if (!cancelled) setPoolMetricsByIdu({});
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, initialRunId, results?.pool_run_id, results?.parcelles?.length]);
+
+  useEffect(() => {
+    if (!projectId) {
+      setFoncierGeojson(null);
+      return;
+    }
+    let cancelled = false;
+    fetchFoncierGeojson(projectId)
+      .then((f) => {
+        if (!cancelled) setFoncierGeojson(f);
+      })
+      .catch(() => {
+        if (!cancelled) setFoncierGeojson(null);
       });
     return () => {
       cancelled = true;
@@ -505,6 +709,15 @@ function EcoCompensationApp({
     } catch (e) {
       alert(e instanceof Error ? e.message : "Impossible de marquer la parcelle comme indésirable.");
     }
+  }
+
+  async function handleBatchMarkIndesirable(idus: string[]) {
+    if (!projectId || !results?.pool_run_id || !idus.length) return;
+    await addPoolIndesirables(projectId, results.pool_run_id, idus);
+    const next = await fetchPoolIndesirables(projectId);
+    setIndesirableIdus(next.idus ?? []);
+    setIndesirableParcellesStored(next.parcelles ?? []);
+    setIndesirableMetricsByIdu(next.by_idu ?? {});
   }
 
   async function handleRestoreIndesirable(idu: string) {
@@ -625,20 +838,6 @@ function EcoCompensationApp({
         }
       }
 
-      // Couches thématiques (ZDV, faune, CESBIO, …) en arrière-plan — prêtes au toggle carte sans attente
-      const pid = projectId;
-      const prefetchSeq = thematicPrefetchSeqRef.current;
-      setThematicPreloadLoading(true);
-      void prefetchAllResultsThematicLayers(pid)
-        .then((data) => {
-          if (projectIdRef.current !== pid) return;
-          setThematicPreload(data);
-        })
-        .finally(() => {
-          if (thematicPrefetchSeqRef.current !== prefetchSeq) return;
-          setThematicPreloadLoading(false);
-        });
-
       // URL persistante partageable : /projects/:projectId/runs/:runId
       if (createdPoolRunId) {
         navigate(`/projects/${projectId}/runs/${createdPoolRunId}`);
@@ -663,16 +862,76 @@ function EcoCompensationApp({
     return "Filtrage en cours…";
   }, [loading, filterLoadingStage]);
 
-  function handleParcelleDoubleClickFromMap(idu: string) {
+  function handleMapParcelleClick(idu: string) {
     setMainResultsTab("parcelles");
-    setParcelSubView("classement");
+    if (parcelSubView !== "classement" && parcelSubView !== "classement_combine") {
+      setParcelSubView("classement");
+    }
+    if (!splitMapVisible) {
+      setSplitMapVisible(true);
+    }
+    setLinkedIdu(idu);
     setScrollToIdu(idu);
+    setScrollTableNonce((n) => n + 1);
   }
 
-  function handleTableRowDoubleClick(idu: string) {
-    setMainResultsTab("parcelles");
-    setParcelSubView("carte");
-    setMapFocusIdu(idu);
+  function handleTableRowActivate(idu: string) {
+    setLinkedIdu(idu);
+    if (!splitMapVisible) {
+      setSplitMapVisible(true);
+    }
+  }
+
+  function findUfIdForSubset(subsetId: string): string | null {
+    for (const uf of ufResults?.unites_foncieres ?? []) {
+      if ((uf.sous_ensembles ?? []).some((ss) => ss.subset_id === subsetId)) {
+        return uf.uf_id;
+      }
+    }
+    return null;
+  }
+
+  function handleMapSubsetClick(subsetId: string) {
+    setMainResultsTab("unites");
+    if (ufSubView !== "classement") {
+      setUfSubView("classement");
+    }
+    if (!splitMapVisible) {
+      setSplitMapVisible(true);
+    }
+    setLinkedSubsetId(subsetId);
+    setLinkedUfId(findUfIdForSubset(subsetId));
+    setScrollToSubsetId(subsetId);
+    setScrollUfTableNonce((n) => n + 1);
+  }
+
+  function handleTableSubsetActivate(subsetId: string) {
+    setLinkedSubsetId(subsetId);
+    setLinkedUfId(findUfIdForSubset(subsetId));
+    if (!splitMapVisible) {
+      setSplitMapVisible(true);
+    }
+  }
+
+  function handleTableUfActivate(ufId: string) {
+    setLinkedUfId(ufId);
+    setLinkedSubsetId(null);
+    if (!splitMapVisible) {
+      setSplitMapVisible(true);
+    }
+  }
+
+  function handleToolbarProjectChange(newProjectId: string) {
+    if (initialRunId && onProjectChangeNavigate) {
+      onProjectChangeNavigate(newProjectId);
+      return;
+    }
+    navigate(`/projects/${newProjectId}/filter`);
+  }
+
+  function handleToolbarRunChange(runId: string) {
+    if (!projectId) return;
+    navigate(`/projects/${projectId}/runs/${runId}`);
   }
 
   /** Scroll interne entonnoir (liste d’étapes longue) */
@@ -684,9 +943,17 @@ function EcoCompensationApp({
     if (!ufResults) return null;
     const m: Record<string, number> = {};
     for (const uf of ufResults.unites_foncieres ?? []) {
+      for (const ss of uf.sous_ensembles ?? []) {
+        const scoreEco = ss.score_eco as { total_score?: number } | undefined;
+        if (typeof scoreEco?.total_score === "number") {
+          m[ss.subset_id] = scoreEco.total_score;
+        }
+      }
+    }
+    if (Object.keys(m).length > 0) return m;
+    for (const uf of ufResults.unites_foncieres ?? []) {
       const n = (uf.sous_ensembles ?? []).length;
       for (const [idx, ss] of (uf.sous_ensembles ?? []).entries()) {
-        // Valeur de "qualité" dérivée du rang local : le 1er sous-ensemble est le meilleur.
         m[ss.subset_id] = Math.max(1, n - idx);
       }
     }
@@ -792,6 +1059,18 @@ function EcoCompensationApp({
           compareByVegetationPriority(a.idu, b.idu, chain, poolMetricsByIdu),
         );
       }
+    } else if (rankingSortKey === "pm_personne_morale") {
+      list = [...list].sort((a, b) =>
+        compareByPmPersonneMorale(a.idu, b.idu, poolMetricsByIdu, a.rank, b.rank),
+      );
+    } else if (rankingSortKey === "pm_compensation") {
+      list = [...list].sort((a, b) =>
+        compareByPmCompensation(a.idu, b.idu, poolMetricsByIdu, a.rank, b.rank),
+      );
+    } else if (rankingSortKey === "pm_prospect_detail") {
+      list = [...list].sort((a, b) =>
+        compareByPmProspectDetail(a.idu, b.idu, poolMetricsByIdu, a.rank, b.rank),
+      );
     }
     return list;
   }, [
@@ -842,90 +1121,93 @@ function EcoCompensationApp({
   const isPoolMetricsPending =
     !!results?.pool_run_id && loading && (filterLoadingStage === "profiling" || filterLoadingStage === "metrics_loading");
 
+  const activeRunId = initialRunId ?? results?.pool_run_id ?? null;
+  const isSplitParcelView =
+    mainResultsTab === "parcelles" &&
+    (parcelSubView === "classement" || parcelSubView === "classement_combine");
+  const isSplitUfView = mainResultsTab === "unites" && ufSubView === "classement";
+
+  const resultsSplitClassName = `results-split${splitMapVisible ? "" : " results-split--map-hidden"}`;
+
+  const resultsContentClass = `results-content${
+    isEntonnoirScroll
+      ? " results-content--entonnoir"
+      : isSplitParcelView || isSplitUfView
+        ? ""
+        : " results-content--full"
+  }`;
+
+  const parcellesMapPanel = geojson ? (
+    <ParcellesMap
+      geojson={parcellesMapGeojson ?? geojson}
+      foncierGeojson={foncierGeojson}
+      projectId={projectId}
+      poolRunId={activeRunId}
+      preloadedThematic={thematicPreload}
+      thematicPreloadLoading={thematicPreloadLoading}
+      poolMetricsByIdu={poolMetricsByIdu}
+      indesirableCount={indesirableIdus.length}
+      loadingMessage={loadingStatusText}
+      focusIdu={linkedIdu}
+      onParcelleClick={handleMapParcelleClick}
+    />
+  ) : (
+    <div style={{ padding: 12, fontSize: 13, color: "#4b4b4b" }}>
+      GeoJSON parcelles indisponible ou aucune géométrie.
+    </div>
+  );
+
+  const ufMapPanel = ufGeojson ? (
+    <SousEnsemblesMap
+      geojson={ufGeojson as FeatureCollection<Geometry, Record<string, unknown>>}
+      subsetScores={subsetScores}
+      foncierGeojson={foncierGeojson}
+      projectId={projectId}
+      preloadedThematic={thematicPreload}
+      thematicPreloadLoading={thematicPreloadLoading}
+      focusSubsetId={linkedSubsetId}
+      focusUfId={linkedSubsetId ? null : linkedUfId}
+      onSubsetClick={handleMapSubsetClick}
+    />
+  ) : (
+    <div style={{ padding: 12, fontSize: 13, color: "#4b4b4b" }}>
+      GeoJSON des sous-ensembles indisponible ou vide.
+    </div>
+  );
+
   return (
-    <div className="app-layout">
-      <FilterPanel
+    <div className="results-page">
+      <ResultsToolbar
         projectId={projectId}
-        onProjectChange={handleProjectChange}
-        onOpenRun={(pid, runId) => navigate(`/projects/${pid}/runs/${runId}`)}
-        activeRunId={initialRunId ?? results?.pool_run_id ?? null}
-        onSubmit={handleSubmit}
-        onNavigateToCreate={onNavigateToCreate}
-        isLoading={loading}
-        loadingText={loadingStatusText}
-        disabled={!projectId}
-        initialOptions={lastFilterOptions}
+        projects={projects}
+        projectsLoading={projectsLoading}
+        poolRuns={poolRuns}
+        activeRunId={activeRunId}
+        onNewStudy={() => onNavigateToCreate?.()}
+        onProjectChange={handleToolbarProjectChange}
+        onRunChange={handleToolbarRunChange}
       />
 
-      <main className="results-panel">
-
+      <div className="results-page__body">
         {!connected && (
-          <div style={{ padding: 10, color: "#888" }}>
-            Connexion au serveur...
+          <div className="results-status results-status--loading">Connexion au serveur…</div>
+        )}
+
+        {(progress?.status === "fetching" || progress?.status === "filtering") && (
+          <div className="results-status results-status--warn">
+            {progress?.status === "filtering"
+              ? "Filtrage écologique en cours…"
+              : "Récupération des données en cours…"}
           </div>
         )}
 
-        {progress?.status === "fetching" && (
-          <div style={{ padding: 10, color: "#f59e0b" }}>
-            Récupération des données en cours...
-          </div>
-        )}
-
-        {progress?.status === "ready" && (
-          <div style={{ padding: 10, color: "#3ecf8e" }}>
-            Données prêtes ✔
-          </div>
+        {progress?.status === "ready" && results && (
+          <div className="results-status results-status--ok">Données prêtes</div>
         )}
 
         {loadingStatusText && (
-          <div className="loading-status-banner loading-text-breathe">{loadingStatusText}</div>
-        )}
-
-        {projectId && poolRuns.length > 0 && (
-          <div
-            style={{
-              padding: "8px 16px",
-              borderBottom: "1px solid #e5e7eb",
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              flexWrap: "wrap",
-              background: "#fafafa",
-            }}
-          >
-            <label style={{ fontSize: 12, color: "#334155", display: "flex", alignItems: "center", gap: 6 }}>
-              Run archivé
-              <select
-                className="mono"
-                style={{ fontSize: 12, padding: "4px 8px", borderRadius: 6, border: "1px solid #e2e8f0" }}
-                value={results?.pool_run_id ?? initialRunId ?? ""}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  if (!v || !projectId) return;
-                  navigate(`/projects/${projectId}/runs/${v}`);
-                }}
-                title="Charger un filtre parcelles déjà exécuté (même tableau / carte / métriques)"
-              >
-                {poolRuns.map((run) => (
-                  <option key={run.id} value={run.id}>
-                    {new Date(run.created_at).toLocaleString("fr-FR", {
-                      dateStyle: "short",
-                      timeStyle: "short",
-                    })}{" "}
-                    ({run.total_count} parc.)
-                  </option>
-                ))}
-              </select>
-            </label>
-            {initialRunId && (
-              <Link
-                to={`/projects/${projectId}/filter`}
-                style={{ fontSize: 12, color: "#2563eb" }}
-                title="Quitter la vue run : page filtre du projet"
-              >
-                Page filtre
-              </Link>
-            )}
+          <div className="results-status results-status--loading loading-text-breathe">
+            {loadingStatusText}
           </div>
         )}
 
@@ -966,25 +1248,30 @@ function EcoCompensationApp({
               <button
                 type="button"
                 className={`results-tab ${mainResultsTab === "unites" ? "active" : ""}`}
-                disabled={sousEnsemblesStatus !== "yes"}
+                disabled={!parcellesReady && !ufReady && sousEnsemblesStatus !== "yes"}
                 onClick={() => setMainResultsTab("unites")}
                 title={
-                  sousEnsemblesStatus === "no"
-                    ? "Aucun sous-ensemble en base pour ce projet — générez la couche « sous-ensembles » en amont."
+                  !parcellesReady && !ufReady && sousEnsemblesStatus === "no"
+                    ? "Unités foncières en cours de calcul ou absentes."
                     : sousEnsemblesStatus === "loading"
                       ? "Vérification des données UF…"
-                      : !ufResults
-                        ? "Lancez le filtre pour calculer les résultats UF."
-                        : ""
+                      : !ufResults && !ufPoolLoading && ufReady
+                        ? "Chargement du classement UF…"
+                        : !ufResults && !ufReady && sousEnsemblesStatus === "yes"
+                          ? "Lancez le filtre pour calculer les résultats UF."
+                          : ""
                 }
               >
                 Unités foncières
+                {!ufReady && parcellesReady && (
+                  <span className="results-tab-spinner" aria-hidden="true" />
+                )}
               </button>
             </div>
 
             {/* Sous-onglets : Entonnoir | Classement | Carte */}
             {mainResultsTab === "parcelles" && (
-              <div className="results-tabs results-tabs-sub">
+              <div className="results-tabs results-tabs-sub results-tabs-sub--split-actions">
                 <button
                   type="button"
                   className={`results-tab ${parcelSubView === "entonnoir" ? "active" : ""}`}
@@ -1016,10 +1303,25 @@ function EcoCompensationApp({
                 >
                   Carte
                 </button>
+                {isSplitParcelView && (
+                  <button
+                    type="button"
+                    className="results-split-map-toggle"
+                    onClick={() => setSplitMapVisible((v) => !v)}
+                    aria-pressed={splitMapVisible}
+                    title={
+                      splitMapVisible
+                        ? "Masquer la carte pour afficher le tableau sur toute la largeur"
+                        : "Réafficher la carte à côté du tableau"
+                    }
+                  >
+                    {splitMapVisible ? "Masquer la carte" : "Afficher la carte"}
+                  </button>
+                )}
               </div>
             )}
             {mainResultsTab === "unites" && sousEnsemblesStatus === "yes" && ufResults && (
-              <div className="results-tabs results-tabs-sub">
+              <div className="results-tabs results-tabs-sub results-tabs-sub--split-actions">
                 <button
                   type="button"
                   className={`results-tab ${ufSubView === "entonnoir" ? "active" : ""}`}
@@ -1043,12 +1345,25 @@ function EcoCompensationApp({
                 >
                   Carte
                 </button>
+                {isSplitUfView && (
+                  <button
+                    type="button"
+                    className="results-split-map-toggle"
+                    onClick={() => setSplitMapVisible((v) => !v)}
+                    aria-pressed={splitMapVisible}
+                    title={
+                      splitMapVisible
+                        ? "Masquer la carte pour afficher le tableau sur toute la largeur"
+                        : "Réafficher la carte à côté du tableau"
+                    }
+                  >
+                    {splitMapVisible ? "Masquer la carte" : "Afficher la carte"}
+                  </button>
+                )}
               </div>
             )}
 
-            <div
-              className={`results-content${isEntonnoirScroll ? " results-content--entonnoir" : ""}`}
-            >
+            <div className={resultsContentClass}>
               {mainResultsTab === "parcelles" && parcelSubView === "entonnoir" && hasParcellesFunnel && (
                 <FunnelDisplay
                   steps={results.funnel ?? []}
@@ -1078,138 +1393,153 @@ function EcoCompensationApp({
               )}
 
               {mainResultsTab === "parcelles" && parcelSubView === "classement" && (
-                <>
-                  {distanceMaxKm > 0 && (
-                    <div
-                      style={{
-                        padding: "8px 8px 0 8px",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 6,
-                      }}
-                    >
-                      <div style={{ fontSize: 13, color: "#000000" }}>
-                        Distance au centre AOI :{" "}
-                        <span style={{ color: "#0f172a", fontWeight: 600 }}>
-                          {distanceCursorKm.toFixed(1)} km
-                        </span>{" "}
-                        (curseur)
-                      </div>
-                      <input
-                        type="range"
-                        min={1}
-                        max={distanceMaxKm}
-                        step={0.1}
-                        value={Math.min(Math.max(distanceCursorKm, 1), distanceMaxKm)}
-                        onChange={(e) => setDistanceCursorKm(parseFloat(e.target.value))}
-                      />
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#000000" }}>
-                        <span>1 km</span>
-                        <span>{distanceMaxKm.toFixed(1)} km</span>
-                      </div>
-                      <div style={{ fontSize: 13, color: "#000000", marginTop: 6 }}>
-                        Surface minimale :{" "}
-                        <span style={{ color: "#166534", fontWeight: 600 }}>
-                          {surfaceMinHa.toFixed(1)} ha
-                        </span>{" "}
-                        (curseur)
-                      </div>
-                      <input
-                        type="range"
-                        min={0}
-                        max={Math.max(1, surfaceMaxHa)}
-                        step={0.1}
-                        value={Math.min(Math.max(surfaceMinHa, 0), Math.max(1, surfaceMaxHa))}
-                        onChange={(e) => setSurfaceMinHa(parseFloat(e.target.value))}
-                        style={{ accentColor: "#16a34a" }}
-                      />
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#000000" }}>
-                        <span>0 ha</span>
-                        <span>{Math.max(1, surfaceMaxHa).toFixed(1)} ha</span>
-                      </div>
-                    </div>
-                  )}
-                  <div className={`ranking-table-shell${isPoolMetricsPending ? " ranking-table-shell--loading" : ""}`}>
-                    <RankingTable
-                      parcelles={displayedParcelles}
-                      projectId={projectId}
-                      exportPoolRunId={results.pool_run_id ?? null}
-                      poolRunId={results.pool_run_id ?? null}
-                      poolMetricsByIdu={poolMetricsByIdu}
-                      poolMetricsLoading={!!results.pool_run_id && poolMetricsByIdu === null}
-                      rankingSortKey={rankingSortKey}
-                      onRankingSortChange={setRankingSortKey}
-                      scrollToIdu={scrollToIdu}
-                      selectedIdu={scrollToIdu}
-                      onRowDoubleClick={handleTableRowDoubleClick}
-                      onMarkIndesirable={handleMarkIndesirable}
-                    />
-                    {isPoolMetricsPending && (
-                      <div className="ranking-table-loading-overlay" aria-live="polite">
-                        <div className="ranking-table-loading-card">
-                          <span className="parcelles-map-spinner" />
-                          <span className="loading-text-breathe">
-                            {loadingStatusText ?? "Calcul des métriques en cours…"}
-                          </span>
+                <div className={resultsSplitClassName}>
+                  <div className="results-split__table">
+                    <div className="results-split__table-inner">
+                      {distanceMaxKm > 0 && (
+                        <div style={{ padding: "0 0 8px", display: "flex", flexDirection: "column", gap: 6 }}>
+                          <div style={{ fontSize: 12, color: "#111" }}>
+                            Distance AOI :{" "}
+                            <strong>{distanceCursorKm.toFixed(1)} km</strong>
+                          </div>
+                          <input
+                            type="range"
+                            min={1}
+                            max={distanceMaxKm}
+                            step={0.1}
+                            value={Math.min(Math.max(distanceCursorKm, 1), distanceMaxKm)}
+                            onChange={(e) => setDistanceCursorKm(parseFloat(e.target.value))}
+                          />
+                          <div style={{ fontSize: 12, color: "#111" }}>
+                            Surface min. : <strong>{surfaceMinHa.toFixed(1)} ha</strong>
+                          </div>
+                          <input
+                            type="range"
+                            min={0}
+                            max={Math.max(1, surfaceMaxHa)}
+                            step={0.1}
+                            value={Math.min(Math.max(surfaceMinHa, 0), Math.max(1, surfaceMaxHa))}
+                            onChange={(e) => setSurfaceMinHa(parseFloat(e.target.value))}
+                          />
                         </div>
+                      )}
+                      <div className={`ranking-table-shell${isPoolMetricsPending ? " ranking-table-shell--loading" : ""}`}>
+                        <RankingTable
+                          parcelles={displayedParcelles}
+                          projectId={projectId}
+                          exportPoolRunId={results.pool_run_id ?? null}
+                          poolRunId={results.pool_run_id ?? null}
+                          poolMetricsByIdu={poolMetricsByIdu}
+                          poolMetricsLoading={!!results.pool_run_id && poolMetricsByIdu === null}
+                          rankingSortKey={rankingSortKey}
+                          onRankingSortChange={setRankingSortKey}
+                          scrollToIdu={scrollToIdu}
+                          scrollTableNonce={scrollTableNonce}
+                          selectedIdu={linkedIdu}
+                          onRowActivate={handleTableRowActivate}
+                          onMarkIndesirable={handleMarkIndesirable}
+                          onBatchMarkIndesirable={handleBatchMarkIndesirable}
+                        />
+                        {isPoolMetricsPending && (
+                          <div className="ranking-table-loading-overlay" aria-live="polite">
+                            <div className="ranking-table-loading-card">
+                              <span className="parcelles-map-spinner" />
+                              <span className="loading-text-breathe">
+                                {loadingStatusText ?? "Calcul des métriques en cours…"}
+                              </span>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    )}
+                      {results.pool_run_id && (
+                        <IndesirablesTable
+                          projectId={projectId}
+                          parcelles={indesirableParcelles}
+                          poolRunId={results.pool_run_id}
+                          poolMetricsByIdu={indesirableMetricsByIdu}
+                          poolMetricsLoading={!!results.pool_run_id && poolMetricsByIdu === null}
+                          onRestore={handleRestoreIndesirable}
+                          onRowActivate={handleTableRowActivate}
+                        />
+                      )}
+                    </div>
                   </div>
-                  {results.pool_run_id && (
-                    <IndesirablesTable
-                      projectId={projectId}
-                      parcelles={indesirableParcelles}
-                      poolRunId={results.pool_run_id}
-                      poolMetricsByIdu={indesirableMetricsByIdu}
-                      poolMetricsLoading={!!results.pool_run_id && poolMetricsByIdu === null}
-                      onRestore={handleRestoreIndesirable}
-                      onRowDoubleClick={handleTableRowDoubleClick}
-                    />
-                  )}
-                </>
+                  <div className="results-split__map">
+                    <div className="results-split__map-label">Carte</div>
+                    <div className="results-split__map-inner">{parcellesMapPanel}</div>
+                  </div>
+                </div>
               )}
 
               {mainResultsTab === "parcelles" && parcelSubView === "classement_combine" && (
-                <div className="ranking-table-shell">
-                  <RankingTable
-                    parcelles={displayedCombinedCandidates}
-                    projectId={null}
-                    exportPoolRunId={null}
-                    poolRunId={results.pool_run_id ?? null}
-                    poolMetricsByIdu={poolMetricsByIdu}
-                    poolMetricsLoading={!!results.pool_run_id && poolMetricsByIdu === null}
-                    rankingSortKey={rankingSortKey}
-                    onRankingSortChange={setRankingSortKey}
-                    scrollToIdu={scrollToIdu}
-                    selectedIdu={scrollToIdu}
-                    onMarkIndesirable={undefined}
-                  />
+                <div className={resultsSplitClassName}>
+                  <div className="results-split__table">
+                    <div className="results-split__table-inner">
+                      <div className="ranking-table-shell">
+                        <RankingTable
+                          parcelles={displayedCombinedCandidates}
+                          projectId={null}
+                          exportPoolRunId={null}
+                          poolRunId={results.pool_run_id ?? null}
+                          poolMetricsByIdu={poolMetricsByIdu}
+                          poolMetricsLoading={!!results.pool_run_id && poolMetricsByIdu === null}
+                          rankingSortKey={rankingSortKey}
+                          onRankingSortChange={setRankingSortKey}
+                          scrollToIdu={scrollToIdu}
+                          scrollTableNonce={scrollTableNonce}
+                          selectedIdu={linkedIdu}
+                          onRowActivate={handleTableRowActivate}
+                          onMarkIndesirable={undefined}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="results-split__map">
+                    <div className="results-split__map-label">Carte</div>
+                    <div className="results-split__map-inner">{parcellesMapPanel}</div>
+                  </div>
                 </div>
               )}
 
-              {mainResultsTab === "parcelles" && parcelSubView === "carte" && geojson && (
-                <ParcellesMap
-                  geojson={parcellesMapGeojson ?? geojson}
-                  foncierGeojson={foncierGeojson}
-                  projectId={projectId}
-                  preloadedThematic={thematicPreload}
-                  thematicPreloadLoading={thematicPreloadLoading}
-                  poolMetricsByIdu={poolMetricsByIdu}
-                  indesirableCount={indesirableIdus.length}
-                  loadingMessage={loadingStatusText}
-                  onParcelleDoubleClick={handleParcelleDoubleClickFromMap}
-                />
-              )}
-              {mainResultsTab === "parcelles" && parcelSubView === "carte" && !geojson && (
-                <div style={{ padding: 12, color: "#000000", fontSize: 13 }}>
-                  GeoJSON parcelles indisponible ou aucune géométrie.
-                </div>
-              )}
+              {mainResultsTab === "parcelles" && parcelSubView === "carte" && parcellesMapPanel}
 
               {mainResultsTab === "unites" && ufResults && ufSubView === "classement" && (
-                <UnitesFoncieresTable ufResults={ufResults} projectId={projectId} />
+                <div className={resultsSplitClassName}>
+                  <div className="results-split__table">
+                    <div className="results-split__table-inner">
+                      <UnitesFoncieresTable
+                        ufResults={ufResults}
+                        projectId={projectId}
+                        selectedSubsetId={linkedSubsetId}
+                        scrollToSubsetId={scrollToSubsetId}
+                        scrollTableNonce={scrollUfTableNonce}
+                        onSubsetActivate={handleTableSubsetActivate}
+                        onUfActivate={handleTableUfActivate}
+                      />
+                    </div>
+                  </div>
+                  <div className="results-split__map">
+                    <div className="results-split__map-label">Carte</div>
+                    <div className="results-split__map-inner">{ufMapPanel}</div>
+                  </div>
+                </div>
               )}
-              {mainResultsTab === "unites" && !ufResults && sousEnsemblesStatus === "no" && (
+              {mainResultsTab === "unites" && !ufResults && (ufPoolLoading || (!ufReady && parcellesReady && sousEnsemblesStatus !== "no")) && (
+                <div className="uf-loading">
+                  <span className="parcelles-map-spinner" aria-hidden="true" />
+                  <p>Calcul des unités foncières en cours…</p>
+                  <p className="uf-loading-hint">
+                    Les parcelles individuelles sont déjà disponibles dans l&apos;onglet Parcelles.
+                  </p>
+                  <PipelineProgressPanel progress={pipelineProgress} compact />
+                </div>
+              )}
+              {mainResultsTab === "unites" && !ufResults && !ufPoolLoading && ufReady && sousEnsemblesStatus === "yes" && (
+                <div style={{ padding: 12, color: "#000000", fontSize: 13 }}>
+                  Aucune unité foncière ne correspond aux critères (végétation / faune / Miller).
+                </div>
+              )}
+              {mainResultsTab === "unites" && !ufResults && !ufPoolLoading && !ufReady && sousEnsemblesStatus === "no" && (
                 <div style={{ padding: 12, color: "#000000", fontSize: 13 }}>
                   Aucun sous-ensemble en base pour ce projet. Générez la couche « sous-ensembles » (unités
                   foncières) en amont, puis relancez le filtre — seul le classement parcelles sera disponible
@@ -1217,42 +1547,43 @@ function EcoCompensationApp({
                   <code style={{ fontSize: 12 }}>ecocompensation_results.sous_ensembles</code>.
                 </div>
               )}
-              {mainResultsTab === "unites" && !ufResults && sousEnsemblesStatus === "yes" && (
+              {mainResultsTab === "unites" && !ufResults && !ufPoolLoading && !ufReady && sousEnsemblesStatus === "yes" && (
                 <div style={{ padding: 12, color: "#000000", fontSize: 13 }}>
                   Lancez le filtre pour calculer et afficher les résultats unités foncières.
                 </div>
               )}
-              {mainResultsTab === "unites" && ufResults && ufSubView === "carte" && ufGeojson && (
-                <SousEnsemblesMap
-                  geojson={ufGeojson as FeatureCollection<Geometry, Record<string, unknown>>}
-                  subsetScores={subsetScores}
-                  projectId={projectId}
-                  preloadedThematic={thematicPreload}
-                  thematicPreloadLoading={thematicPreloadLoading}
-                />
-              )}
-              {mainResultsTab === "unites" && ufResults && ufSubView === "carte" && !ufGeojson && (
-                <div style={{ padding: 12, color: "#000000", fontSize: 13 }}>
-                  GeoJSON des sous-ensembles indisponible ou vide.
-                </div>
-              )}
+              {mainResultsTab === "unites" && ufResults && ufSubView === "carte" && ufMapPanel}
             </div>
           </>
         ) : projectId ? (
-          <div style={{ height: "100%", minHeight: 420 }}>
+          <div className="results-content results-content--full" style={{ minHeight: 420 }}>
             <ProjectContextMap
               parcelleFeature={contextGeom?.parcelle_source ?? null}
               aoiFeature={contextGeom?.aoi ?? null}
               foncierFeature={contextGeom?.foncier ?? null}
             />
+            <div className="empty-state" style={{ padding: "2rem" }}>
+              <span className="empty-text">
+                Aucun pool de parcelles pour ce projet. Lancez une nouvelle étude ou sélectionnez un run.
+              </span>
+            </div>
           </div>
         ) : (
           <div className="empty-state">
             <span className="empty-icon">⬡</span>
-            <span className="empty-text">Configurez et lancez le filtre</span>
+            <span className="empty-text">Sélectionnez un projet ou créez une nouvelle étude</span>
+            {onNavigateToCreate && (
+              <button
+                type="button"
+                className="results-toolbar__btn results-toolbar__btn--primary"
+                onClick={onNavigateToCreate}
+              >
+                Nouvelle étude
+              </button>
+            )}
           </div>
         )}
-      </main>
+      </div>
     </div>
   );
 }
@@ -1260,10 +1591,12 @@ function EcoCompensationApp({
 function CreateAoiRoutePage() {
   const navigate = useNavigate();
   return (
-    <CreateAoiPage
-      onDone={(id) => navigate(`/projects/${id}/filter`)}
-      onBack={() => navigate("/")}
-    />
+    <div style={{ height: "100%", minHeight: 0 }}>
+      <CreateAoiPage
+        onDone={(id) => navigate(`/projects/${id}/filter`)}
+        onBack={() => navigate("/")}
+      />
+    </div>
   );
 }
 
@@ -1273,7 +1606,7 @@ function ProjectFilterRoutePage() {
   return (
     <EcoCompensationApp
       fixedProjectId={projectId ?? null}
-      onNavigateToCreate={() => navigate("/create-aoi")}
+      onNavigateToCreate={() => navigate(ROUTE_ECOCOMPENSATION)}
     />
   );
 }
@@ -1285,7 +1618,7 @@ function ProjectRunRoutePage() {
     <EcoCompensationApp
       fixedProjectId={projectId ?? null}
       initialRunId={runId ?? null}
-      onNavigateToCreate={() => navigate("/create-aoi")}
+      onNavigateToCreate={() => navigate(ROUTE_ECOCOMPENSATION)}
       onProjectChangeNavigate={(id) => navigate(`/projects/${id}/filter`)}
     />
   );
@@ -1293,7 +1626,7 @@ function ProjectRunRoutePage() {
 
 function StudyHomeRoutePage() {
   const navigate = useNavigate();
-  return <EcoCompensationApp onNavigateToCreate={() => navigate("/create-aoi")} />;
+  return <EcoCompensationApp onNavigateToCreate={() => navigate(ROUTE_ECOCOMPENSATION)} />;
 }
 
 /* =========================================================
@@ -1302,42 +1635,63 @@ function StudyHomeRoutePage() {
 
 export default function App() {
   return (
-    <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
-      
-      {/* Header application */}
-      <header
-        style={{
-          height: 52,
-          borderBottom: "1px solid #e5e7eb",
-          display: "flex",
-          alignItems: "center",
-          padding: "0 16px",
-          gap: 20,
-          background: "white"
-        }}
-      >
-        <div style={{ fontWeight: 600 }}>KERELIA</div>
+    <div className="kerelia-app">
+      <AppHeader />
 
-        <nav style={{ display: "flex", gap: 14 }}>
-          <Link to="/" style={{ textDecoration: "none" }}>Étude</Link>
-          <Link to="/ideco" style={{ textDecoration: "none" }}>Pré analyse écologique</Link>
-          <Link to="/bancarisation" style={{ textDecoration: "none" }}>Bancarisation</Link>
-          <Link to="/cif" style={{ textDecoration: "none" }}>CIF</Link>
-        </nav>
-      </header>
-
-      <div style={{ flex: 1, overflow: "hidden" }}>
+      <div className="kerelia-app__main">
         <Routes>
-          <Route path="/" element={<Navigate to="/create-aoi" replace />} />
-          <Route path="/create-aoi" element={<CreateAoiRoutePage />} />
+          <Route path="/" element={<Navigate to={ROUTE_ECOCOMPENSATION} replace />} />
+          <Route path={ROUTE_ECOCOMPENSATION} element={<CreateAoiRoutePage />} />
+          <Route path="/create-aoi" element={<Navigate to={ROUTE_ECOCOMPENSATION} replace />} />
           <Route path="/etude" element={<StudyHomeRoutePage />} />
           <Route path="/projects/:projectId/filter" element={<ProjectFilterRoutePage />} />
           <Route path="/projects/:projectId/runs/:runId" element={<ProjectRunRoutePage />} />
-          <Route path="/ideco" element={<AnalyseEcologiquePage />} />
-          <Route path="/bancarisation" element={<Bancarisation />} />
-          <Route path="/cif" element={<IdentiteFoncierePage />} />
+          <Route path="/faune" element={<FaunaMapPage />} />
         </Routes>
       </div>
     </div>
+  );
+}
+
+function AppHeader() {
+  const location = useLocation();
+  const etudeActive =
+    location.pathname === "/etude" || location.pathname.startsWith("/projects/");
+
+  return (
+    <header className="kerelia-app__header">
+      <NavLink to={ROUTE_ECOCOMPENSATION} className="kerelia-app__brand">
+        <span className="kerelia-app__brand-dot" aria-hidden />
+        <span className="kerelia-app__brand-name">KERELIA</span>
+        <span className="kerelia-app__brand-sub">EcoCompensation</span>
+      </NavLink>
+
+      <nav className="kerelia-app__nav" aria-label="Navigation principale">
+        <NavLink
+          to={ROUTE_ECOCOMPENSATION}
+          className={({ isActive }) =>
+            `kerelia-app__nav-link${isActive ? " kerelia-app__nav-link--active" : ""}`
+          }
+        >
+          Ecocompensation
+        </NavLink>
+        <NavLink
+          to="/etude"
+          className={() =>
+            `kerelia-app__nav-link${etudeActive ? " kerelia-app__nav-link--active" : ""}`
+          }
+        >
+          Étude
+        </NavLink>
+        <NavLink
+          to="/faune"
+          className={({ isActive }) =>
+            `kerelia-app__nav-link${isActive ? " kerelia-app__nav-link--active" : ""}`
+          }
+        >
+          Carte faune
+        </NavLink>
+      </nav>
+    </header>
   );
 }

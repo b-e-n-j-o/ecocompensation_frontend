@@ -305,9 +305,24 @@ export type RankingSortKey =
   | "miller"
   | "veg_dominant"
   /** Ordre décroissant des parts `libelle_prio` selon la chaîne BD TOPO puis CESBIO du dernier filtre. */
-  | "veg_priority";
+  | "veg_priority"
+  /** Parcelles rattachées à une personne morale en premier. */
+  | "pm_personne_morale"
+  /** Propriétaires ayant déjà compensé (autre foncier) en premier. */
+  | "pm_compensation"
+  /** Prospects compensation puis détail MC (mesures, surface) puis PM. */
+  | "pm_prospect_detail";
 
 // ─── Résultats UF (unités foncières / sous-ensembles) ───────────────────────
+
+export interface ScoreEcoPayload {
+  total_score: number;
+  max_score: number;
+  breakdown: {
+    especes: Record<string, unknown>;
+    distance: Record<string, unknown>;
+  };
+}
 
 export interface SousEnsembleResult {
   subset_id: string;
@@ -316,23 +331,35 @@ export interface SousEnsembleResult {
   surface_ha: number;
   miller: number;
   distance_centre_km: number;
-  dist_hydro_m: number | null;
-  /** Propriétaire personne morale (raison sociale) */
+  dist_hydro_m?: number | null;
   denomination?: string | null;
-  /** SIREN du propriétaire moral */
   siren?: string | null;
+  veg_libelles?: string[];
+  fauna_distances?: Record<string, number>;
+  dist_fauna_m?: number | null;
+  score_eco?: ScoreEcoPayload;
 }
 
 export interface UniteFoncieresResult {
   rang: number;
   uf_id: string;
   nb_parcelles: number;
-  idus: string[];
-  best_surface_ha: number;
-  best_miller: number;
+  idus?: string[];
+  best_surface_ha?: number;
+  best_miller?: number;
   distance_centre_km: number;
   denomination?: string | null;
   siren?: string | null;
+  pm_prospect?: {
+    intersects_pm_database?: boolean;
+    siren?: string | null;
+    denomination?: string | null;
+    compensation_deja_realisee?: boolean;
+    parcelle_deja_en_mc?: boolean | null;
+    nb_mc_distinctes?: number | null;
+    nb_parcelles_deja_en_mc?: number | null;
+    surface_deja_en_mc_m2?: number | null;
+  };
   sous_ensembles: SousEnsembleResult[];
 }
 

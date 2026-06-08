@@ -3,31 +3,36 @@ import {
   createProjectFromParcelles,
   createProjectFromFoncierUpload,
   createProjectFromParcelle,
-  fetchLayers,
+  fetchFilterPhases,
   fetchProjects,
   previewFoncierUpload,
-  startFetch,
+  startFilterPipeline,
 } from "../../api";
-import type { FromParcelleBody, LayerInfo, ParcelleRef, ProjectSummary } from "../../api";
+import type { FilterPhaseInfo, FromParcelleBody, ParcelleRef, ProjectSummary } from "../../api";
+import type { CesbioLibelle } from "../../types";
 import type { Feature, MultiPolygon, Polygon } from "geojson";
-import { SliderField } from "../../components/FilterPanel/shared";
 import { CartoAoi } from "./CartoAoi";
-import { buildFetchLayerKeys, getDefaultOptionalLayerKeys } from "./aoiLayerKeys";
-import { SelectAoiLayers } from "./SelectAoiLayers";
-import "../../components/FilterPanel/filter-panel.css";
+import { SelectFilterCriteria } from "./SelectFilterCriteria";
+import { PipelineProgressPanel } from "../../components/PipelineProgressPanel";
+import {
+  applyWsToPipelineProgress,
+  INITIAL_PIPELINE_PROGRESS,
+  type PipelineProgress,
+} from "../../utils/pipelineProgress";
+import "./createAoiPage.css";
 
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
-type LayerStatus = "pending" | "running" | "done" | "skipped" | "error";
 type ParcelleFeature = Feature<Polygon | MultiPolygon>;
-
-type LayerState = { status: LayerStatus; n_inserted?: number; message?: string };
 
 type SummaryState = { n_ok: number; n_skip: number; n_err: number; total_s: number } | null;
 
-function labelForKey(registry: LayerInfo[], key: string): string {
-  return registry.find((l) => l.key === key)?.label ?? key;
-}
+const DEFAULT_FILTER_PHASES: FilterPhaseInfo[] = [
+  { key: "parcelles", label: "Parcelles candidates (tiling)" },
+  { key: "filter", label: "Filtrage écologique" },
+  { key: "purge", label: "Purge parcelles éliminées" },
+  { key: "enrich", label: "Enrichissement léger" },
+];
 
 interface CreateAoiPageProps {
   onDone: (projectId: string) => void;
@@ -39,52 +44,57 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
   const [section, setSection] = useState("");
   const [numero, setNumero] = useState("");
   const [name, setName] = useState("");
-  const [bufferKm, setBufferKm] = useState(5);
+  const [bufferKm, setBufferKm] = useState(3);
   const [step, setStep] = useState<"form" | "creating" | "fetching" | "done" | "error">("form");
   const [error, setError] = useState<string | null>(null);
   const [projectId, setProjectId] = useState<string | null>(null);
-  const [layerResults, setLayerResults] = useState<Record<string, LayerState>>({});
+  const [pipelineProgress, setPipelineProgress] = useState<PipelineProgress>(INITIAL_PIPELINE_PROGRESS);
   const [summary, setSummary] = useState<SummaryState>(null);
   const [parcelFeature, setParcelFeature] = useState<ParcelleFeature | null>(null);
   const [isSearchingParcel, setIsSearchingParcel] = useState(false);
-  const [sourceMode, setSourceMode] = useState<"parcelle" | "fichier">("parcelle");
-  const [fileFormat, setFileFormat] = useState<"gpkg" | "shp_zip">("gpkg");
+  const [sourceMode, setSourceMode] = useState<"parcelle" | "fichier">("fichier");
+  const [isDragOver, setIsDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [uploadedFeature, setUploadedFeature] = useState<ParcelleFeature | null>(null);
   const [isUploadingGeom, setIsUploadingGeom] = useState(false);
-  const [registryLayers, setRegistryLayers] = useState<LayerInfo[]>([]);
-  const [layersLoadError, setLayersLoadError] = useState<string | null>(null);
+  const [filterPhases, setFilterPhases] = useState<FilterPhaseInfo[]>(DEFAULT_FILTER_PHASES);
+  const [phasesLoadError, setPhasesLoadError] = useState<string | null>(null);
+  const [minAreaHa, setMinAreaHa] = useState(7);
+  const [millerThresh, setMillerThresh] = useState(0.39);
+  const [cesbioLibelles, setCesbioLibelles] = useState<CesbioLibelle[]>([
+    "Forêts de conifères",
+    "Forêts de feuillus",
+  ]);
+  const [faunaEnabled, setFaunaEnabled] = useState(true);
   const [faunaSpecies, setFaunaSpecies] = useState<string[]>([]);
+  const [faunaDistM, setFaunaDistM] = useState(1000);
   const [ufParcelles, setUfParcelles] = useState<ParcelleRef[]>([]);
   const [nameTouched, setNameTouched] = useState(false);
-  /** Couches optionnelles cochées (hors parcelles, GEOMCE, UF — ces dernières via ufEnabled). */
-  const [selectedLayerKeys, setSelectedLayerKeys] = useState<string[]>([]);
-  const [ufEnabled, setUfEnabled] = useState(false);
-  const [ufMaxParcelles, setUfMaxParcelles] = useState(5);
-  const [ufMinAreaHa, setUfMinAreaHa] = useState(7);
-  /** Couches du dernier fetch (ordre serveur) — alimente le tableau de suivi. */
-  const [activeFetchKeys, setActiveFetchKeys] = useState<string[]>([]);
   const [historyProjects, setHistoryProjects] = useState<ProjectSummary[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [selectedExistingProjectId, setSelectedExistingProjectId] = useState<string>("");
-  const lastFetchLayerKeysRef = useRef<string[]>([]);
+  const [projectTab, setProjectTab] = useState<"new" | "existing">("new");
+  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
   const logEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const faunaLayerSelected = selectedLayerKeys.includes("fauna");
+  const [filterSession, setFilterSession] = useState(0);
+  const [ufInProgress, setUfInProgress] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    fetchLayers()
-      .then((layers) => {
+    fetchFilterPhases()
+      .then((phases) => {
         if (cancelled) return;
-        setRegistryLayers(layers);
-        setSelectedLayerKeys(getDefaultOptionalLayerKeys(layers));
-        setLayersLoadError(null);
+        setFilterPhases(phases);
+        setPhasesLoadError(null);
       })
       .catch((e) => {
         if (!cancelled) {
-          setLayersLoadError(e instanceof Error ? e.message : "Impossible de charger la liste des couches");
+          setPhasesLoadError(
+            e instanceof Error ? e.message : "Impossible de charger les phases de filtrage",
+          );
         }
       });
     return () => {
@@ -115,10 +125,10 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
   }, []);
 
   useEffect(() => {
-    if (!faunaLayerSelected && faunaSpecies.length > 0) {
+    if (!faunaEnabled && faunaSpecies.length > 0) {
       setFaunaSpecies([]);
     }
-  }, [faunaLayerSelected, faunaSpecies.length]);
+  }, [faunaEnabled, faunaSpecies.length]);
 
   const currentRefLabel = `${codeInsee.trim()}_${section.trim().toUpperCase()}_${numero.trim()}`.replace(/^_+|_+$/g, "");
   const firstUfRef = ufParcelles[0];
@@ -135,13 +145,13 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [layerResults, summary]);
+  }, [pipelineProgress, summary]);
 
   useEffect(() => {
-    if (step !== "fetching" || !projectId) return;
-    const keys = lastFetchLayerKeysRef.current;
-    setLayerResults(Object.fromEntries(keys.map((k) => [k, { status: "pending" as const }])));
+    if (!projectId || filterSession === 0) return;
+    setPipelineProgress(INITIAL_PIPELINE_PROGRESS);
     setSummary(null);
+    setUfInProgress(false);
     const WS = API.replace(/^http/, "ws");
     const ws = new WebSocket(`${WS}/ws/projects/${projectId}/fetch-progress`);
     wsRef.current = ws;
@@ -153,60 +163,30 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
         const data = JSON.parse(event.data);
         console.log("WS event:", data.event, data.layer_key, data.message?.slice(0, 80));
         const ev = data.event;
-        const layerKey = data.layer_key ?? "";
-        const msg = data.message ?? "";
 
         if (ev === "connected" || ev === "ping") return;
         if (ev === "start") return;
 
-        if (ev === "running" && layerKey) {
-          setLayerResults((prev) => ({
-            ...prev,
-            [layerKey]: { ...prev[layerKey], status: "running" },
-          }));
+        if (ev === "uf_start") {
+          setUfInProgress(true);
           return;
         }
-        if (ev === "progress" && layerKey === "parcelles") {
-          const raw: string = data.message ?? "";
-          const match = raw.match(/^TILE_PROGRESS:(\d+)\/(\d+):(\d+)/);
-          if (match) {
-            const tile = parseInt(match[1], 10);
-            const totalTiles = parseInt(match[2], 10);
-            const n_inserted = parseInt(match[3], 10);
-            const pct = totalTiles > 0 ? Math.min(100, Math.round((tile / totalTiles) * 100)) : 0;
-            setLayerResults((prev) => ({
-              ...prev,
-              parcelles: {
-                ...prev.parcelles,
-                status: "running",
-                message: `⟳ ${n_inserted.toLocaleString("fr-FR")} parcelles — ${pct}%`,
-              },
-            }));
-          }
+
+        if (ev === "uf_complete") return;
+
+        if (ev === "phase:parcelles_ready") {
+          setUfInProgress(true);
           return;
         }
-        if (ev === "done" && layerKey) {
-          const n = typeof data.n_inserted === "number" ? data.n_inserted : 0;
-          setLayerResults((prev) => ({
-            ...prev,
-            [layerKey]: { status: "done", n_inserted: n },
-          }));
+
+        if (ev === "phase:uf_ready") {
+          setUfInProgress(false);
+          ws.close();
           return;
         }
-        if (ev === "skipped" && layerKey) {
-          setLayerResults((prev) => ({
-            ...prev,
-            [layerKey]: { status: "skipped", n_inserted: 0 },
-          }));
-          return;
-        }
-        if (ev === "error" && layerKey) {
-          setLayerResults((prev) => ({
-            ...prev,
-            [layerKey]: { status: "error", message: msg },
-          }));
-          return;
-        }
+
+        setPipelineProgress((prev) => applyWsToPipelineProgress(prev, data));
+
         if (ev === "complete") {
           setSummary({
             n_ok: data.n_ok ?? 0,
@@ -215,7 +195,7 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
             total_s: data.total_s ?? 0,
           });
           setStep("done");
-          ws.close();
+          setUfInProgress(true);
         }
       } catch (e) {
         console.warn("WS parse error", e);
@@ -231,25 +211,18 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
       ws.close();
       wsRef.current = null;
     };
-  }, [step, projectId]);
+  }, [projectId, filterSession]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
 
-    if (faunaLayerSelected && faunaSpecies.length === 0) {
-      setError("Sélectionnez au moins une espèce si la couche Faune est cochée.");
+    if (cesbioLibelles.length === 0 && (!faunaEnabled || faunaSpecies.length === 0)) {
+      setError("Sélectionnez au moins un libellé CESBIO ou une espèce faune.");
       return;
     }
-
-    const ufActive = ufEnabled;
-    const orderedKeys = buildFetchLayerKeys(
-      registryLayers,
-      new Set(selectedLayerKeys),
-      ufActive,
-    );
-    if (orderedKeys.length === 0) {
-      setError("Aucune couche à récupérer (vérifiez la sélection).");
+    if (faunaEnabled && faunaSpecies.length === 0) {
+      setError("Sélectionnez au moins une espèce si le filtre faune est activé.");
       return;
     }
 
@@ -276,9 +249,7 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
       }
     }
 
-    lastFetchLayerKeysRef.current = orderedKeys;
-    setActiveFetchKeys(orderedKeys);
-    setLayerResults(Object.fromEntries(orderedKeys.map((k) => [k, { status: "pending" }])));
+    setPipelineProgress(INITIAL_PIPELINE_PROGRESS);
     setSummary(null);
 
     setStep("creating");
@@ -316,11 +287,14 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
             });
       setProjectId(res.project_id);
       setStep("fetching");
-      await startFetch(res.project_id, {
-        layers: orderedKeys,
-        uf_max_parcelles: ufMaxParcelles,
-        uf_min_area_ha: ufMinAreaHa,
-        fauna_species: faunaLayerSelected && faunaSpecies.length ? faunaSpecies : null,
+      setFilterSession((s) => s + 1);
+      await startFilterPipeline(res.project_id, {
+        min_area_ha: minAreaHa,
+        miller_thresh: millerThresh,
+        cesbio_libelles: cesbioLibelles,
+        fauna_criteria: faunaEnabled
+          ? faunaSpecies.map((species) => ({ species, dist_m: faunaDistM }))
+          : [],
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur création projet");
@@ -333,19 +307,27 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
     if (projectId) onDone(projectId);
   }
 
-  const layersReady = registryLayers.length > 0 && !layersLoadError;
+  const phasesReady = filterPhases.length > 0 && !phasesLoadError;
   const sourceFeature = sourceMode === "parcelle" ? parcelFeature : uploadedFeature;
-  const expectedFileLabel = fileFormat === "gpkg" ? "GeoPackage (.gpkg)" : "Shapefile zippé (.zip)";
-  const fileInputAccept = fileFormat === "gpkg" ? ".gpkg" : ".zip";
+  const geoFileAccept = ".gpkg,.zip";
+  const hasFilterCriteria =
+    cesbioLibelles.length > 0 || (faunaEnabled && faunaSpecies.length > 0);
   const canCreateAoi =
     step === "form" &&
     !isSearchingParcel &&
     !isUploadingGeom &&
     !!sourceFeature &&
-    (!faunaLayerSelected || faunaSpecies.length > 0) &&
+    hasFilterCriteria &&
+    (!faunaEnabled || faunaSpecies.length > 0) &&
     (sourceMode === "parcelle" ? (ufParcelles.length > 0 || (!!codeInsee.trim() && !!section.trim() && !!numero.trim())) : !!uploadedFile) &&
-    layersReady;
+    phasesReady;
   const canLoadExistingProject = !!selectedExistingProjectId && step === "form";
+  const parcelFormFilled =
+    sourceMode === "parcelle"
+      ? ufParcelles.length > 0 || (!!codeInsee.trim() && !!section.trim() && !!numero.trim())
+      : !!uploadedFile;
+  const canAdvanceFromStep1 = !!sourceFeature && parcelFormFilled;
+  const isWizardLocked = step !== "form";
 
   async function handleSearchParcelle() {
     setError(null);
@@ -418,6 +400,17 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
     setUfParcelles((prev) => [...prev, { code_insee: insee, section: sec, numero: num }]);
   }
 
+  function pickGeometryFile(file: File | undefined) {
+    if (!file || isWizardLocked || isUploadingGeom) return;
+    const lower = file.name.toLowerCase();
+    if (!lower.endsWith(".gpkg") && !lower.endsWith(".zip")) {
+      setError("Format non reconnu : utilisez un fichier .gpkg ou une archive .zip (shapefile).");
+      return;
+    }
+    setError(null);
+    void handleUploadGeometry(file);
+  }
+
   async function handleUploadGeometry(file: File) {
     setError(null);
     setIsUploadingGeom(true);
@@ -438,374 +431,509 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
     }
   }
 
-  const progressKeys = activeFetchKeys.length > 0 ? activeFetchKeys : [];
+  const stepLabels: Record<1 | 2 | 3, string> = {
+    1: "Charger le projet",
+    2: "Définir la zone de recherche",
+    3: "Critères de filtrage",
+  };
 
-  return (
-    <div className="create-aoi-page">
-      <div className="create-aoi-layout">
-        <aside className="filter-panel create-aoi-panel create-aoi-sidebar">
-        <div className="filter-panel-header">
-          <div className="fph-title">
-            <span className="fph-icon">◇</span>
-            <span>Création AOI à partir d'une parcelle</span>
-          </div>
-          <button type="button" className="btn-reset" onClick={onBack} title="Retour au filtrage">
-            ←
+  function renderParcelStep() {
+    return (
+      <>
+        <h2 className="eco-aoi-section-title">Source géométrique</h2>
+        <div className="eco-aoi-tabs eco-aoi-tabs--inline" role="tablist" aria-label="Type de source">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={sourceMode === "fichier"}
+            className={`eco-aoi-tab${sourceMode === "fichier" ? " eco-aoi-tab--active" : ""}`}
+            disabled={isWizardLocked}
+            onClick={() => setSourceMode("fichier")}
+          >
+            Fichier géographique
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={sourceMode === "parcelle"}
+            className={`eco-aoi-tab${sourceMode === "parcelle" ? " eco-aoi-tab--active" : ""}`}
+            disabled={isWizardLocked}
+            onClick={() => setSourceMode("parcelle")}
+          >
+            Référence cadastrale
           </button>
         </div>
-
-        <div className="filter-panel-body">
-          <p className="create-aoi-intro">
-            Choisissez une source (référence cadastrale ou fichier ZIP/GPKG), puis définissez le buffer AOI.
-            La carte affiche la géométrie source et le périmètre bufferisé.
-          </p>
-          <div className="section-block create-aoi-block">
-            <div className="section-header">
-              <span className="section-title">Charger un projet existant</span>
+        {sourceMode === "parcelle" ? (
+          <>
+            <div className="eco-aoi-row">
+              <label className="create-aoi-label" htmlFor="aoi-insee">Code INSEE</label>
+              <input
+                id="aoi-insee"
+                type="text"
+                className="create-aoi-input"
+                value={codeInsee}
+                onChange={(e) => setCodeInsee(e.target.value)}
+                placeholder="ex. 33274"
+                maxLength={5}
+                disabled={isWizardLocked}
+              />
             </div>
-            <div className="section-body">
-              {historyLoading ? (
-                <div className="create-aoi-parcel-status is-missing">Chargement des projets…</div>
-              ) : historyError ? (
-                <div className="create-aoi-error">{historyError}</div>
-              ) : historyProjects.length === 0 ? (
-                <div className="create-aoi-parcel-status is-missing">Aucun projet existant.</div>
+            <div className="eco-aoi-row">
+              <label className="create-aoi-label" htmlFor="aoi-section">Section</label>
+              <input
+                id="aoi-section"
+                type="text"
+                className="create-aoi-input"
+                value={section}
+                onChange={(e) => setSection(e.target.value)}
+                placeholder="ex. 0D"
+                disabled={isWizardLocked}
+              />
+            </div>
+            <div className="eco-aoi-row">
+              <label className="create-aoi-label" htmlFor="aoi-numero">Numéro</label>
+              <input
+                id="aoi-numero"
+                type="text"
+                className="create-aoi-input"
+                value={numero}
+                onChange={(e) => setNumero(e.target.value)}
+                placeholder="ex. 0962"
+                disabled={isWizardLocked}
+              />
+            </div>
+            <button
+              type="button"
+              className="eco-aoi-btn"
+              onClick={() => void handleSearchParcelle()}
+              disabled={isSearchingParcel || isWizardLocked}
+            >
+              {isSearchingParcel ? "Recherche parcelle(s)…" : "Rechercher parcelle(s) (IGN)"}
+            </button>
+            <button
+              type="button"
+              className="eco-aoi-btn"
+              onClick={handleAddParcelleToUf}
+              disabled={isWizardLocked}
+            >
+              Ajouter à l&apos;unité foncière
+            </button>
+            {ufParcelles.length > 0 && (
+              <div className="eco-aoi-status eco-aoi-status--ok">
+                UF composée ({ufParcelles.length}) :{" "}
+                {ufParcelles.map((p) => `${p.code_insee}/${p.section}/${p.numero}`).join(" · ")}
+              </div>
+            )}
+            <div className={`eco-aoi-status ${parcelFeature ? "eco-aoi-status--ok" : "eco-aoi-status--muted"}`}>
+              {parcelFeature
+                ? "Géométrie source trouvée et affichée sur la carte."
+                : "Parcelle ou UF non recherchée."}
+            </div>
+          </>
+        ) : (
+          <>
+            <input
+              ref={fileInputRef}
+              id="aoi-file"
+              type="file"
+              className="eco-aoi-file-input-hidden"
+              accept={geoFileAccept}
+              disabled={isWizardLocked || isUploadingGeom}
+              onChange={(e) => {
+                pickGeometryFile(e.target.files?.[0]);
+                e.target.value = "";
+              }}
+            />
+            <div
+              className={`eco-aoi-dropzone${isDragOver ? " eco-aoi-dropzone--active" : ""}${uploadedFeature ? " eco-aoi-dropzone--filled" : ""}`}
+              role="button"
+              tabIndex={isWizardLocked || isUploadingGeom ? -1 : 0}
+              aria-label="Déposer ou choisir un fichier géographique"
+              aria-disabled={isWizardLocked || isUploadingGeom}
+              onKeyDown={(e) => {
+                if (isWizardLocked || isUploadingGeom) return;
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  fileInputRef.current?.click();
+                }
+              }}
+              onClick={() => {
+                if (!isWizardLocked && !isUploadingGeom) fileInputRef.current?.click();
+              }}
+              onDragEnter={(e) => {
+                e.preventDefault();
+                if (!isWizardLocked && !isUploadingGeom) setIsDragOver(true);
+              }}
+              onDragLeave={(e) => {
+                e.preventDefault();
+                if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDragOver(false);
+              }}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                setIsDragOver(false);
+                if (isWizardLocked || isUploadingGeom) return;
+                pickGeometryFile(e.dataTransfer.files?.[0]);
+              }}
+            >
+              <span className="eco-aoi-dropzone-icon" aria-hidden>
+                ↑
+              </span>
+              {isUploadingGeom ? (
+                <span className="eco-aoi-dropzone-title">Analyse du fichier en cours…</span>
+              ) : uploadedFile ? (
+                <>
+                  <span className="eco-aoi-dropzone-title">{uploadedFile.name}</span>
+                  <span className="eco-aoi-dropzone-hint">Cliquez ou déposez un autre fichier pour remplacer</span>
+                </>
               ) : (
                 <>
-                  <div className="create-aoi-row">
-                    <label className="create-aoi-label">Projet</label>
-                    <select
-                      className="create-aoi-input"
-                      value={selectedExistingProjectId}
-                      onChange={(e) => setSelectedExistingProjectId(e.target.value)}
-                      disabled={step === "creating" || step === "fetching"}
-                    >
-                      <option value="">Sélectionner un projet…</option>
-                      {historyProjects.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name} · {new Date(p.created_at).toLocaleDateString("fr-FR")}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <button
-                    type="button"
-                    className="btn-run create-aoi-search-btn"
-                    disabled={!canLoadExistingProject}
-                    onClick={() => {
-                      if (!selectedExistingProjectId) return;
-                      onDone(selectedExistingProjectId);
-                    }}
-                  >
-                    Ouvrir le projet en filtrage
-                  </button>
+                  <span className="eco-aoi-dropzone-title">Glissez-déposez votre fichier ici</span>
+                  <span className="eco-aoi-dropzone-hint">ou cliquez pour parcourir vos fichiers</span>
                 </>
               )}
+              <span className="eco-aoi-dropzone-formats">
+                Formats acceptés : GeoPackage (.gpkg) ou Shapefile zippé (.zip, avec .shp .dbf .shx .prj)
+              </span>
             </div>
+            <div className={`eco-aoi-status ${uploadedFeature ? "eco-aoi-status--ok" : "eco-aoi-status--muted"}`}>
+              {isUploadingGeom
+                ? "Analyse du fichier en cours…"
+                : uploadedFeature
+                  ? `Emprise chargée : ${uploadedFile?.name ?? "fichier"}`
+                  : "Aucun fichier analysé."}
+            </div>
+          </>
+        )}
+      </>
+    );
+  }
+
+  function renderZoneStep() {
+    return (
+      <>
+        <p className="eco-aoi-intro">
+          Nommez le projet et ajustez la zone de recherche. Le contour vert en pointillés sur la carte
+          correspond au buffer autour de la parcelle.
+        </p>
+        <h2 className="eco-aoi-section-title">Zone de recherche</h2>
+        <div className="eco-aoi-row">
+          <label className="create-aoi-label" htmlFor="aoi-name">Nom du projet</label>
+          <input
+            id="aoi-name"
+            type="text"
+            className="create-aoi-input"
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              setNameTouched(true);
+            }}
+            placeholder="ex. PARCELLE_33274_0D_0962"
+            disabled={isWizardLocked}
+          />
+        </div>
+        <div className="eco-aoi-slider">
+          <div className="eco-aoi-slider-head">
+            <span className="eco-aoi-label">Zone de recherche (Buffer)</span>
+            <span className="eco-aoi-slider-value">{bufferKm.toFixed(1)} km</span>
           </div>
-          <form id="create-aoi-form" onSubmit={handleSubmit} className="create-aoi-form">
-            <div className="section-block create-aoi-block">
-              <div className="section-header">
-                <span className="section-title">Source géométrique</span>
-              </div>
-              <div className="section-body">
-                <div className="create-aoi-row">
-                  <label className="create-aoi-label">Mode d'entrée</label>
-                  <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                    <label>
-                      <input
-                        type="radio"
-                        checked={sourceMode === "parcelle"}
-                        disabled={step === "creating" || step === "fetching"}
-                        onChange={() => setSourceMode("parcelle")}
-                      />{" "}
-                      Référence cadastrale
-                    </label>
-                    <label>
-                      <input
-                        type="radio"
-                        checked={sourceMode === "fichier"}
-                        disabled={step === "creating" || step === "fetching"}
-                        onChange={() => setSourceMode("fichier")}
-                      />{" "}
-                      Fichier géographique
-                    </label>
-                  </div>
-                </div>
-                {sourceMode === "parcelle" ? (
-                  <>
-                <div className="create-aoi-row">
-                  <label className="create-aoi-label">Code INSEE</label>
-                  <input
-                    type="text"
-                    className="create-aoi-input"
-                    value={codeInsee}
-                    onChange={(e) => setCodeInsee(e.target.value)}
-                    placeholder="ex. 33274"
-                    maxLength={5}
-                    disabled={step === "creating" || step === "fetching"}
-                  />
-                </div>
-                <div className="create-aoi-row">
-                  <label className="create-aoi-label">Section</label>
-                  <input
-                    type="text"
-                    className="create-aoi-input"
-                    value={section}
-                    onChange={(e) => setSection(e.target.value)}
-                    placeholder="ex. 0D"
-                    disabled={step === "creating" || step === "fetching"}
-                  />
-                </div>
-                <div className="create-aoi-row">
-                  <label className="create-aoi-label">Numéro</label>
-                  <input
-                    type="text"
-                    className="create-aoi-input"
-                    value={numero}
-                    onChange={(e) => setNumero(e.target.value)}
-                    placeholder="ex. 0962"
-                    disabled={step === "creating" || step === "fetching"}
-                  />
-                </div>
-                <button
-                  type="button"
-                  className="btn-run create-aoi-search-btn"
-                  onClick={handleSearchParcelle}
-                  disabled={isSearchingParcel || step === "creating" || step === "fetching"}
-                >
-                  {isSearchingParcel ? "Recherche parcelle(s)..." : "Rechercher parcelle(s) (IGN)"}
-                </button>
-                <button
-                  type="button"
-                  className="btn-run create-aoi-search-btn"
-                  onClick={handleAddParcelleToUf}
-                  disabled={step === "creating" || step === "fetching"}
-                >
-                  Ajouter à l'unité foncière
-                </button>
-                {ufParcelles.length > 0 && (
-                  <div className="create-aoi-parcel-status is-found">
-                    UF composée ({ufParcelles.length}) :{" "}
-                    {ufParcelles.map((p) => `${p.code_insee}/${p.section}/${p.numero}`).join(" · ")}
-                  </div>
-                )}
-                <div className={`create-aoi-parcel-status ${parcelFeature ? "is-found" : "is-missing"}`}>
-                  {parcelFeature ? "Géométrie source trouvée et affichée sur la carte." : "Parcelle/UF non recherchée."}
-                </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="create-aoi-row">
-                      <label className="create-aoi-label">Format du fichier</label>
-                      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                        <label>
-                          <input
-                            type="radio"
-                            checked={fileFormat === "gpkg"}
-                            disabled={step === "creating" || step === "fetching" || isUploadingGeom}
-                            onChange={() => {
-                              setFileFormat("gpkg");
-                              setUploadedFile(null);
-                              setUploadedFeature(null);
-                            }}
-                          />{" "}
-                          GeoPackage (.gpkg)
-                        </label>
-                        <label>
-                          <input
-                            type="radio"
-                            checked={fileFormat === "shp_zip"}
-                            disabled={step === "creating" || step === "fetching" || isUploadingGeom}
-                            onChange={() => {
-                              setFileFormat("shp_zip");
-                              setUploadedFile(null);
-                              setUploadedFeature(null);
-                            }}
-                          />{" "}
-                          Shapefile zippé (.zip)
-                        </label>
-                      </div>
-                    </div>
-                    <div className="create-aoi-row">
-                      <label className="create-aoi-label">Fichier source</label>
-                      <input
-                        type="file"
-                        className="create-aoi-input"
-                        accept={fileInputAccept}
-                        disabled={step === "creating" || step === "fetching" || isUploadingGeom}
-                        onChange={(e) => {
-                          const f = e.target.files?.[0];
-                          if (f) {
-                            void handleUploadGeometry(f);
-                          }
-                        }}
-                      />
-                    </div>
-                    <div className="create-aoi-parcel-status is-missing">
-                      Format attendu : <strong>{expectedFileLabel}</strong>
-                      {fileFormat === "shp_zip"
-                        ? " (inclure au minimum .shp, .dbf, .shx, .prj dans le zip)"
-                        : ""}
-                    </div>
-                    <div className={`create-aoi-parcel-status ${uploadedFeature ? "is-found" : "is-missing"}`}>
-                      {isUploadingGeom
-                        ? "Analyse du fichier en cours..."
-                        : uploadedFeature
-                          ? `Emprise chargée : ${uploadedFile?.name ?? "fichier"}`
-                          : "Aucun fichier analysé."}
-                    </div>
-                  </>
-                )}
-                <div className="create-aoi-row">
-                  <label className="create-aoi-label">Nom du projet</label>
-                  <input
-                    type="text"
-                    className="create-aoi-input"
-                    value={name}
-                    onChange={(e) => {
-                      setName(e.target.value);
-                      setNameTouched(true);
-                    }}
-                    placeholder="ex. PARCELLE_33274_0D_0962"
-                    disabled={step === "creating" || step === "fetching"}
-                  />
-                </div>
-                <SliderField
-                  label="Buffer AOI"
-                  value={bufferKm}
-                  min={0}
-                  max={20}
-                  step={0.5}
-                  format={(v) => v.toFixed(1)}
-                  unit=" km"
-                  onChange={setBufferKm}
-                />
-              </div>
-            </div>
-
-            <div className="section-block create-aoi-block">
-              {layersLoadError && (
-                <div className="create-aoi-error" style={{ marginBottom: 8 }}>
-                  Couches : {layersLoadError}
-                </div>
-              )}
-              {registryLayers.length > 0 && (
-                <SelectAoiLayers
-                  layers={registryLayers}
-                  selectedKeys={selectedLayerKeys}
-                  onSelectedKeysChange={setSelectedLayerKeys}
-                  bufferKm={bufferKm}
-                  ufEnabled={ufEnabled}
-                  onUfEnabledChange={setUfEnabled}
-                  ufMaxParcelles={ufMaxParcelles}
-                  onUfMaxParcellesChange={setUfMaxParcelles}
-                  ufMinAreaHa={ufMinAreaHa}
-                  onUfMinAreaHaChange={setUfMinAreaHa}
-                  faunaSpecies={faunaSpecies}
-                  onFaunaSpeciesChange={setFaunaSpecies}
-                  disabled={step === "creating" || step === "fetching"}
-                />
-              )}
-            </div>
-
-                <button type="submit" className="btn-run create-aoi-submit-inline" disabled={!canCreateAoi}>
-                  Créer AOI (buffer) et lancer les couches
-                </button>
-
-            {error && (
-              <div className="create-aoi-error">
-                {error}
-              </div>
-            )}
-
-            {(step === "creating" || step === "fetching" || step === "done") && (
-              <div className="create-aoi-logs">
-                <div className="create-aoi-logs-title">
-                  {step === "creating" ? "Création du projet…" : "Résultats par couche"}
-                </div>
-                <div className="create-aoi-layers-list">
-                  {progressKeys.map((key) => {
-                    const state = layerResults[key] ?? { status: "pending" };
-                    const label = labelForKey(registryLayers, key);
-                    let cell: string;
-                    if (state.status === "pending") cell = "—";
-                    else if (state.status === "running") cell = state.message ?? "…";
-                    else if (state.status === "done") cell = `${state.n_inserted?.toLocaleString("fr-FR") ?? 0} entité(s)`;
-                    else if (state.status === "skipped") cell = "0 (ignorée)";
-                    else cell = "Erreur";
-                    return (
-                      <div key={key} className={`create-aoi-layer-row create-aoi-layer-row--${state.status}`}>
-                        <span className="create-aoi-layer-label">{label}</span>
-                        <span className="create-aoi-layer-count">{cell}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-                {summary && (
-                  <div className="create-aoi-summary" ref={logEndRef}>
-                    <div className="create-aoi-summary-title">Récapitulatif</div>
-                    <div className="create-aoi-summary-line create-aoi-summary-ok">
-                      <strong>Réussies : {summary.n_ok}</strong>
-                      {summary.n_ok > 0 && (
-                        <span className="create-aoi-summary-list">
-                          {progressKeys.filter((k) => layerResults[k]?.status === "done").map((k) => labelForKey(registryLayers, k)).join(", ")}
-                        </span>
-                      )}
-                    </div>
-                    <div className="create-aoi-summary-line create-aoi-summary-skip">
-                      <strong>Ignorées : {summary.n_skip}</strong>
-                      {summary.n_skip > 0 && (
-                        <span className="create-aoi-summary-list">
-                          {progressKeys.filter((k) => layerResults[k]?.status === "skipped").map((k) => labelForKey(registryLayers, k)).join(", ")}
-                        </span>
-                      )}
-                    </div>
-                    <div className="create-aoi-summary-line create-aoi-summary-err">
-                      <strong>Erreurs : {summary.n_err}</strong>
-                      {summary.n_err > 0 && (
-                        <span className="create-aoi-summary-list">
-                          {progressKeys.filter((k) => layerResults[k]?.status === "error").map((k) => labelForKey(registryLayers, k)).join(", ")}
-                        </span>
-                      )}
-                    </div>
-                    <div className="create-aoi-summary-time">
-                      Temps total : {summary.total_s} s
-                    </div>
-                  </div>
-                )}
-                {!summary && (step === "creating" || step === "fetching") && <div ref={logEndRef} />}
-              </div>
-            )}
-
-            {step === "done" && (
-              <div className="create-aoi-done">
-                <p className="create-aoi-done-text">Orchestration terminée. Vous pouvez passer au filtrage.</p>
-                <button type="button" className="btn-run" onClick={handleGoToFilter}>
-                  Aller au filtrage →
-                </button>
-              </div>
-            )}
-          </form>
+          <input
+            type="range"
+            min={0}
+            max={20}
+            step={0.5}
+            value={bufferKm}
+            disabled={isWizardLocked}
+            onChange={(e) => setBufferKm(Number(e.target.value))}
+          />
+          <div className="eco-aoi-slider-hints">
+            <span>0 km</span>
+            <span>20 km</span>
+          </div>
+          <p className="eco-aoi-slider-caption">
+            Distance ajoutée autour de l&apos;emprise du projet (zone d&apos;étude AOI).
+          </p>
         </div>
+      </>
+    );
+  }
 
-        <div className="filter-panel-footer">
-          {step === "form" && <div className="create-aoi-footer-hint">1) Rechercher parcelle → 2) Choisir les couches → 3) Créer AOI</div>}
-          {(step === "creating" || step === "fetching") && (
-            <div className="create-aoi-loading">
-              <span className="spinner" />
-              {step === "creating" ? "Création du projet…" : "Intersection des couches en cours, le processus peut prendre jusqu'à 15 minutes"}
-            </div>
+  function renderDataStep() {
+    return (
+      <>
+        {phasesLoadError && <div className="eco-aoi-error">Phases : {phasesLoadError}</div>}
+        <SelectFilterCriteria
+          minAreaHa={minAreaHa}
+          onMinAreaHaChange={setMinAreaHa}
+          millerThresh={millerThresh}
+          onMillerThreshChange={setMillerThresh}
+          cesbioLibelles={cesbioLibelles}
+          onCesbioLibellesChange={setCesbioLibelles}
+          faunaEnabled={faunaEnabled}
+          onFaunaEnabledChange={setFaunaEnabled}
+          faunaSpecies={faunaSpecies}
+          onFaunaSpeciesChange={setFaunaSpecies}
+          faunaDistM={faunaDistM}
+          onFaunaDistMChange={setFaunaDistM}
+          disabled={isWizardLocked}
+        />
+        <button type="submit" className="eco-aoi-btn eco-aoi-btn--primary" disabled={!canCreateAoi}>
+          Lancer le filtrage
+        </button>
+      </>
+    );
+  }
+
+  function renderProgressBlock() {
+    if (step !== "creating" && step !== "fetching" && step !== "done") return null;
+    const showSpinner =
+      step === "creating" ||
+      (step === "fetching" && !summary) ||
+      (step === "done" && ufInProgress);
+    const progressTitle =
+      step === "creating"
+        ? "Création du projet…"
+        : ufInProgress && summary
+          ? "Filtrage parcelles terminé — unités foncières en cours…"
+          : "Progression du filtrage";
+    return (
+      <div className="eco-aoi-logs">
+        <div className="eco-aoi-logs-title">
+          {showSpinner && (
+            <span className="eco-aoi-logs-spinner" aria-hidden="true" />
           )}
-          {step === "error" && (
-            <button type="button" className="btn-run" onClick={() => { setStep("form"); setError(null); }}>
-              Réessayer
+          <span>{progressTitle}</span>
+          {showSpinner && (
+            <span className="eco-aoi-sr-only" role="status" aria-live="polite">
+              Chargement en cours
+            </span>
+          )}
+        </div>
+        <PipelineProgressPanel progress={pipelineProgress} />
+        {summary && (
+          <div className="eco-aoi-summary" ref={logEndRef}>
+            <p>
+              <strong>Réussies : {summary.n_ok}</strong>
+              {" · "}
+              <strong>Ignorées : {summary.n_skip}</strong>
+              {" · "}
+              <strong>Erreurs : {summary.n_err}</strong>
+            </p>
+            <p style={{ margin: "0.35rem 0 0", fontSize: "0.72rem", color: "var(--eco-text-muted)" }}>
+              Temps total : {summary.total_s} s
+            </p>
+          </div>
+        )}
+        {!summary && (step === "creating" || step === "fetching") && <div ref={logEndRef} />}
+        {ufInProgress && step === "done" && <div ref={logEndRef} />}
+      </div>
+    );
+  }
+
+  return (
+    <div className="eco-aoi-page">
+      <div className="eco-aoi-layout">
+        <aside className="eco-aoi-sidebar">
+          <div className="eco-aoi-sidebar-head">
+            <button type="button" className="eco-aoi-icon-btn" onClick={onBack} title="Retour au filtrage" aria-label="Retour">
+              ←
             </button>
+            <h1>Zone de recherche</h1>
+          </div>
+
+          <div className="eco-aoi-tabs" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={projectTab === "new"}
+              className={`eco-aoi-tab${projectTab === "new" ? " eco-aoi-tab--active" : ""}`}
+              disabled={isWizardLocked}
+              onClick={() => setProjectTab("new")}
+            >
+              Nouveau projet
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={projectTab === "existing"}
+              className={`eco-aoi-tab${projectTab === "existing" ? " eco-aoi-tab--active" : ""}`}
+              disabled={isWizardLocked}
+              onClick={() => setProjectTab("existing")}
+            >
+              Projet existant
+            </button>
+          </div>
+
+          {projectTab === "new" ? (
+            <div className="eco-aoi-sidebar-main">
+              <nav className="eco-aoi-steps" aria-label="Étapes de création">
+                {([1, 2, 3] as const).map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    className={`eco-aoi-step${wizardStep === n ? " eco-aoi-step--active" : ""}${n < wizardStep && canAdvanceFromStep1 ? " eco-aoi-step--done" : ""}`}
+                    disabled={isWizardLocked || ((n === 2 || n === 3) && !canAdvanceFromStep1)}
+                    onClick={() => {
+                      if ((n === 2 || n === 3) && !canAdvanceFromStep1) return;
+                      setWizardStep(n);
+                    }}
+                  >
+                    <span className="eco-aoi-step-num">{n}</span>
+                    <span>{stepLabels[n]}</span>
+                  </button>
+                ))}
+              </nav>
+
+              <div className="eco-aoi-body">
+                <form id="create-aoi-form" onSubmit={handleSubmit} className="eco-aoi-form">
+                  {wizardStep === 1 && renderParcelStep()}
+                  {wizardStep === 2 && renderZoneStep()}
+                  {wizardStep === 3 && renderDataStep()}
+                  {error && <div className="eco-aoi-error">{error}</div>}
+                  {renderProgressBlock()}
+                  {step === "done" && (
+                    <div className="eco-aoi-done">
+                      <p>
+                        {ufInProgress
+                          ? "Les parcelles retenues sont prêtes. Le calcul des unités foncières se poursuit en arrière-plan."
+                          : "Filtrage terminé. Les parcelles et unités foncières sont prêtes à être consultées."}
+                      </p>
+                      <button type="button" className="eco-aoi-btn eco-aoi-btn--primary" onClick={handleGoToFilter}>
+                        Voir les résultats →
+                      </button>
+                    </div>
+                  )}
+                </form>
+              </div>
+
+              <div className="eco-aoi-sidebar-foot">
+                {step === "form" ? (
+                  <div className="eco-aoi-foot-nav">
+                    {wizardStep > 1 && (
+                      <button
+                        type="button"
+                        className="eco-aoi-btn eco-aoi-btn--secondary"
+                        onClick={() => setWizardStep((s) => (s > 1 ? ((s - 1) as 1 | 2 | 3) : s))}
+                      >
+                        Précédent
+                      </button>
+                    )}
+                    {wizardStep < 3 && (() => {
+                      const suivantEnabled =
+                        wizardStep !== 1 || canAdvanceFromStep1;
+                      return (
+                        <button
+                          type="button"
+                          className={`eco-aoi-btn${suivantEnabled ? " eco-aoi-btn--ready" : " eco-aoi-btn--primary"}`}
+                          disabled={!suivantEnabled}
+                          onClick={() => {
+                            if (!suivantEnabled) return;
+                            setWizardStep((s) => (s < 3 ? ((s + 1) as 1 | 2 | 3) : s));
+                          }}
+                        >
+                          Suivant
+                        </button>
+                      );
+                    })()}
+                  </div>
+                ) : null}
+                {step === "form" && (
+                  <p className="eco-aoi-foot-hint">
+                    Étape {wizardStep}/3 — {stepLabels[wizardStep]}
+                  </p>
+                )}
+                {(step === "creating" || step === "fetching") && (
+                  <div className="eco-aoi-loading">
+                    {step === "creating"
+                      ? "Création du projet…"
+                      : "Filtrage écologique en cours…"}
+                  </div>
+                )}
+                {step === "error" && (
+                  <button
+                    type="button"
+                    className="eco-aoi-btn eco-aoi-btn--primary"
+                    onClick={() => {
+                      setStep("form");
+                      setError(null);
+                    }}
+                  >
+                    Réessayer
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="eco-aoi-sidebar-main">
+              <div className="eco-aoi-body">
+                <div className="eco-aoi-existing-panel">
+                  <h2>Projet existant</h2>
+                  <p className="eco-aoi-intro">
+                    Choisissez un projet déjà créé pour reprendre le filtrage écologique.
+                  </p>
+                  {historyLoading ? (
+                    <div className="eco-aoi-status eco-aoi-status--muted">Chargement des projets…</div>
+                  ) : historyError ? (
+                    <div className="eco-aoi-error">{historyError}</div>
+                  ) : historyProjects.length === 0 ? (
+                    <div className="eco-aoi-status eco-aoi-status--muted">Aucun projet existant.</div>
+                  ) : (
+                    <div className="eco-aoi-row">
+                      <label className="create-aoi-label" htmlFor="existing-project">
+                        Projet
+                      </label>
+                      <select
+                        id="existing-project"
+                        className="create-aoi-input"
+                        value={selectedExistingProjectId}
+                        onChange={(e) => setSelectedExistingProjectId(e.target.value)}
+                        disabled={isWizardLocked}
+                      >
+                        <option value="">Sélectionner un projet…</option>
+                        {historyProjects.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name} · {new Date(p.created_at).toLocaleDateString("fr-FR")}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              </div>
+              {historyProjects.length > 0 && !historyLoading && !historyError && (
+                <div className="eco-aoi-sidebar-foot">
+                  <button
+                    type="button"
+                    className="eco-aoi-btn eco-aoi-btn--primary"
+                    disabled={!canLoadExistingProject}
+                    onClick={() => {
+                      if (selectedExistingProjectId) onDone(selectedExistingProjectId);
+                    }}
+                  >
+                    Ouvrir en filtrage
+                  </button>
+                </div>
+              )}
+            </div>
           )}
-        </div>
         </aside>
 
-        <div className="create-aoi-map-wrap">
+        <div className="eco-aoi-map-wrap">
+          {projectTab === "new" && sourceFeature && (
+            <div className="eco-aoi-map-legend" aria-hidden>
+              <div className="eco-aoi-legend-item">
+                <span className="eco-aoi-legend-swatch eco-aoi-legend-swatch--parcel" />
+                Parcelle / emprise
+              </div>
+              {bufferKm > 0 && (
+                <div className="eco-aoi-legend-item">
+                  <span className="eco-aoi-legend-swatch eco-aoi-legend-swatch--buffer" />
+                  Zone de recherche ({bufferKm.toFixed(1)} km)
+                </div>
+              )}
+            </div>
+          )}
+
           <CartoAoi parcelFeature={sourceFeature} bufferKm={bufferKm} />
         </div>
       </div>

@@ -1,5 +1,6 @@
 import type { LayerInfo } from "../../api";
 import { FaunaSpeciesPicker } from "../../components/FilterPanel/FaunaSpeciesPicker";
+import { ToggleSwitch } from "../../components/ToggleSwitch";
 import { FAUNA_LAYER_KEY, isOptionalLayerKey, splitOptionalLayersByGroup } from "./aoiLayerKeys";
 import "./SelectAoiLayers.css";
 
@@ -11,10 +12,8 @@ export interface SelectAoiLayersProps {
   bufferKm: number;
   ufEnabled: boolean;
   onUfEnabledChange: (value: boolean) => void;
-  /** Nombre max de parcelles par UF pour sous-ensembles (5–10). */
   ufMaxParcelles: number;
   onUfMaxParcellesChange: (value: number) => void;
-  /** Surface minimale UF (ha) pour garder une unité foncière au pré-filtre. */
   ufMinAreaHa: number;
   onUfMinAreaHaChange: (value: number) => void;
   faunaSpecies: string[];
@@ -23,8 +22,8 @@ export interface SelectAoiLayersProps {
 }
 
 /**
- * Couches optionnelles (cases) + bloc UF / unités foncières personnes morales (k).
- * Parcelles, GEOMCE : toujours incluses côté parent (pas listées ici).
+ * Couches optionnelles (interrupteurs) + bloc UF.
+ * Parcelles, GEOMCE : toujours incluses côté parent.
  */
 export function SelectAoiLayers({
   layers,
@@ -50,8 +49,6 @@ export function SelectAoiLayers({
   const allSelected = allKeys.length > 0 && allKeys.every((k) => selectedSet.has(k));
   const noneSelected = selectedKeys.length === 0;
 
-  const ufLocked = disabled;
-
   function toggleKey(key: string) {
     if (disabled) return;
     if (selectedSet.has(key)) {
@@ -76,14 +73,16 @@ export function SelectAoiLayers({
       <div className="section-header">
         <span className="section-title">Couches à récupérer</span>
       </div>
-      <p className="select-aoi-layers__hint">Cochez les jeux de données à charger (parcelles cadastrales et mesures GEOMCE sont toujours incluses).</p>
+      <p className="select-aoi-layers__hint">
+        Activez les jeux de données à charger (parcelles cadastrales et mesures GEOMCE sont toujours incluses).
+      </p>
 
       <div className="select-aoi-layers__toolbar">
         <button type="button" onClick={selectAll} disabled={disabled || allSelected}>
-          Tout sélectionner
+          Tout activer
         </button>
         <button type="button" onClick={selectNone} disabled={disabled || noneSelected}>
-          Tout désélectionner
+          Tout désactiver
         </button>
       </div>
 
@@ -91,17 +90,17 @@ export function SelectAoiLayers({
         <div className="select-aoi-layers__group">
           <div className="select-aoi-layers__group-title">Faune</div>
           <div className="select-aoi-layers__list" role="list">
-            <label className="select-aoi-layers__row">
-              <input
-                type="checkbox"
-                checked={faunaSelected}
-                disabled={disabled}
-                onChange={() => toggleKey(FAUNA_LAYER_KEY)}
-              />
-              <span className="select-aoi-layers__row-label">{faunaLayer.label}</span>
-            </label>
+            <ToggleSwitch
+              id="layer-fauna"
+              checked={faunaSelected}
+              disabled={disabled}
+              onChange={() => toggleKey(FAUNA_LAYER_KEY)}
+              label={faunaLayer.label}
+            />
           </div>
-          <div className={`select-aoi-layers__fauna-picker ${!faunaSelected || disabled ? "select-aoi-layers__fauna-picker--disabled" : ""}`}>
+          <div
+            className={`select-aoi-layers__fauna-picker ${!faunaSelected || disabled ? "select-aoi-layers__fauna-picker--disabled" : ""}`}
+          >
             <FaunaSpeciesPicker
               selectedSpecies={faunaSpecies}
               onChange={onFaunaSpeciesChange}
@@ -109,7 +108,7 @@ export function SelectAoiLayers({
             />
           </div>
           {faunaSelected && faunaSpecies.length === 0 && (
-            <p style={{ color: "#b00020", marginTop: 8, marginBottom: 0 }}>
+            <p className="select-aoi-layers__fauna-warn">
               Sélectionnez au moins une espèce pour lancer la couche Faune.
             </p>
           )}
@@ -117,60 +116,46 @@ export function SelectAoiLayers({
       )}
 
       <div className="select-aoi-layers__group">
-        <div className="select-aoi-layers__group-title">Couches primaires (cochées par défaut)</div>
+        <div className="select-aoi-layers__group-title">Couches primaires (activées par défaut)</div>
         <div className="select-aoi-layers__list" role="list">
-          {grouped.primary.map((layer) => {
-            const checked = selectedSet.has(layer.key);
-            return (
-              <label key={layer.key} className="select-aoi-layers__row">
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  disabled={disabled}
-                  onChange={() => toggleKey(layer.key)}
-                />
-                <span className="select-aoi-layers__row-label">{layer.label}</span>
-              </label>
-            );
-          })}
+          {grouped.primary.map((layer) => (
+            <ToggleSwitch
+              key={layer.key}
+              id={`layer-${layer.key}`}
+              checked={selectedSet.has(layer.key)}
+              disabled={disabled}
+              onChange={() => toggleKey(layer.key)}
+              label={layer.label}
+            />
+          ))}
         </div>
       </div>
 
       <div className="select-aoi-layers__group">
-        <div className="select-aoi-layers__group-title">Couches secondaires (décochées par défaut)</div>
+        <div className="select-aoi-layers__group-title">Couches secondaires (désactivées par défaut)</div>
         <div className="select-aoi-layers__list" role="list">
-          {grouped.secondary.map((layer) => {
-            const checked = selectedSet.has(layer.key);
-            return (
-              <label key={layer.key} className="select-aoi-layers__row">
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  disabled={disabled}
-                  onChange={() => toggleKey(layer.key)}
-                />
-                <span className="select-aoi-layers__row-label">{layer.label}</span>
-              </label>
-            );
-          })}
+          {grouped.secondary.map((layer) => (
+            <ToggleSwitch
+              key={layer.key}
+              id={`layer-${layer.key}`}
+              checked={selectedSet.has(layer.key)}
+              disabled={disabled}
+              onChange={() => toggleKey(layer.key)}
+              label={layer.label}
+            />
+          ))}
         </div>
       </div>
 
-      <div
-        className="select-aoi-layers__uf-block"
-      >
+      <div className="select-aoi-layers__uf-block">
         <div className="select-aoi-layers__uf-title">Unités foncières (personnes morales)</div>
-        <label className="select-aoi-layers__uf-row">
-          <input
-            type="checkbox"
-            checked={ufEnabled}
-            disabled={disabled}
-            onChange={(e) => onUfEnabledChange(e.target.checked)}
-          />
-          <span className="select-aoi-layers__row-label">
-            Chercher parmi les unités foncières de personnes morales
-          </span>
-        </label>
+        <ToggleSwitch
+          id="layer-uf"
+          checked={ufEnabled}
+          disabled={disabled}
+          onChange={onUfEnabledChange}
+          label="Chercher parmi les unités foncières de personnes morales"
+        />
         <div className="select-aoi-layers__uf-k">
           <label htmlFor="select-aoi-uf-k" className="select-aoi-layers__uf-k-label">
             k = {ufMaxParcelles}
@@ -182,7 +167,7 @@ export function SelectAoiLayers({
             max={10}
             step={1}
             value={ufMaxParcelles}
-            disabled={ufLocked || !ufEnabled}
+            disabled={disabled || !ufEnabled}
             onChange={(e) => onUfMaxParcellesChange(Number(e.target.value))}
           />
           <span className="select-aoi-layers__uf-k-range">5 — 10</span>
@@ -198,14 +183,13 @@ export function SelectAoiLayers({
             min={1}
             step={0.5}
             value={ufMinAreaHa}
-            disabled={ufLocked || !ufEnabled}
+            disabled={disabled || !ufEnabled}
             onChange={(e) => onUfMinAreaHaChange(Number(e.target.value) || 1)}
           />
         </div>
         <p className="select-aoi-layers__uf-help">
-          Nombre maximal de parcelles par unité foncière prises en compte pour énumérer les combinaisons
-          possibles de sous-ensembles de parcelles (contiguës). Des valeurs plus élevées augmentent fortement
-          le coût de calcul.
+          Nombre maximal de parcelles par unité foncière pour énumérer les sous-ensembles contigus.
+          Des valeurs plus élevées augmentent fortement le coût de calcul.
         </p>
       </div>
     </div>

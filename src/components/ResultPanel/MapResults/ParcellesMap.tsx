@@ -25,6 +25,11 @@ import {
 } from "./cartoCouchesRegistry";
 import { LegendeMapResultats } from "./LegendeMapResultats";
 import { buildParcelHoverHtml } from "./ParcelHoverData";
+import {
+  createMapHoverPopup,
+  hideMapHoverPopup,
+  showMapHoverPopup,
+} from "./mapHoverPopup";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -41,7 +46,12 @@ interface ParcellesMapProps {
   geojson: ParcellesGeoJSON | null;
   foncierGeojson?: unknown;
   projectId?: string | null;
-  onParcelleDoubleClick?: (idu: string) => void;
+  /** Run pool — critères CESBIO / faune pour les couches nationales clippées AOI. */
+  poolRunId?: string | null;
+  /** Clic simple sur une parcelle — liaison tableau. */
+  onParcelleClick?: (idu: string) => void;
+  /** Parcelle sélectionnée — surbrillance + centrage carte. */
+  focusIdu?: string | null;
   loadingMessage?: string | null;
   /** Préchargement après filtrage — affichage carte instantané au toggle (couches restent masquées). */
   preloadedThematic?: ResultsThematicPreload | null;
@@ -117,6 +127,55 @@ const BASE_STYLE: maplibregl.StyleSpecification = {
 
 function emptyFC(): FeatureCollection { return { type: "FeatureCollection", features: [] }; }
 
+function extendBoundsFromFeature(bounds: maplibregl.LngLatBounds, f: GeoJSON.Feature) {
+  const geom = f.geometry;
+  if (!geom) return;
+  if (geom.type === "Polygon") {
+    geom.coordinates[0].forEach((c) => bounds.extend(c as [number, number]));
+  } else if (geom.type === "MultiPolygon") {
+    geom.coordinates.forEach((poly) => poly[0].forEach((c) => bounds.extend(c as [number, number])));
+  }
+}
+
+function focusFilterForIdu(idu: string | null | undefined): maplibregl.FilterSpecification {
+  if (!idu) return ["==", ["get", "idu"], "___none___"];
+  return ["==", ["get", "idu"], idu];
+}
+
+const PARCEL_HIT_LAYERS = ["parcelles-fill"];
+
+function pickParcelAtPoint(
+  m: maplibregl.Map,
+  point: maplibregl.PointLike,
+): ParcelleProperties | null {
+  try {
+    if (!m.getLayer("parcelles-fill")) return null;
+    const features = m.queryRenderedFeatures(point, { layers: PARCEL_HIT_LAYERS });
+    if (!features.length) return null;
+    return (features[0].properties ?? null) as ParcelleProperties | null;
+  } catch {
+    return null;
+  }
+}
+
+function ensureHighlightOutlineLayer(m: maplibregl.Map) {
+  if (m.getLayer("parcelles-highlight-fill")) {
+    m.removeLayer("parcelles-highlight-fill");
+  }
+  if (m.getLayer("parcelles-highlight-outline")) return;
+  m.addLayer({
+    id: "parcelles-highlight-outline",
+    type: "line",
+    source: "parcelles",
+    filter: focusFilterForIdu(null),
+    paint: {
+      "line-color": "#fbbf24",
+      "line-width": 4,
+      "line-opacity": 1,
+    },
+  });
+}
+
 function toFiniteNumber(value: unknown): number | null {
   const n = typeof value === "number" ? value : Number(value);
   return Number.isFinite(n) ? n : null;
@@ -128,7 +187,9 @@ export function ParcellesMap({
   geojson,
   foncierGeojson,
   projectId,
-  onParcelleDoubleClick,
+  poolRunId = null,
+  onParcelleClick,
+  focusIdu = null,
   loadingMessage = null,
   preloadedThematic,
   thematicPreloadLoading = false,
@@ -137,8 +198,13 @@ export function ParcellesMap({
 }: ParcellesMapProps) {
   const mapContainer       = useRef<HTMLDivElement>(null);
   const map                = useRef<maplibregl.Map | null>(null);
-  const onDoubleClickRef   = useRef(onParcelleDoubleClick);
-  onDoubleClickRef.current = onParcelleDoubleClick;
+  const onParcelleClickRef = useRef(onParcelleClick);
+  onParcelleClickRef.current = onParcelleClick;
+  const poolMetricsRef = useRef(poolMetricsByIdu);
+  poolMetricsRef.current = poolMetricsByIdu;
+  const parcellePopupRef = useRef<maplibregl.Popup | null>(null);
+  const parcelHandlersBoundRef = useRef(false);
+  const didInitialFitRef = useRef(false);
   const fetchedRef         = useRef<Set<string>>(new Set());
 
   const [thematicState, setThematicState] = useState<Record<string, ThematicLayerState>>(buildInitialThematic);
@@ -191,12 +257,14 @@ export function ParcellesMap({
     return { withFoncier, total };
   }, [geojsonWithScoreRatio]);
 
-  // Reset au changement de projet
+  // Reset au changement de projet ou de run pool (critères CESBIO / faune)
   useEffect(() => {
     setThematicState(buildInitialThematic());
     fetchedRef.current = new Set();
     setParcellesVisible(true);
-  }, [projectId]);
+    didInitialFitRef.current = false;
+    parcelHandlersBoundRef.current = false;
+  }, [projectId, poolRunId]);
 
   // Préchargement des couches thématiques (après filtrage) — données prêtes, visibilité inchangée
   useEffect(() => {
@@ -242,7 +310,24 @@ export function ParcellesMap({
       center: [0, 47],
       zoom: 8,
     });
-    return () => { map.current?.remove(); map.current = null; };
+    return () => {
+      parcelHandlersBoundRef.current = false;
+      parcellePopupRef.current?.remove();
+      parcellePopupRef.current = null;
+      map.current?.remove();
+      map.current = null;
+    };
+  }, []);
+
+  // Vue split 60/40 : MapLibre doit recalculer la taille du canvas
+  useEffect(() => {
+    const el = mapContainer.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      map.current?.resize();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
   // ── Sync parcelles + foncier ──────────────────────────────────────────────
@@ -266,6 +351,7 @@ export function ParcellesMap({
       // Parcelles
       if (map.current.getSource("parcelles")) {
         (map.current.getSource("parcelles") as maplibregl.GeoJSONSource).setData(geojsonWithScoreRatio);
+        ensureHighlightOutlineLayer(map.current);
       } else {
         map.current.addSource("parcelles", { type: "geojson", data: geojsonWithScoreRatio });
         map.current.addLayer({
@@ -282,6 +368,7 @@ export function ParcellesMap({
             "line-width": 2,
           },
         });
+        ensureHighlightOutlineLayer(map.current);
 
         // Couches thématiques — insérées AVANT parcelles (restent en dessous)
         for (const def of RESULTS_LAYERS) {
@@ -317,7 +404,7 @@ export function ParcellesMap({
         }
 
         // Popup hover couches thématiques
-        const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, maxWidth: "260px" });
+        const popup = createMapHoverPopup("260px");
         const thematicInteractiveIds = RESULTS_LAYERS.flatMap((d) => {
           const ids = thematicLayerIds(d.key);
           return [ids.fillId, ids.lineId, ids.circleId];
@@ -328,9 +415,9 @@ export function ParcellesMap({
           const visible = thematicInteractiveIds.filter((id) => {
             try { return map.current!.getLayoutProperty(id, "visibility") === "visible"; } catch { return false; }
           });
-          if (!visible.length) { popup.remove(); return; }
+          if (!visible.length) { hideMapHoverPopup(popup); return; }
           const features = map.current.queryRenderedFeatures(e.point, { layers: visible });
-          if (!features.length) { popup.remove(); return; }
+          if (!features.length) { hideMapHoverPopup(popup); return; }
           const f = features[0];
           const def = RESULTS_LAYERS.find((d) => {
             const ids = thematicLayerIds(d.key);
@@ -342,22 +429,22 @@ export function ParcellesMap({
             .map(({ field, label }) =>
               `<tr><th style="color:#64748b;padding-right:8px;font-weight:500;white-space:nowrap">${label}</th><td>${f.properties![field]}</td></tr>`
             ).join("");
-          popup.setLngLat(e.lngLat)
-            .setHTML(`<div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px">${def.label}</div><table style="font-size:12px;border-collapse:collapse">${rows}</table>`)
-            .addTo(map.current);
+          showMapHoverPopup(
+            popup,
+            map.current,
+            `<div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px">${def.label}</div><table style="font-size:12px;border-collapse:collapse">${rows}</table>`,
+          );
         });
-        map.current.on("mouseleave", () => { popup.remove(); });
+        map.current.on("mouseleave", () => { hideMapHoverPopup(popup); });
+      }
 
-        map.current.on("dblclick", "parcelles-fill", (e) => {
-          const props = e.features?.[0]?.properties as ParcelleProperties | undefined;
-          if (props?.idu && typeof props.idu === "string") onDoubleClickRef.current?.(props.idu);
-        });
-        const parcellePopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, maxWidth: "560px" });
-        map.current.on("mousemove", "parcelles-fill", (e) => {
+      if (!parcelHandlersBoundRef.current && map.current.getLayer("parcelles-fill")) {
+        const onParcelMove = (e: maplibregl.MapMouseEvent) => {
           if (!map.current) return;
-          const props = e.features?.[0]?.properties as ParcelleProperties | undefined;
+          const props = pickParcelAtPoint(map.current, e.point);
           if (!props) {
-            parcellePopup.remove();
+            parcellePopupRef.current?.remove();
+            map.current.getCanvas().style.cursor = "";
             return;
           }
           const idu = props.idu ? String(props.idu) : "—";
@@ -365,34 +452,51 @@ export function ParcellesMap({
             typeof (props as Record<string, unknown>).score_ratio === "number"
               ? Number((props as Record<string, unknown>).score_ratio)
               : Number(props.score_norm ?? 0);
-          parcellePopup
-            .setLngLat(e.lngLat)
-            .setHTML(buildParcelHoverHtml(idu, poolMetricsByIdu?.[idu] ?? null, scoreRatio))
-            .addTo(map.current);
-        });
-        map.current.on("mouseenter", "parcelles-fill", () => map.current?.getCanvas().style.setProperty("cursor", "pointer"));
-        map.current.on("mouseleave", "parcelles-fill", () => {
+          if (!parcellePopupRef.current) {
+            parcellePopupRef.current = createMapHoverPopup("560px");
+          }
+          showMapHoverPopup(
+            parcellePopupRef.current,
+            map.current,
+            buildParcelHoverHtml(idu, poolMetricsRef.current?.[idu] ?? null, scoreRatio),
+          );
+          map.current.getCanvas().style.cursor = "pointer";
+        };
+
+        const onParcelLeave = () => {
+          parcellePopupRef.current?.remove();
           map.current?.getCanvas().style.removeProperty("cursor");
-          parcellePopup.remove();
-        });
+        };
+
+        const onParcelClick = (e: maplibregl.MapMouseEvent) => {
+          if (!map.current) return;
+          const props = pickParcelAtPoint(map.current, e.point);
+          if (props?.idu && typeof props.idu === "string") {
+            onParcelleClickRef.current?.(props.idu);
+          }
+        };
+
+        map.current.on("mousemove", onParcelMove);
+        map.current.on("mouseleave", onParcelLeave);
+        map.current.on("click", onParcelClick);
+        parcelHandlersBoundRef.current = true;
       }
 
-      // Fit bounds
-      const bounds = new maplibregl.LngLatBounds();
-      geojsonWithScoreRatio.features.forEach((f: GeoJSON.Feature) => {
-        if (f.geometry.type === "Polygon") {
-          f.geometry.coordinates[0].forEach((c: number[]) => bounds.extend(c as [number, number]));
-        } else if (f.geometry.type === "MultiPolygon") {
-          (f.geometry.coordinates as number[][][][]).forEach((ring) =>
-            ring[0].forEach((c) => bounds.extend(c as [number, number]))
-          );
+      // Fit bounds (une seule fois par jeu de données / projet)
+      if (!didInitialFitRef.current) {
+        const bounds = new maplibregl.LngLatBounds();
+        geojsonWithScoreRatio.features.forEach((f: GeoJSON.Feature) => {
+          extendBoundsFromFeature(bounds, f);
+        });
+        if (!bounds.isEmpty()) {
+          map.current.fitBounds(bounds, { padding: 50 });
+          didInitialFitRef.current = true;
         }
-      });
-      if (!bounds.isEmpty()) map.current.fitBounds(bounds, { padding: 50 });
+      }
     };
 
     if (map.current.isStyleLoaded()) apply(); else map.current.once("load", apply);
-  }, [geojsonWithScoreRatio, foncierGeojson, poolMetricsByIdu, scoreColorMode]);
+  }, [geojsonWithScoreRatio, foncierGeojson, scoreColorMode]);
 
   useEffect(() => {
     if (!map.current || !map.current.isStyleLoaded()) return;
@@ -404,6 +508,31 @@ export function ParcellesMap({
       // layers pas encore montées
     }
   }, [scoreColorMode, geojsonWithScoreRatio]);
+
+  // ── Surbrillance parcelle sélectionnée (contour uniquement — fill score conservé) ─
+  useEffect(() => {
+    if (!map.current || !map.current.isStyleLoaded()) return;
+    const filter = focusFilterForIdu(focusIdu);
+    try {
+      if (map.current.getLayer("parcelles-highlight-outline")) {
+        map.current.setFilter("parcelles-highlight-outline", filter);
+      }
+    } catch {
+      /* layers pas encore montées */
+    }
+  }, [focusIdu]);
+
+  useEffect(() => {
+    if (!map.current || !focusIdu || !geojsonWithScoreRatio?.features?.length) return;
+    const feature = geojsonWithScoreRatio.features.find(
+      (f) => String(f.properties?.idu ?? "") === focusIdu,
+    );
+    if (!feature) return;
+    const bounds = new maplibregl.LngLatBounds();
+    extendBoundsFromFeature(bounds, feature);
+    if (bounds.isEmpty()) return;
+    map.current.fitBounds(bounds, { padding: 72, maxZoom: 17, duration: 650 });
+  }, [focusIdu, geojsonWithScoreRatio]);
 
   // ── Fond de carte (satellite/plan) ────────────────────────────────────────
   useEffect(() => {
@@ -425,6 +554,9 @@ export function ParcellesMap({
     try {
       map.current.setLayoutProperty("parcelles-fill", "visibility", vis);
       map.current.setLayoutProperty("parcelles-outline", "visibility", vis);
+      if (map.current.getLayer("parcelles-highlight-outline")) {
+        map.current.setLayoutProperty("parcelles-highlight-outline", "visibility", vis);
+      }
     } catch {
       /* layers pas encore montées */
     }
@@ -488,7 +620,7 @@ export function ParcellesMap({
       const nextVisible = !cur.visible;
       if (nextVisible && cur.loadState === "idle" && projectId && !fetchedRef.current.has(key)) {
         fetchedRef.current.add(key);
-        fetchResultsLayerGeojson(projectId, key)
+        fetchResultsLayerGeojson(projectId, key, poolRunId)
           .then((data) => setThematicState((s) => ({ ...s, [key]: { ...s[key], loadState: "loaded", geojson: data, error: null } })))
           .catch((err) => {
             fetchedRef.current.delete(key);
@@ -498,7 +630,7 @@ export function ParcellesMap({
       }
       return { ...prev, [key]: { ...cur, visible: nextVisible } };
     });
-  }, [projectId]);
+  }, [projectId, poolRunId]);
 
   const toggleDiscriminantValue = useCallback((layerKey: string, value: string) => {
     setThematicState((prev) => {

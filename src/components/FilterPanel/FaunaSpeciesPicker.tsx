@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchFaunaTaxa } from "../../api";
+import "./FaunaSpeciesPicker.css";
 
 interface FaunaSpeciesPickerProps {
   selectedSpecies: string[];
@@ -61,15 +62,18 @@ export function FaunaSpeciesPicker({ selectedSpecies, onChange, disabled = false
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 6 }}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        <label className="create-aoi-label">Filtrage par espèce</label>
+    <div className="fauna-species-picker">
+      <div className="fauna-species-picker__field">
+        <label className="create-aoi-label" htmlFor="fauna-species-search">
+          Filtrage par espèce
+        </label>
 
-        <div style={{ position: "relative" }}>
+        <div className="fauna-species-picker__search-wrap">
           <input
+            id="fauna-species-search"
             type="text"
             className="create-aoi-input"
-            placeholder={loading ? "Chargement des espèces..." : "Rechercher une espèce..."}
+            placeholder={loading ? "Chargement des espèces…" : "Rechercher une espèce…"}
             value={search}
             onChange={(e) => {
               setSearch(e.target.value);
@@ -77,37 +81,18 @@ export function FaunaSpeciesPicker({ selectedSpecies, onChange, disabled = false
             }}
             onFocus={() => setShowSuggestions(true)}
             onBlur={() => {
-              // Petit délai pour laisser le clic sur une suggestion.
               window.setTimeout(() => setShowSuggestions(false), 150);
             }}
             disabled={loading || disabled}
           />
 
           {!disabled && showSuggestions && suggestions.length > 0 && (
-            <div
-              style={{
-                position: "absolute",
-                zIndex: 50,
-                top: "calc(100% + 6px)",
-                left: 0,
-                right: 0,
-                background: "#12151c",
-                border: "1px solid #2a2f3d",
-                borderRadius: 6,
-                padding: 6,
-                maxHeight: 260,
-                overflow: "auto",
-              }}
-            >
+            <div className="fauna-species-picker__suggestions" role="listbox">
               {suggestions.map((s) => (
                 <div
                   key={s}
-                  style={{
-                    padding: "8px 10px",
-                    borderRadius: 5,
-                    cursor: "pointer",
-                    color: "#e5e7eb",
-                  }}
+                  role="option"
+                  className="fauna-species-picker__suggestion"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => addSpecies(s)}
                 >
@@ -122,44 +107,21 @@ export function FaunaSpeciesPicker({ selectedSpecies, onChange, disabled = false
       </div>
 
       {selectedSpecies.length === 0 ? (
-        <p className="block-hint" style={{ margin: 0 }}>
+        <p className="fauna-species-picker__hint">
           Aucun taxon sélectionné : le fetch Faune ne sera pas filtré.
         </p>
       ) : (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        <div className="fauna-species-picker__chips">
           {selectedSpecies.map((s) => (
-            <span
-              key={s}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "5px 10px",
-                borderRadius: 999,
-                background: "rgba(59, 130, 246, 0.12)",
-                border: "1px solid rgba(59, 130, 246, 0.35)",
-                color: "#bfdbfe",
-                fontSize: 12,
-              }}
-            >
-              <span>{s}</span>
+            <span key={s} className="fauna-species-picker__chip">
+              <span className="fauna-species-picker__chip-label">{s}</span>
               <button
                 type="button"
+                className="fauna-species-picker__chip-remove"
                 onClick={() => removeSpecies(s)}
                 disabled={disabled}
-                style={{
-                  width: 20,
-                  height: 20,
-                  borderRadius: 999,
-                  background: "transparent",
-                  border: "1px solid rgba(59, 130, 246, 0.6)",
-                  color: "#bfdbfe",
-                  cursor: disabled ? "not-allowed" : "pointer",
-                  lineHeight: "18px",
-                  padding: 0,
-                  opacity: disabled ? 0.45 : 1,
-                }}
                 title="Retirer"
+                aria-label={`Retirer ${s}`}
               >
                 ×
               </button>
@@ -170,4 +132,3 @@ export function FaunaSpeciesPicker({ selectedSpecies, onChange, disabled = false
     </div>
   );
 }
-

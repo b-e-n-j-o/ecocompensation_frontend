@@ -22,10 +22,6 @@ import {
 const API =
   import.meta.env.VITE_API_URL?.trim() ||
   (import.meta.env.DEV ? "" : "http://localhost:8000");
-const IDECO_API =
-  import.meta.env.VITE_IDECO_API_URL?.trim() ||
-  import.meta.env.VITE_API_URL?.trim() ||
-  (import.meta.env.DEV ? "" : "http://localhost:8000");
 
 export type ProjectSummary = {
   id: string;
@@ -62,20 +58,6 @@ export type LayerInfo = {
   fast: boolean;
 };
 
-export type StudyFromParcelleBody = {
-  insee: string;
-  section: string;
-  numeros: string[];
-  buffer_m: number;
-  nom_couche?: string | null;
-  dry_run?: boolean;
-};
-
-export type StudyFromParcelleResponse = {
-  project_id: string;
-  logs: string[];
-};
-
 export async function fetchProjects(): Promise<ProjectSummary[]> {
   const res = await fetch(`${API}/api/projects`);
   if (!res.ok) throw new Error(await res.text());
@@ -106,18 +88,6 @@ export async function fetchProjectFaunaTaxa(projectId: string): Promise<string[]
   if (!res.ok) throw new Error(await res.text());
   const data = await res.json() as { taxa?: string[] };
   return Array.isArray(data.taxa) ? data.taxa : [];
-}
-
-export async function createStudyFromParcelle(
-  body: StudyFromParcelleBody,
-): Promise<StudyFromParcelleResponse> {
-  const res = await fetch(`${IDECO_API}/api/studies/from-parcelle`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
 }
 
 export type FromParcelleBody = {
@@ -433,6 +403,34 @@ export async function startFetch(
   return res.json();
 }
 
+export type FilterPhaseInfo = { key: string; label: string };
+
+export type FilterPipelineBody = {
+  min_area_ha: number;
+  miller_thresh: number;
+  cesbio_libelles: string[];
+  fauna_criteria: { species: string; dist_m: number }[];
+};
+
+export async function fetchFilterPhases(): Promise<FilterPhaseInfo[]> {
+  const res = await fetch(`${API}/api/filter-phases`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function startFilterPipeline(
+  projectId: string,
+  body: FilterPipelineBody,
+): Promise<{ status: string; project_id: string }> {
+  const res = await fetch(`${API}/api/projects/${projectId}/filter-pipeline`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 export async function deleteProject(projectId: string): Promise<void> {
   const res = await fetch(`${API}/api/projects/${projectId}`, {
     method: "DELETE",
@@ -610,6 +608,31 @@ export async function computePoolRunScoreOnly(projectId: string, runId: string):
   if (!res.ok) throw new Error(await res.text());
 }
 
+export async function fetchUfResults(
+  projectId: string,
+  params?: {
+    fauna_species?: string;
+    cesbio_libelles?: string[];
+    fauna_dist_m?: number;
+    miller_thresh?: number;
+  },
+): Promise<UfFilterResponse> {
+  const q = new URLSearchParams();
+  if (params?.fauna_species) q.set("fauna_species", params.fauna_species);
+  if (params?.fauna_dist_m != null) q.set("fauna_dist_m", String(params.fauna_dist_m));
+  if (params?.miller_thresh != null) q.set("miller_thresh", String(params.miller_thresh));
+  for (const lib of params?.cesbio_libelles ?? []) {
+    q.append("cesbio_libelles", lib);
+  }
+  const qs = q.toString();
+  const url = qs
+    ? `${API}/api/projects/${projectId}/uf-pool?${qs}`
+    : `${API}/api/projects/${projectId}/uf-pool`;
+  const res = await fetch(url);
+  if (!res.ok) await throwHttpError(res);
+  return res.json();
+}
+
 export async function runFilterUF(
   projectId: string,
   options: FilterOptions
@@ -668,18 +691,27 @@ export async function fetchPoolRunSnapshot(
   return res.json();
 }
 
-/** Derniers résultats JSON stockés sur le projet (UF, etc.). */
+/** Derniers résultats JSON stockés sur le projet (parcelles, UF, etc.). */
 export async function fetchProjectStoredResults(projectId: string): Promise<{
+  status: string;
+  last_results: unknown;
+  last_filter: unknown;
   last_results_uf: unknown;
   last_filter_uf: unknown;
 }> {
   const res = await fetch(`${API}/api/projects/${projectId}/results`);
   if (!res.ok) throw new Error(await res.text());
   const data = (await res.json()) as {
+    status?: string;
+    last_results?: unknown;
+    last_filter?: unknown;
     last_results_uf?: unknown;
     last_filter_uf?: unknown;
   };
   return {
+    status: data.status ?? "unknown",
+    last_results: data.last_results ?? null,
+    last_filter: data.last_filter ?? null,
     last_results_uf: data.last_results_uf ?? null,
     last_filter_uf: data.last_filter_uf ?? null,
   };
@@ -786,182 +818,6 @@ export type RapportPdfExportResult = {
   rssDeltaMb: number | null;
 };
 
-export type IdentiteFonciereParcelleInput = {
-  section: string;
-  numero: string;
-  insee: string;
-  commune: string;
-};
-
-export type IdentiteFonciereOptionsInput = {
-  buffer_wfs_m?: number;
-  generer_carte_plu?: boolean;
-  dpi_carte?: number;
-  layers?: string[];
-};
-
-export type IdentiteFonciereRequest = {
-  parcelles: IdentiteFonciereParcelleInput[];
-  options?: IdentiteFonciereOptionsInput;
-};
-
-export type UrbanDocFile = {
-  name: string;
-  url: string;
-  score_reglement: number;
-};
-
-export type UrbanDocsResponse = {
-  insee: string;
-  commune: string;
-  idurba: string;
-  gpu_doc_id: string;
-  typedoc: string;
-  files: UrbanDocFile[];
-  reglement_name?: string | null;
-  reglement_url?: string | null;
-  reglement_qualite_verdict?: string | null;
-  reglement_qualite_utilisable?: boolean | null;
-  reglement_qualite_detail?: string | null;
-  reglement_qualite_tokens_estimes?: number | null;
-};
-
-export type CommuneEnBaseItem = {
-  code_insee: string;
-  code_dep: string;
-  nom_commune?: string | null;
-  nb_parcelles: number;
-};
-
-export type CadastreCommuneMeta = {
-  code_insee: string;
-  nb_parcelles: number;
-  threshold: number;
-  mode: "geojson" | "mvt";
-  bbox_wgs84: [number, number, number, number] | null;
-};
-
-function parseFilenameFromContentDisposition(header: string | null): string {
-  if (!header) return "identite_fonciere.pdf";
-  const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
-  if (utf8Match?.[1]) return decodeURIComponent(utf8Match[1]);
-  const asciiMatch = header.match(/filename="?([^"]+)"?/i);
-  if (asciiMatch?.[1]) return asciiMatch[1];
-  return "identite_fonciere.pdf";
-}
-
-export async function generateIdentiteFoncierePdf(
-  body: IdentiteFonciereRequest,
-): Promise<{ blob: Blob; filename: string }> {
-  const path = "/api/identite-fonciere/rapport";
-  const url = apiUrlForFetch(path);
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const raw = await res.text();
-    try {
-      const parsed = JSON.parse(raw) as { detail?: unknown };
-      const detail =
-        typeof parsed.detail === "string"
-          ? parsed.detail
-          : JSON.stringify(parsed.detail ?? parsed);
-      throw new Error(detail || "Erreur lors de la génération du rapport Identité Foncière");
-    } catch {
-      throw new Error(raw || "Erreur lors de la génération du rapport Identité Foncière");
-    }
-  }
-
-  const blob = await res.blob();
-  const filename = parseFilenameFromContentDisposition(
-    res.headers.get("Content-Disposition"),
-  );
-  return { blob, filename };
-}
-
-export async function fetchUrbanDocumentsForInsee(
-  insee: string,
-): Promise<UrbanDocsResponse> {
-  const path = `/api/identite-fonciere/urban-documents/${encodeURIComponent(insee.trim())}`;
-  const url = apiUrlForFetch(path);
-  const res = await fetch(url, { method: "GET" });
-  if (!res.ok) {
-    const raw = await res.text();
-    try {
-      const parsed = JSON.parse(raw) as { detail?: unknown };
-      const detail =
-        typeof parsed.detail === "string"
-          ? parsed.detail
-          : JSON.stringify(parsed.detail ?? parsed);
-      throw new Error(detail || "Erreur lors du chargement des documents d'urbanisme");
-    } catch {
-      throw new Error(raw || "Erreur lors du chargement des documents d'urbanisme");
-    }
-  }
-  return res.json();
-}
-
-export async function fetchCommunesEnBase(
-  q?: string,
-  limit = 2000,
-): Promise<CommuneEnBaseItem[]> {
-  const qs = new URLSearchParams();
-  if (q?.trim()) qs.set("q", q.trim());
-  qs.set("limit", String(limit));
-  const path = `/api/identite-fonciere/communes-en-base${qs.toString() ? `?${qs.toString()}` : ""}`;
-  const url = apiUrlForFetch(path);
-  const res = await fetch(url, { method: "GET" });
-  if (!res.ok) {
-    const raw = await res.text();
-    try {
-      const parsed = JSON.parse(raw) as { detail?: unknown };
-      const detail =
-        typeof parsed.detail === "string"
-          ? parsed.detail
-          : JSON.stringify(parsed.detail ?? parsed);
-      throw new Error(detail || "Erreur lors du chargement des communes en base");
-    } catch {
-      throw new Error(raw || "Erreur lors du chargement des communes en base");
-    }
-  }
-  return res.json();
-}
-
-export async function fetchCadastreCommuneMeta(
-  insee: string,
-): Promise<CadastreCommuneMeta> {
-  const qs = new URLSearchParams({ insee: insee.trim() });
-  const path = `/api/cadastre/commune-meta?${qs.toString()}`;
-  const url = apiUrlForFetch(path);
-  const res = await fetch(url, { method: "GET" });
-  if (!res.ok) {
-    const raw = await res.text();
-    throw new Error(raw || "Erreur lors du chargement des métadonnées cadastre");
-  }
-  return res.json();
-}
-
-export async function fetchCadastreCommuneGeojson(
-  insee: string,
-  limit = 5000,
-): Promise<FeatureCollection<Geometry, GeoJsonProperties>> {
-  const qs = new URLSearchParams({
-    insee: insee.trim(),
-    limit: String(limit),
-  });
-  const path = `/api/cadastre/commune?${qs.toString()}`;
-  const url = apiUrlForFetch(path);
-  const res = await fetch(url, { method: "GET" });
-  if (!res.ok) {
-    const raw = await res.text();
-    throw new Error(raw || "Erreur lors du chargement du cadastre communal");
-  }
-  return res.json();
-}
-
 /**
  * Rapport PDF — même jeu de données que CSV/SHP parcelles (run optionnel).
  * En **même origine** (dev via proxy Vite) : lien `<a download>` pour éviter
@@ -1018,8 +874,14 @@ export async function exportRapportPdf(
 export async function fetchResultsLayerGeojson(
   projectId: string,
   layerKey: string,
+  poolRunId?: string | null,
 ): Promise<FeatureCollection<Geometry, GeoJsonProperties>> {
-  const res = await fetch(`${API}/api/projects/${projectId}/geojson/results/${layerKey}`);
+  const q = new URLSearchParams();
+  if (poolRunId) q.set("run_id", poolRunId);
+  const qs = q.toString();
+  const res = await fetch(
+    `${API}/api/projects/${projectId}/geojson/results/${layerKey}${qs ? `?${qs}` : ""}`,
+  );
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -1030,12 +892,13 @@ export async function fetchResultsLayerGeojson(
  */
 export async function prefetchAllResultsThematicLayers(
   projectId: string,
+  poolRunId?: string | null,
 ): Promise<ResultsThematicPreload> {
   const out: ResultsThematicPreload = {};
   await Promise.all(
     RESULTS_LAYERS.map(async (def) => {
       try {
-        const data = await fetchResultsLayerGeojson(projectId, def.key);
+        const data = await fetchResultsLayerGeojson(projectId, def.key, poolRunId);
         out[def.key] = { geojson: data, error: null };
       } catch (e) {
         out[def.key] = {

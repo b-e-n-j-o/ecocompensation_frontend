@@ -1,5 +1,273 @@
 import type { ParcelPoolMetricRow, VegetationHybrideValue } from "../types";
 
+export type FilterEnrichPayload = {
+  veg_libelles?: string[];
+  fauna_distances?: Record<string, number>;
+};
+
+/** Métrique légère filter_v2 (zonage CESBIO + distances faune KNN). */
+export function getFilterEnrich(
+  metrics: ParcelPoolMetricRow[] | undefined,
+): FilterEnrichPayload | null {
+  const row = metrics?.find((m) => m.metric_key === "filter_enrich");
+  const payload = row?.metric_value_jsonb;
+  if (!payload || typeof payload !== "object") return null;
+  return payload as FilterEnrichPayload;
+}
+
+export function getFilterEnrichCesbioLabel(
+  metrics: ParcelPoolMetricRow[] | undefined,
+): string | null {
+  const veg = getFilterEnrich(metrics)?.veg_libelles;
+  if (!Array.isArray(veg) || veg.length === 0) return null;
+  const labels = veg.map((v) => String(v).trim()).filter(Boolean);
+  return labels.length ? labels.join(", ") : null;
+}
+
+export type FilterEnrichFaunaCell = {
+  espece: string | null;
+  distanceM: number | null;
+  /** Détail multi-espèces pour l’attribut title. */
+  detail: string | null;
+};
+
+/** Espèce + distance depuis filter_enrich.fauna_distances (filter_v2). */
+export function getFilterEnrichFaunaCell(
+  metrics: ParcelPoolMetricRow[] | undefined,
+): FilterEnrichFaunaCell {
+  const fd = getFilterEnrich(metrics)?.fauna_distances;
+  if (!fd || typeof fd !== "object") {
+    return { espece: null, distanceM: null, detail: null };
+  }
+
+  const parsed = Object.entries(fd)
+    .map(([species, distRaw]) => {
+      const dist = typeof distRaw === "number" ? distRaw : Number(distRaw);
+      return { species: species.trim(), dist };
+    })
+    .filter((e) => e.species);
+
+  if (!parsed.length) {
+    return { espece: null, distanceM: null, detail: null };
+  }
+
+  const valid = parsed.filter((e) => Number.isFinite(e.dist) && e.dist >= 0);
+  const detail = parsed
+    .map(({ species, dist }) =>
+      Number.isFinite(dist) && dist >= 0
+        ? `${species} : ${Math.round(dist).toLocaleString("fr-FR")} m`
+        : `${species} : —`,
+    )
+    .join(" · ");
+
+  if (!valid.length) {
+    return {
+      espece: parsed.length === 1 ? parsed[0].species : null,
+      distanceM: null,
+      detail,
+    };
+  }
+
+  const best = [...valid].sort((a, b) => a.dist - b.dist)[0];
+  return {
+    espece: best.species,
+    distanceM: best.dist,
+    detail: parsed.length > 1 ? detail : null,
+  };
+}
+
+export type FaunaTableEntry = {
+  species: string;
+  distanceM: number;
+};
+
+/** Liste espèce + distance (filter_v2 ou legacy) pour affichage tableau empilé. */
+export function getFaunaTableEntries(
+  metrics: ParcelPoolMetricRow[] | undefined,
+): FaunaTableEntry[] {
+  const fd = getFilterEnrich(metrics)?.fauna_distances;
+  if (fd && typeof fd === "object") {
+    const entries = Object.entries(fd)
+      .map(([species, distRaw]) => {
+        const dist = typeof distRaw === "number" ? distRaw : Number(distRaw);
+        return { species: species.trim(), distanceM: dist };
+      })
+      .filter((e) => e.species && Number.isFinite(e.distanceM) && e.distanceM >= 0)
+      .sort((a, b) => a.distanceM - b.distanceM || a.species.localeCompare(b.species, "fr"));
+    if (entries.length) return entries;
+  }
+
+  const row = metrics?.find((m) => m.metric_key === "especes_faune");
+  const payload = row?.metric_value_jsonb;
+  if (!payload || typeof payload !== "object") return [];
+
+  const rec = payload as Record<string, unknown>;
+  const intersects = rec.intersects_any === true;
+  const distRaw = rec.nearest_observation_distance_m;
+  const distanceM =
+    intersects
+      ? 0
+      : typeof distRaw === "number" && Number.isFinite(distRaw) && distRaw >= 0
+        ? distRaw
+        : null;
+
+  const interRaw = rec.intersections_by_species;
+  if (intersects && interRaw && typeof interRaw === "object") {
+    const fromInter = Object.entries(interRaw as Record<string, unknown>)
+      .map(([label, cnt]) => ({
+        species: String(label ?? "").trim(),
+        count: typeof cnt === "number" && Number.isFinite(cnt) ? cnt : 0,
+      }))
+      .filter((e) => e.species && e.count > 0)
+      .sort((a, b) => (b.count === a.count ? a.species.localeCompare(b.species, "fr") : b.count - a.count))
+      .map((e) => ({ species: e.species, distanceM: 0 }));
+    if (fromInter.length) return fromInter;
+  }
+
+  const nearestRaw = rec.nearest_species;
+  const nearest = typeof nearestRaw === "string" && nearestRaw.trim() ? nearestRaw.trim() : null;
+  if (nearest && distanceM != null) {
+    return [{ species: nearest, distanceM }];
+  }
+  return [];
+}
+
+export type PersonnesMoralesMetric = {
+  intersects_pm_database: boolean;
+  compensation_deja_realisee: boolean;
+  parcelle_deja_en_mc: boolean | null;
+  nb_mc_distinctes: number | null;
+  nb_parcelles_deja_en_mc: number | null;
+  surface_deja_en_mc_m2: number | null;
+};
+
+function parseOptionalMetricInt(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return Math.trunc(v);
+  return null;
+}
+
+/** Métrique `parcelles_personnes_morales` pour tri / affichage tableau. */
+export function getPersonnesMoralesMetric(
+  metrics: ParcelPoolMetricRow[] | undefined,
+): PersonnesMoralesMetric | null {
+  const row = metrics?.find((m) => m.metric_key === "parcelles_personnes_morales");
+  const v = row?.metric_value_jsonb;
+  if (!v || typeof v !== "object") return null;
+  const rec = v as Record<string, unknown>;
+  return {
+    intersects_pm_database: rec.intersects_pm_database === true,
+    compensation_deja_realisee: rec.compensation_deja_realisee === true,
+    parcelle_deja_en_mc: typeof rec.parcelle_deja_en_mc === "boolean" ? rec.parcelle_deja_en_mc : null,
+    nb_mc_distinctes: parseOptionalMetricInt(rec.nb_mc_distinctes),
+    nb_parcelles_deja_en_mc: parseOptionalMetricInt(rec.nb_parcelles_deja_en_mc),
+    surface_deja_en_mc_m2:
+      typeof rec.surface_deja_en_mc_m2 === "number" && Number.isFinite(rec.surface_deja_en_mc_m2)
+        ? rec.surface_deja_en_mc_m2
+        : null,
+  };
+}
+
+function boolDesc(a: boolean, b: boolean): number {
+  return Number(b) - Number(a);
+}
+
+function numDesc(a: number | null | undefined, b: number | null | undefined): number {
+  const va = a == null ? Number.NEGATIVE_INFINITY : a;
+  const vb = b == null ? Number.NEGATIVE_INFINITY : b;
+  return vb - va;
+}
+
+/** Personne morale (oui) en tête ; compensation en second critère. */
+export function compareByPmPersonneMorale(
+  iduA: string,
+  iduB: string,
+  poolMetricsByIdu: Record<string, ParcelPoolMetricRow[]> | null | undefined,
+  rankA: number,
+  rankB: number,
+): number {
+  const ma = getPersonnesMoralesMetric(poolMetricsByIdu?.[iduA]);
+  const mb = getPersonnesMoralesMetric(poolMetricsByIdu?.[iduB]);
+  const pmDiff = boolDesc(
+    ma?.intersects_pm_database ?? false,
+    mb?.intersects_pm_database ?? false,
+  );
+  if (pmDiff !== 0) return pmDiff;
+  const compDiff = boolDesc(
+    ma?.compensation_deja_realisee ?? false,
+    mb?.compensation_deja_realisee ?? false,
+  );
+  if (compDiff !== 0) return compDiff;
+  return rankA - rankB;
+}
+
+/** Propriétaire ayant déjà compensé (oui) en tête. */
+export function compareByPmCompensation(
+  iduA: string,
+  iduB: string,
+  poolMetricsByIdu: Record<string, ParcelPoolMetricRow[]> | null | undefined,
+  rankA: number,
+  rankB: number,
+): number {
+  const ma = getPersonnesMoralesMetric(poolMetricsByIdu?.[iduA]);
+  const mb = getPersonnesMoralesMetric(poolMetricsByIdu?.[iduB]);
+  const compDiff = boolDesc(
+    ma?.compensation_deja_realisee ?? false,
+    mb?.compensation_deja_realisee ?? false,
+  );
+  if (compDiff !== 0) return compDiff;
+  const pmDiff = boolDesc(
+    ma?.intersects_pm_database ?? false,
+    mb?.intersects_pm_database ?? false,
+  );
+  if (pmDiff !== 0) return pmDiff;
+  return rankA - rankB;
+}
+
+/**
+ * Tri prospect détaillé : compensation → parcelle déjà en MC → nb MC → surface MC → PM → rang.
+ */
+export function compareByPmProspectDetail(
+  iduA: string,
+  iduB: string,
+  poolMetricsByIdu: Record<string, ParcelPoolMetricRow[]> | null | undefined,
+  rankA: number,
+  rankB: number,
+): number {
+  const ma = getPersonnesMoralesMetric(poolMetricsByIdu?.[iduA]);
+  const mb = getPersonnesMoralesMetric(poolMetricsByIdu?.[iduB]);
+
+  const steps: number[] = [
+    boolDesc(ma?.compensation_deja_realisee ?? false, mb?.compensation_deja_realisee ?? false),
+    boolDesc(ma?.parcelle_deja_en_mc ?? false, mb?.parcelle_deja_en_mc ?? false),
+    numDesc(ma?.nb_mc_distinctes, mb?.nb_mc_distinctes),
+    numDesc(ma?.nb_parcelles_deja_en_mc, mb?.nb_parcelles_deja_en_mc),
+    numDesc(ma?.surface_deja_en_mc_m2, mb?.surface_deja_en_mc_m2),
+    boolDesc(ma?.intersects_pm_database ?? false, mb?.intersects_pm_database ?? false),
+  ];
+  for (const d of steps) {
+    if (d !== 0) return d;
+  }
+  return rankA - rankB;
+}
+
+export function normalizePoolMetricsByIdu(
+  byIdu: Record<string, ParcelPoolMetricRow[]> | undefined | null,
+): Record<string, ParcelPoolMetricRow[]> {
+  const out: Record<string, ParcelPoolMetricRow[]> = {};
+  if (!byIdu) return out;
+  for (const [idu, rows] of Object.entries(byIdu)) {
+    out[idu] = (rows ?? []).map((row) => ({
+      metric_key: String(row.metric_key),
+      metric_value_jsonb:
+        typeof row.metric_value_jsonb === "object" && row.metric_value_jsonb !== null
+          ? (row.metric_value_jsonb as Record<string, unknown>)
+          : {},
+      updated_at: row.updated_at ?? null,
+    }));
+  }
+  return out;
+}
+
 /** Plus grande part relative dans le zonage hybride (0–1), pour tri. */
 export function getDominantVegetationRatio(metrics: ParcelPoolMetricRow[] | undefined): number {
   if (!metrics?.length) return 0;

@@ -4,9 +4,8 @@
  * Registry partagé des couches thématiques de résultats.
  * Importé par ParcellesMap.tsx et SousEnsemblesMap.tsx.
  *
- * Pour ajouter une couche :
- *   1) Ajouter une entrée dans RESULTS_LAYERS ici
- *   2) Ajouter dans LAYER_TABLE_MAP + LAYER_PROPERTIES côté backend (results_geojson_router.py)
+ * Couches filter_v2 (nationales, clippées AOI) : cesbio, fauna, fauna_buffer
+ * → backend/map_layers.py + GET /geojson/results/{key}?run_id=…
  */
 
 import type { FeatureCollection, Geometry, GeoJsonProperties } from "geojson";
@@ -57,8 +56,23 @@ export interface ResultsLayerDef {
   
   export const RESULTS_LAYERS: ResultsLayerDef[] = [
     {
+      key: "cesbio",
+      label: "Végétation CESBIO (emprise AOI)",
+      fillColor: "#86efac",
+      lineColor: "#15803d",
+      fillOpacity: 0.22,
+      lineWidth: 1.5,
+      discriminantField: "libelle_prio",
+      popupFields: [
+        { field: "libelle_prio", label: "Libellé prioritaire" },
+        { field: "libelle", label: "Libellé" },
+        { field: "nature", label: "Nature" },
+        { field: "source", label: "Source" },
+      ],
+    },
+    {
       key: "fauna",
-      label: "Observations faune",
+      label: "Observations faune (filtre)",
       fillColor: "#f97316",
       lineColor: "#c2410c",
       fillOpacity: 0.15,
@@ -76,50 +90,19 @@ export interface ResultsLayerDef {
       ],
     },
     {
-      key: "vegetation_hybride",
-      label: "Végétation hybride (BD TOPO + CESBIO)",
-      fillColor: "#86efac",
-      lineColor: "#15803d",
-      fillOpacity: 0.2,
-      lineWidth: 1.5,
-      discriminantField: "libelle_prio",
+      key: "fauna_buffer",
+      label: "Buffers faune (filtre)",
+      fillColor: "#f472b6",
+      lineColor: "#db2777",
+      fillOpacity: 0.08,
+      lineWidth: 1,
+      discriminantField: "nom_vernaculaire",
       popupFields: [
-        { field: "libelle_prio", label: "Libellé" },
-        { field: "source", label: "Source" },
+        { field: "nom_vernaculaire", label: "Espèce" },
+        { field: "buffer_m", label: "Buffer (m)" },
+        { field: "id_obs", label: "ID observation" },
       ],
     },
-    {
-      key: "zone_humide",
-      label: "Zones humides",
-      fillColor: "#38bdf8",
-      lineColor: "#0369a1",
-      fillOpacity: 0.25,
-      lineWidth: 1.5,
-      discriminantField: "source",
-      popupFields: [
-        { field: "source", label: "Source" },
-        { field: "libelle", label: "Libellé" },
-        { field: "inv_nom", label: "Inventaire" },
-      ],
-    },
-    {
-      key: "ebc",
-      label: "Espaces boisés classés",
-      fillColor: "#22c55e",
-      lineColor: "#166534",
-      fillOpacity: 0.15,
-      lineWidth: 1.5,
-      discriminantField: "libelle",
-      popupFields: [{ field: "libelle", label: "Libellé" }],
-    },
-    // Décommenter quand backend prêt :
-    // {
-    //   key: "troncons_hydro",
-    //   label: "Tronçons hydrologiques",
-    //   fillColor: "#60a5fa", lineColor: "#1d4ed8",
-    //   fillOpacity: 0.2, lineWidth: 2,
-    //   popupFields: [{ field: "nature", label: "Nature" }],
-    // },
   ];
   
   /** Construit l'état initial des couches thématiques */

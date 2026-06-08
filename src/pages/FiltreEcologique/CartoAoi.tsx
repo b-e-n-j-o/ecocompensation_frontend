@@ -97,8 +97,8 @@ export function CartoAoi({ className, parcelFeature, bufferKm = 0 }: CartoAoiPro
         type: "fill",
         source: "aoi-buffer-source",
         paint: {
-          "fill-color": "#3b82f6",
-          "fill-opacity": 0.2,
+          "fill-color": "#85e372",
+          "fill-opacity": 0.22,
         },
       });
       map.addLayer({
@@ -106,9 +106,10 @@ export function CartoAoi({ className, parcelFeature, bufferKm = 0 }: CartoAoiPro
         type: "line",
         source: "aoi-buffer-source",
         paint: {
-          "line-color": "#60a5fa",
+          "line-color": "#289f01",
           "line-width": 2,
-          "line-opacity": 0.9,
+          "line-dasharray": [2, 1.5],
+          "line-opacity": 0.85,
         },
       });
       map.addLayer({
@@ -116,8 +117,8 @@ export function CartoAoi({ className, parcelFeature, bufferKm = 0 }: CartoAoiPro
         type: "fill",
         source: "parcel-source",
         paint: {
-          "fill-color": "#22c55e",
-          "fill-opacity": 0.3,
+          "fill-color": "#289f01",
+          "fill-opacity": 0.42,
         },
       });
       map.addLayer({
@@ -125,8 +126,8 @@ export function CartoAoi({ className, parcelFeature, bufferKm = 0 }: CartoAoiPro
         type: "line",
         source: "parcel-source",
         paint: {
-          "line-color": "#16a34a",
-          "line-width": 2.2,
+          "line-color": "#1a7a01",
+          "line-width": 2.5,
         },
       });
     });
@@ -142,45 +143,43 @@ export function CartoAoi({ className, parcelFeature, bufferKm = 0 }: CartoAoiPro
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
-    const source = map.getSource("parcel-source") as maplibregl.GeoJSONSource | undefined;
-    if (!source) return;
+    const parcelSource = map.getSource("parcel-source") as maplibregl.GeoJSONSource | undefined;
+    const bufferSource = map.getSource("aoi-buffer-source") as maplibregl.GeoJSONSource | undefined;
+    if (!parcelSource || !bufferSource) return;
 
     if (!parcelFeature) {
-      source.setData(emptyFeatureCollection());
+      parcelSource.setData(emptyFeatureCollection());
+      bufferSource.setData(emptyFeatureCollection());
       return;
     }
 
-    source.setData({
+    parcelSource.setData({
       type: "FeatureCollection",
       features: [parcelFeature],
     });
 
+    let bufferedFeature: Feature<Polygon | MultiPolygon> | null = null;
+    if (bufferKm > 0) {
+      bufferedFeature = buffer(
+        parcelFeature as Feature<Polygon | MultiPolygon, GeoJsonProperties>,
+        bufferKm,
+        { units: "kilometers" },
+      ) as Feature<Polygon | MultiPolygon> | null;
+    }
+
+    bufferSource.setData({
+      type: "FeatureCollection",
+      features: bufferedFeature ? [bufferedFeature] : [],
+    });
+
     const bounds = new maplibregl.LngLatBounds();
     extendBoundsFromCoords(bounds, parcelFeature.geometry.coordinates);
+    if (bufferedFeature?.geometry) {
+      extendBoundsFromCoords(bounds, bufferedFeature.geometry.coordinates);
+    }
     if (!bounds.isEmpty()) {
-      map.fitBounds(bounds, { padding: 50, duration: 700, maxZoom: 17 });
+      map.fitBounds(bounds, { padding: 56, duration: 700, maxZoom: 14 });
     }
-  }, [parcelFeature]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) return;
-    const source = map.getSource("aoi-buffer-source") as maplibregl.GeoJSONSource | undefined;
-    if (!source) return;
-
-    if (!parcelFeature || bufferKm <= 0) {
-      source.setData(emptyFeatureCollection());
-      return;
-    }
-
-    const buffered = buffer(parcelFeature as Feature<Polygon | MultiPolygon, GeoJsonProperties>, bufferKm, {
-      units: "kilometers",
-    });
-
-    source.setData({
-      type: "FeatureCollection",
-      features: buffered ? [buffered] : [],
-    });
   }, [parcelFeature, bufferKm]);
 
   return (

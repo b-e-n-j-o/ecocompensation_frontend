@@ -5,31 +5,32 @@
   position: relative;
 }
 
-/* Contraste des contrôles MapLibre sur fond sombre / image */
+/* Contrôles MapLibre lisibles sur fond satellite */
 .carto-aoi .maplibregl-ctrl-group {
-  background: rgba(26, 29, 36, 0.92);
-  border: 1px solid #2a2f3d;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid #e8e8e8;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
 }
 
 .carto-aoi .maplibregl-ctrl button {
-  color: #e5e7eb;
+  color: #111111;
 }
 
 .carto-aoi .maplibregl-ctrl button:hover {
-  background: #2a2f3d;
+  background: rgba(133, 227, 114, 0.2);
 }
 
 .carto-aoi .maplibregl-ctrl-scale {
-  color: #e5e7eb;
-  text-shadow: 0 0 2px #000;
+  color: #111111;
+  text-shadow: 0 0 3px #fff, 0 0 6px #fff;
 }
 
 .carto-aoi .maplibregl-ctrl-attrib {
-  background: rgba(15, 17, 22, 0.85);
-  color: #9ca3af;
+  background: rgba(255, 255, 255, 0.88);
+  color: #4b4b4b;
   font-size: 10px;
 }
 
 .carto-aoi .maplibregl-ctrl-attrib a {
-  color: #93c5fd;
+  color: #289f01;
 }

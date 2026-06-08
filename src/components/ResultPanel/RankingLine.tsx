@@ -1,58 +1,13 @@
-// ─── RankingLine — détail métriques pool (extensible) ─────────────────────────
-import type { ParcelPoolMetricRow, VegetationHybridePoolMetricPayload } from "../../types";
+// ─── RankingLine — détail enrichissement filter_v2 ────────────────────────────
+import type { ParcelPoolMetricRow } from "../../types";
+import type { FilterEnrichPayload } from "../../utils/poolMetrics";
 
-const METRIC_LABELS: Record<string, string> = {
-  score_eco: "Score écologique",
-  composite_score_v1: "Score composite",
-  durete_fonciere: "Dureté foncière (personne morale)",
-  especes_faune: "Espèces faune",
-  vegetation_hybride_ratio: "Zonage hybride (BD TOPO / CESBIO)",
-  cosia_zonage_ratio: "Zonage COSIA (IGN)",
-  carhab_eunis_ratio: "Zonage CARHAB (EUNIS)",
-  arrachage_vignes_ratio: "Arrachage de vignes",
-  zone_humide: "Zones humides",
-};
-
-/** Ordre d’affichage des blocs métriques dans le détail de ligne. */
-const METRIC_DISPLAY_ORDER = [
+/** Métriques affichées dans le détail de ligne (filter_v2). */
+const VISIBLE_METRIC_KEYS = new Set([
+  "filter_enrich",
   "score_eco",
-  "composite_score_v1",
-  "durete_fonciere",
-  "especes_faune",
-  "vegetation_hybride_ratio",
-  "cosia_zonage_ratio",
-  "carhab_eunis_ratio",
-  "arrachage_vignes_ratio",
-] as const;
-
-function sortMetricsForDisplay(metrics: ParcelPoolMetricRow[]): ParcelPoolMetricRow[] {
-  const priority = (key: string) => {
-    const i = (METRIC_DISPLAY_ORDER as readonly string[]).indexOf(key);
-    return i === -1 ? 999 : i;
-  };
-  return [...metrics].sort((a, b) => {
-    const d = priority(a.metric_key) - priority(b.metric_key);
-    if (d !== 0) return d;
-    return a.metric_key.localeCompare(b.metric_key);
-  });
-}
-
-/** Parts de zonage affichées seulement si ≥ 1 % de l’intersection couche / parcelle. */
-const MIN_ZONAGE_DISPLAY_RATIO = 0.01;
-
-function parseVegetationPayload(v: Record<string, unknown>): VegetationHybridePoolMetricPayload | null {
-  const raw = v.ratios;
-  if (raw == null || typeof raw !== "object") return null;
-  const ratios: Record<string, number> = {};
-  for (const [k, val] of Object.entries(raw)) {
-    if (typeof val === "number" && Number.isFinite(val)) ratios[k] = val;
-  }
-  const t = v.total_intersection_area_m2;
-  return {
-    ratios,
-    total_intersection_area_m2: typeof t === "number" && Number.isFinite(t) ? t : 0,
-  };
-}
+  "parcelles_personnes_morales",
+]);
 
 /** Couleur stable par libellé : même chaîne → même teinte sur toutes les lignes du tableau. */
 function colorForZonageLabel(label: string): { fill: string; border: string } {
@@ -68,198 +23,101 @@ function colorForZonageLabel(label: string): { fill: string; border: string } {
   };
 }
 
-/** COSIA / hybride : barre empilée (parts exclusives ~100 %). CARHAB : barres indépendantes (recouvrements possibles). */
-type ZonageDisplayVariant = "stacked" | "carhab_independent";
-
-function ZonageRatiosBlock({
-  payload,
-  emptyMessage = "Aucune intersection mesurée avec la couche hybride.",
-  totalLineLabel = "Intersection couche / parcelle :",
-  variant = "stacked",
-}: {
-  payload: VegetationHybridePoolMetricPayload;
-  emptyMessage?: string;
-  totalLineLabel?: string;
-  variant?: ZonageDisplayVariant;
-}) {
-  const rawPositive = Object.entries(payload.ratios).filter(
-    ([, r]) => typeof r === "number" && r > 0,
-  );
-  const entries = rawPositive
-    .filter(([, r]) => typeof r === "number" && r >= MIN_ZONAGE_DISPLAY_RATIO)
-    .sort((a, b) => b[1] - a[1]);
-  const totalM2 = payload.total_intersection_area_m2;
-
-  if (!entries.length) {
-    if (rawPositive.length > 0) {
-      return (
-        <p className="ranking-line-empty">
-          Aucune classe ne représente au moins 1 % de l’intersection (toutes les parts affichées seraient
-          négligeables).
-        </p>
-      );
+export function parseFilterEnrichPayload(v: Record<string, unknown>): FilterEnrichPayload | null {
+  const veg = v.veg_libelles;
+  const fauna = v.fauna_distances;
+  const veg_libelles = Array.isArray(veg)
+    ? veg.map((x) => String(x).trim()).filter(Boolean)
+    : [];
+  const fauna_distances: Record<string, number> = {};
+  if (fauna && typeof fauna === "object") {
+    for (const [k, val] of Object.entries(fauna)) {
+      const n = typeof val === "number" ? val : Number(val);
+      if (k.trim() && Number.isFinite(n) && n >= 0) fauna_distances[k.trim()] = n;
     }
-    return <p className="ranking-line-empty">{emptyMessage}</p>;
   }
+  if (!veg_libelles.length && !Object.keys(fauna_distances).length) return null;
+  return { veg_libelles, fauna_distances };
+}
 
-  const ariaLabel = entries
-    .map(([label, r]) => `${label} ${(r * 100).toFixed(1)} pour cent`)
-    .join(", ");
+function faunaDistanceTone(distM: number): { bg: string; border: string; label: string } {
+  if (distM <= 0) return { bg: "rgba(22,163,74,0.16)", border: "#16a34a", label: "Intersection" };
+  if (distM <= 500) return { bg: "rgba(22,163,74,0.12)", border: "#22c55e", label: "Très proche" };
+  if (distM <= 1000) return { bg: "rgba(245,158,11,0.14)", border: "#f59e0b", label: "Proche" };
+  return { bg: "rgba(107,114,128,0.12)", border: "#9ca3af", label: "Éloignée" };
+}
 
-  if (variant === "carhab_independent") {
-    return (
-      <div className="ranking-metric-vegetation ranking-metric-vegetation--carhab">
-        <div className="veg-zonage-head">
-          {typeof totalM2 === "number" && Number.isFinite(totalM2) && totalM2 > 0 && (
-            <span className="veg-zonage-total">
-              {totalLineLabel}{" "}
-              <span className="mono">{totalM2.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} m²</span>
-            </span>
-          )}
-        </div>
-
-        <div className="veg-carhab-histo" role="list" aria-label={`Couverture CARHAB par classe : ${ariaLabel}`}>
-          {entries.map(([label, ratio]) => {
-            const { fill, border } = colorForZonageLabel(label);
-            const pctRaw = ratio * 100;
-            const pctDisplay = pctRaw >= 10 ? pctRaw.toFixed(0) : pctRaw.toFixed(1);
-            const barPct = Math.max(0, Math.min(100, pctRaw));
-            const areaM2 =
-              typeof totalM2 === "number" && Number.isFinite(totalM2) && totalM2 > 0
-                ? ratio * totalM2
-                : null;
-            const tip =
-              areaM2 != null
-                ? `${label} — ${pctDisplay} % de la parcelle (${areaM2.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} m²)`
-                : `${label} — ${pctDisplay} % de la parcelle`;
-            return (
-              <div key={label} className="veg-carhab-row" role="listitem">
-                <span className="veg-carhab-label" title={label}>
-                  {label}
-                </span>
-                <div className="veg-carhab-track-wrap">
-                  <div className="veg-carhab-track" title={tip}>
-                    <div
-                      className="veg-carhab-fill"
-                      style={{
-                        width: `${barPct}%`,
-                        background: fill,
-                        boxShadow: `inset 0 0 0 1px ${border}`,
-                      }}
-                    />
-                  </div>
-                </div>
-                <span className="veg-carhab-stats mono">
-                  <span className="veg-carhab-pct">{pctDisplay} %</span>
-                  {areaM2 != null && (
-                    <>
-                      <span className="veg-legend-sep" aria-hidden>
-                        {" "}
-                        ·{" "}
-                      </span>
-                      <span className="veg-carhab-m2">
-                        {areaM2.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} m²
-                      </span>
-                    </>
-                  )}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  }
+export function FilterEnrichBlock({ payload }: { payload: FilterEnrichPayload }) {
+  const vegLabels = payload.veg_libelles ?? [];
+  const faunaEntries = Object.entries(payload.fauna_distances ?? {}).sort((a, b) => a[1] - b[1]);
+  const maxFaunaDist = faunaEntries.length ? Math.max(...faunaEntries.map(([, d]) => d), 1) : 1;
 
   return (
-    <div className="ranking-metric-vegetation">
-      <div className="veg-zonage-head">
-        {typeof totalM2 === "number" && Number.isFinite(totalM2) && totalM2 > 0 && (
-          <span className="veg-zonage-total">
-            {totalLineLabel}{" "}
-            <span className="mono">{totalM2.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} m²</span>
+    <div className="filter-enrich-block">
+      <div className="filter-enrich-section">
+        <div className="filter-enrich-section-head">
+          <span className="filter-enrich-section-title">Végétation CESBIO</span>
+          <span className="filter-enrich-section-count mono">
+            {vegLabels.length ? `${vegLabels.length} libellé(s)` : "—"}
           </span>
+        </div>
+        {vegLabels.length ? (
+          <ul className="filter-enrich-cesbio-list" aria-label="Libellés CESBIO intersectant la parcelle">
+            {vegLabels.map((label) => {
+              const { fill, border } = colorForZonageLabel(label);
+              return (
+                <li key={label} className="filter-enrich-cesbio-chip" style={{ borderColor: border, background: fill }}>
+                  {label}
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="ranking-line-empty">Aucun libellé CESBIO du filtre sur cette parcelle.</p>
         )}
       </div>
 
-      <div
-        className="veg-stack-bar"
-        role="img"
-        aria-label={`Répartition du zonage : ${ariaLabel}`}
-      >
-        {entries.map(([label, ratio]) => {
-          const { fill, border } = colorForZonageLabel(label);
-          const pct = Math.max(0, Math.min(100, ratio * 100));
-          const areaM2 =
-            typeof totalM2 === "number" && Number.isFinite(totalM2) && totalM2 > 0
-              ? ratio * totalM2
-              : null;
-          const tip =
-            areaM2 != null
-              ? `${label} — ${pct.toFixed(1)} % (${areaM2.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} m²)`
-              : `${label} — ${pct.toFixed(1)} %`;
-          return (
-            <div
-              key={label}
-              className="veg-stack-segment"
-              style={{
-                width: `${pct}%`,
-                background: fill,
-                boxShadow: `inset 0 0 0 1px ${border}`,
-              }}
-              title={tip}
-            />
-          );
-        })}
+      <div className="filter-enrich-section">
+        <div className="filter-enrich-section-head">
+          <span className="filter-enrich-section-title">Faune (filtre)</span>
+          <span className="filter-enrich-section-count mono">
+            {faunaEntries.length ? `${faunaEntries.length} espèce(s)` : "—"}
+          </span>
+        </div>
+        {faunaEntries.length ? (
+          <ul className="filter-enrich-fauna-list" aria-label="Distances aux observations par espèce">
+            {faunaEntries.map(([species, distM]) => {
+              const tone = faunaDistanceTone(distM);
+              const pct = Math.max(4, Math.round((1 - distM / maxFaunaDist) * 100));
+              return (
+                <li key={species} className="filter-enrich-fauna-row">
+                  <div className="filter-enrich-fauna-row-head">
+                    <span className="filter-enrich-fauna-species" title={species}>
+                      {species}
+                    </span>
+                    <span
+                      className="filter-enrich-fauna-badge mono"
+                      style={{ background: tone.bg, borderColor: tone.border, color: "#111827" }}
+                    >
+                      {distM <= 0 ? "0 m · intersection" : `${Math.round(distM).toLocaleString("fr-FR")} m`}
+                    </span>
+                  </div>
+                  <div className="filter-enrich-fauna-bar-track" aria-hidden>
+                    <div
+                      className="filter-enrich-fauna-bar-fill"
+                      style={{ width: `${pct}%`, background: tone.border }}
+                    />
+                  </div>
+                  <span className="filter-enrich-fauna-hint">{tone.label}</span>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="ranking-line-empty">Aucune distance faune enregistrée pour cette parcelle.</p>
+        )}
       </div>
-
-      <ul className="veg-legend" aria-label="Détail par classe">
-        {entries.map(([label, ratio]) => {
-          const { fill, border } = colorForZonageLabel(label);
-          const pct = ratio * 100;
-          const areaM2 =
-            typeof totalM2 === "number" && Number.isFinite(totalM2) && totalM2 > 0
-              ? ratio * totalM2
-              : null;
-          return (
-            <li key={label} className="veg-legend-item">
-              <span
-                className="veg-legend-swatch"
-                style={{ background: fill, boxShadow: `inset 0 0 0 1px ${border}` }}
-                aria-hidden
-              />
-              <span className="veg-legend-label" title={label}>
-                {label}
-              </span>
-              <span className="veg-legend-stats mono">
-                <span className="veg-legend-pct">
-                  {(pct >= 10 ? pct.toFixed(0) : pct.toFixed(1))} %
-                </span>
-                {areaM2 != null && (
-                  <>
-                    <span className="veg-legend-sep" aria-hidden>
-                      {" "}
-                      ·{" "}
-                    </span>
-                    <span className="veg-legend-m2">
-                      {areaM2.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} m²
-                    </span>
-                  </>
-                )}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
     </div>
-  );
-}
-
-function GenericMetricBlock({ row }: { row: ParcelPoolMetricRow }) {
-  return (
-    <pre className="ranking-metric-raw mono">
-      {JSON.stringify(row.metric_value_jsonb, null, 2)}
-    </pre>
   );
 }
 
@@ -273,7 +131,7 @@ type ParcelScoreBreakdownItem = {
   buffer_half_m?: number;
 };
 
-type ParcelScorePayload = {
+export type ParcelScorePayload = {
   total_score: number;
   max_score: number;
   breakdown: {
@@ -282,7 +140,7 @@ type ParcelScorePayload = {
   };
 };
 
-function parseParcelScorePayload(v: Record<string, unknown>): ParcelScorePayload | null {
+export function parseParcelScorePayload(v: Record<string, unknown>): ParcelScorePayload | null {
   if (typeof v.total_score !== "number" || typeof v.max_score !== "number") return null;
   const b = v.breakdown;
   if (!b || typeof b !== "object") return null;
@@ -324,7 +182,7 @@ const SCORE_TEXT = "#111827";
 const SCORE_TEXT_MUTED = "#4b5563";
 const SCORE_ACCENT = "#15803d";
 
-function ScoreBlock({ payload }: { payload: ParcelScorePayload }) {
+export function ScoreBlock({ payload }: { payload: ParcelScorePayload }) {
   const ratio = payload.max_score > 0 ? payload.total_score / payload.max_score : 0;
   const color = ratio >= 0.8 ? "#166534" : ratio >= 0.5 ? "#16a34a" : ratio >= 0.2 ? "#f59e0b" : "#6b7280";
   const bg =
@@ -354,6 +212,10 @@ function ScoreBlock({ payload }: { payload: ParcelScorePayload }) {
     if (r === "no_faune_criteria") return "Aucune espèce ciblée dans le filtre";
     if (r === "no_buffer_in_filter") return "Buffer non défini (mode filtre sans rayon)";
     if (r === "no_observation") return "Pas d'observation géolocalisée pour les espèces du filtre";
+    const sp = (es as { nearest_species?: string }).nearest_species;
+    if (sp && es.nearest_observation_distance_m != null) {
+      return `Plus proche : ${sp} (${Math.round(es.nearest_observation_distance_m)} m)`;
+    }
     return "Hors critères";
   })();
 
@@ -393,100 +255,28 @@ function ScoreBlock({ payload }: { payload: ParcelScorePayload }) {
   );
 }
 
-type EspecesFaunePayload = {
-  intersects_any: boolean;
-  nearest_species?: string | null;
-  selected_species?: string[];
-  intersections_by_species?: Record<string, number>;
-  intersection_observation_count?: number;
-  nearest_observation_distance_m?: number | null;
-  buffer_radius_max_m?: number | null;
-  within_buffer_any?: boolean;
-};
-
-type DureteAxesPayload = {
-  axe1?: number | null;
-  axe1_note?: string | null;
-  axe2?: number | null;
-  axe2_note?: string | null;
-  axe3?: number | null;
-  axe3_note?: string | null;
-  axe4?: number | null;
-  axe4_note?: string | null;
-  surcharges?: number | null;
-  surcharges_note?: string | null;
-};
-
-type DureteFoncierePayload = {
-  eligible: boolean;
-  reason?: string | null;
-  statut?: string | null;
+export type PersonnesMoralesPayload = {
+  intersects_pm_database: boolean;
   siren?: string | null;
   denomination?: string | null;
   forme_juridique?: string | null;
-  score_final?: number | null;
-  niveau_durete?: string | null;
-  explication?: string | null;
-  detail_axes?: DureteAxesPayload | null;
-  avertissements?: string[];
+  compensation_deja_realisee: boolean;
+  parcelle_deja_en_mc?: boolean | null;
+  nb_mc_distinctes?: number | null;
+  nb_parcelles_deja_en_mc?: number | null;
+  surface_deja_en_mc_m2?: number | null;
 };
 
-type CompositeScorePayload = {
-  score_composite?: number | null;
-  composite_status?: string | null;
-  message?: string | null;
-  eco_score_raw?: number | null;
-  eco_score_max?: number | null;
-  eco_score_norm?: number | null;
-  durete_fonciere?: number | null;
-  attractivite_fonciere?: number | null;
-  foncier_redhibitoire?: boolean;
-  redhibitoire_threshold?: number | null;
-};
-
-function parseCompositeScorePayload(v: Record<string, unknown>): CompositeScorePayload | null {
-  const scoreRaw = v.score_composite;
-  const score =
-    typeof scoreRaw === "number" && Number.isFinite(scoreRaw) && scoreRaw >= 0 && scoreRaw <= 100
-      ? scoreRaw
-      : null;
-  const hasEco =
-    typeof v.eco_score_norm === "number" && Number.isFinite(v.eco_score_norm) ? v.eco_score_norm : null;
-  const status = typeof v.composite_status === "string" ? v.composite_status : null;
-  const message = typeof v.message === "string" ? v.message : null;
-  if (score == null && hasEco == null && !status && !message) return null;
-  return {
-    score_composite: score,
-    composite_status: status,
-    message,
-    eco_score_raw: typeof v.eco_score_raw === "number" && Number.isFinite(v.eco_score_raw) ? v.eco_score_raw : null,
-    eco_score_max: typeof v.eco_score_max === "number" && Number.isFinite(v.eco_score_max) ? v.eco_score_max : null,
-    eco_score_norm: hasEco,
-    durete_fonciere:
-      typeof v.durete_fonciere === "number" && Number.isFinite(v.durete_fonciere) ? v.durete_fonciere : null,
-    attractivite_fonciere:
-      typeof v.attractivite_fonciere === "number" && Number.isFinite(v.attractivite_fonciere)
-        ? v.attractivite_fonciere
-        : null,
-    foncier_redhibitoire: v.foncier_redhibitoire === true,
-    redhibitoire_threshold:
-      typeof v.redhibitoire_threshold === "number" && Number.isFinite(v.redhibitoire_threshold)
-        ? v.redhibitoire_threshold
-        : null,
-  };
+function parseOptionalInt(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return Math.trunc(v);
+  return null;
 }
 
-function parseDureteFoncierePayload(v: Record<string, unknown>): DureteFoncierePayload | null {
-  if (typeof v.eligible !== "boolean") return null;
-  const axesRaw = v.detail_axes;
-  const axes =
-    axesRaw && typeof axesRaw === "object"
-      ? (axesRaw as DureteAxesPayload)
-      : null;
+export function parsePersonnesMoralesPayload(v: Record<string, unknown>): PersonnesMoralesPayload {
+  const intersects = v.intersects_pm_database === true;
+  const compensation = v.compensation_deja_realisee === true;
   return {
-    eligible: v.eligible,
-    reason: typeof v.reason === "string" ? v.reason : null,
-    statut: typeof v.statut === "string" ? v.statut : null,
+    intersects_pm_database: intersects,
     siren: typeof v.siren === "string" ? v.siren : v.siren == null ? null : String(v.siren),
     denomination:
       typeof v.denomination === "string" ? v.denomination : v.denomination == null ? null : String(v.denomination),
@@ -496,284 +286,101 @@ function parseDureteFoncierePayload(v: Record<string, unknown>): DureteFonciereP
         : v.forme_juridique == null
           ? null
           : String(v.forme_juridique),
-    score_final: typeof v.score_final === "number" && Number.isFinite(v.score_final) ? v.score_final : null,
-    niveau_durete:
-      typeof v.niveau_durete === "string" ? v.niveau_durete : v.niveau_durete == null ? null : String(v.niveau_durete),
-    explication: typeof v.explication === "string" ? v.explication : null,
-    detail_axes: axes,
-    avertissements: Array.isArray(v.avertissements)
-      ? v.avertissements.filter((x): x is string => typeof x === "string")
-      : [],
+    compensation_deja_realisee: compensation,
+    parcelle_deja_en_mc: typeof v.parcelle_deja_en_mc === "boolean" ? v.parcelle_deja_en_mc : null,
+    nb_mc_distinctes: parseOptionalInt(v.nb_mc_distinctes),
+    nb_parcelles_deja_en_mc: parseOptionalInt(v.nb_parcelles_deja_en_mc),
+    surface_deja_en_mc_m2:
+      typeof v.surface_deja_en_mc_m2 === "number" && Number.isFinite(v.surface_deja_en_mc_m2)
+        ? v.surface_deja_en_mc_m2
+        : null,
   };
 }
 
-function dureteNonEligibleLabel(reason: string | null | undefined): string {
-  const r = reason ?? "not_pm";
-  if (r === "not_pm") {
-    return "Non applicable : parcelle hors répertoire personnes morales (pas de SIREN exploitable). Le score de dureté foncière ne s’affiche pas ; le classement peut s’appuyer sur le score écologique et le composite lorsque celui-ci est calculé.";
-  }
-  return `Non concernée par la dureté foncière (code : ${r}).`;
+function formatCountFr(n: number | null | undefined): string {
+  return n == null ? "—" : n.toLocaleString("fr-FR");
 }
 
-function DureteFonciereBlock({ payload }: { payload: DureteFoncierePayload }) {
-  if (!payload.eligible) {
-    return <p className="ranking-line-empty">{dureteNonEligibleLabel(payload.reason)}</p>;
-  }
+function formatSurfaceM2Fr(m2: number | null | undefined): string {
+  return m2 == null ? "—" : `${m2.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} m²`;
+}
 
-  const score = payload.score_final;
-  const color =
-    typeof score === "number" && Number.isFinite(score)
-      ? score >= 81
-        ? "#991b1b"
-        : score >= 61
-          ? "#b45309"
-          : score >= 41
-            ? "#92400e"
-            : score >= 21
-              ? "#166534"
-              : "#065f46"
-      : "#374151";
-
-  const cardBg = "rgba(15, 23, 42, 0.04)";
-  const axes = payload.detail_axes;
-  const rows =
-    axes == null
-      ? []
-      : [
-          { label: "Axe 1", score: axes.axe1, note: axes.axe1_note },
-          { label: "Axe 2", score: axes.axe2, note: axes.axe2_note },
-          { label: "Axe 3", score: axes.axe3, note: axes.axe3_note },
-          { label: "Axe 4", score: axes.axe4, note: axes.axe4_note },
-          { label: "Surcharges", score: axes.surcharges, note: axes.surcharges_note },
-        ];
+export function PersonnesMoralesBlock({ payload }: { payload: PersonnesMoralesPayload }) {
+  const compensation = payload.compensation_deja_realisee === true;
+  const borderColor = compensation ? "#b45309" : payload.intersects_pm_database ? "#1d4ed8" : "#d1d5db";
+  const bg = compensation ? "rgba(180, 83, 9, 0.08)" : "rgba(15, 23, 42, 0.04)";
 
   return (
     <div
       className="ranking-metric-vegetation ranking-metric-vegetation--carhab"
-      style={{ border: `1px solid ${color}`, borderRadius: 8, background: cardBg, padding: 10 }}
+      style={{ border: `1px solid ${borderColor}`, borderRadius: 8, background: bg, padding: 10 }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 8 }}>
-        <strong style={{ color, fontSize: 14 }}>
-          Score dureté: {score ?? "?"}/100
-        </strong>
-        <span className="mono" style={{ color: "#374151", fontSize: 12 }}>
-          {payload.niveau_durete ?? "niveau inconnu"}
-        </span>
-      </div>
-
-      <div style={{ display: "grid", gap: 6, marginBottom: 8 }}>
-        <div>
-          <span style={{ color: "#6b7280" }}>SIREN</span>{" "}
-          <span className="mono" style={{ color: "#111827" }}>
-            {payload.siren ?? "—"}
-          </span>
-        </div>
-        <div>
-          <span style={{ color: "#6b7280" }}>Dénomination</span>{" "}
-          <span style={{ color: "#111827" }}>{payload.denomination ?? "—"}</span>
-        </div>
-        <div>
-          <span style={{ color: "#6b7280" }}>Forme juridique</span>{" "}
-          <span style={{ color: "#111827" }}>{payload.forme_juridique ?? "—"}</span>
-        </div>
-      </div>
-
-      {!!rows.length && (
-        <div style={{ display: "grid", gap: 6, marginBottom: 8 }}>
-          {rows.map((r) => (
-            <div key={r.label} style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-              <span style={{ color: "#111827", fontSize: 13 }}>
-                {r.label} — <span style={{ color: "#4b5563" }}>{r.note ?? "non renseigné"}</span>
-              </span>
-              <span className="mono" style={{ color: "#111827", flexShrink: 0 }}>
-                {typeof r.score === "number" ? r.score : "?"}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {payload.explication && (
-        <p className="ranking-line-empty" style={{ marginBottom: 0 }}>
-          {payload.explication}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function CompositeScoreBlock({ payload }: { payload: CompositeScorePayload }) {
-  const score = payload.score_composite ?? null;
-  const redhib = payload.foncier_redhibitoire === true;
-  const sansFoncier = payload.composite_status === "sans_foncier" || (score == null && payload.attractivite_fonciere == null);
-  const color = redhib ? "#991b1b" : score != null && score >= 75 ? "#166534" : score != null && score >= 55 ? "#15803d" : "#374151";
-  const bg = redhib ? "rgba(127,29,29,0.08)" : "rgba(15, 23, 42, 0.04)";
-  const threshold = payload.redhibitoire_threshold ?? 20;
-  const headline = score != null ? `Score composite : ${score.toFixed(1)}/100` : "Score composite : non calculé";
-
-  return (
-    <div
-      className="ranking-metric-vegetation ranking-metric-vegetation--carhab"
-      style={{ border: `1px solid ${color}`, borderRadius: 8, background: bg, padding: 10 }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 8 }}>
-        <strong style={{ color, fontSize: 14 }}>{headline}</strong>
-        {redhib && (
-          <span className="mono" style={{ color: "#991b1b", fontSize: 12 }}>
-            Dureté rédhibitoire
-          </span>
-        )}
-      </div>
-      {payload.message && (
-        <p className="ranking-line-empty" style={{ marginBottom: 8 }}>
-          {payload.message}
-        </p>
-      )}
-      {!payload.message && score == null && sansFoncier && (
-        <p className="ranking-line-empty" style={{ marginBottom: 8 }}>
-          La dimension « foncier » du composite n’est pas disponible (parcelle hors personnes morales ou dureté
-          non calculée). Utilisez le score écologique normalisé ci-dessous comme référence.
-        </p>
-      )}
       <div style={{ display: "grid", gap: 6 }}>
         <div>
-          <span style={{ color: "#6b7280" }}>Score éco normalisé</span>{" "}
-          <span className="mono" style={{ color: "#111827" }}>
-            {payload.eco_score_norm == null ? "—" : `${payload.eco_score_norm.toFixed(1)}/100`}
-          </span>
-          <span style={{ color: "#6b7280" }}>
-            {" "}
-            ({payload.eco_score_raw ?? "?"}/{payload.eco_score_max ?? "?"})
-          </span>
+          <span style={{ color: "#6b7280" }}>Répertoire personnes morales</span>{" "}
+          <strong style={{ color: payload.intersects_pm_database ? "#1d4ed8" : "#6b7280" }}>
+            {payload.intersects_pm_database ? "Oui" : "Non"}
+          </strong>
         </div>
-        <div>
-          <span style={{ color: "#6b7280" }}>Attractivité foncière</span>{" "}
-          <span className="mono" style={{ color: "#111827" }}>
-            {payload.attractivite_fonciere == null ? "—" : `${payload.attractivite_fonciere.toFixed(1)}/100`}
-          </span>
-          <span style={{ color: "#6b7280" }}>
-            {" "}
-            (dureté {payload.durete_fonciere == null ? "—" : `${payload.durete_fonciere.toFixed(1)}/100`})
-          </span>
-        </div>
-        {redhib && (
-          <p className="ranking-line-empty" style={{ margin: 0 }}>
-            Attractivité foncière &lt; {threshold}/100: parcelle marquée comme potentiellement rédhibitoire.
-          </p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function parseEspecesFaunePayload(v: Record<string, unknown>): EspecesFaunePayload | null {
-  if (typeof v.intersects_any !== "boolean") return null;
-  const rawInter = v.intersections_by_species;
-  const intersections_by_species: Record<string, number> = {};
-  if (rawInter && typeof rawInter === "object") {
-    for (const [k, val] of Object.entries(rawInter)) {
-      if (typeof val === "number" && Number.isFinite(val) && val > 0) intersections_by_species[k] = val;
-    }
-  }
-  return {
-    intersects_any: v.intersects_any,
-    nearest_species: typeof v.nearest_species === "string" ? v.nearest_species : null,
-    selected_species: Array.isArray(v.selected_species)
-      ? v.selected_species.filter((x): x is string => typeof x === "string")
-      : [],
-    intersections_by_species,
-    intersection_observation_count:
-      typeof v.intersection_observation_count === "number" && Number.isFinite(v.intersection_observation_count)
-        ? v.intersection_observation_count
-        : 0,
-    nearest_observation_distance_m:
-      typeof v.nearest_observation_distance_m === "number" && Number.isFinite(v.nearest_observation_distance_m)
-        ? v.nearest_observation_distance_m
-        : null,
-    buffer_radius_max_m:
-      typeof v.buffer_radius_max_m === "number" && Number.isFinite(v.buffer_radius_max_m) ? v.buffer_radius_max_m : null,
-    within_buffer_any: v.within_buffer_any === true,
-  };
-}
-
-function EspecesFauneBlock({ payload }: { payload: EspecesFaunePayload }) {
-  const entries = Object.entries(payload.intersections_by_species ?? {}).sort((a, b) => b[1] - a[1]);
-  const isGreen = payload.intersects_any;
-  const isOrange = !payload.intersects_any && payload.within_buffer_any;
-  const cardBg = isGreen ? "rgba(22, 163, 74, 0.16)" : isOrange ? "rgba(245, 158, 11, 0.18)" : "rgba(55, 65, 81, 0.22)";
-  const cardBorder = isGreen ? "#16a34a" : isOrange ? "#f59e0b" : "#4b5563";
-  const badgeBg = isGreen ? "#166534" : isOrange ? "#92400e" : "#374151";
-  const badgeColor = isGreen ? "#dcfce7" : isOrange ? "#ffedd5" : "#e5e7eb";
-  const statusLabel = isGreen ? "✓ Validation" : isOrange ? "⚠ Proximité buffer" : "Aucune proximité";
-  const scoreLabel = isGreen ? "Score +3" : isOrange ? "Score +2" : null;
-
-  return (
-    <div
-      className="ranking-metric-vegetation ranking-metric-vegetation--carhab"
-      style={{ border: `1px solid ${cardBorder}`, borderRadius: 8, background: cardBg, padding: 10 }}
-    >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
-        <span
-          className="mono"
-          style={{ background: badgeBg, color: badgeColor, borderRadius: 999, padding: "3px 10px", fontSize: 12 }}
-        >
-          {statusLabel}
-        </span>
-        {scoreLabel && (
-          <span className="mono" style={{ color: badgeColor, background: badgeBg, borderRadius: 999, padding: "3px 10px", fontSize: 12 }}>
-            {scoreLabel}
-          </span>
-        )}
-      </div>
-
-      <p
-        className="ranking-line-empty"
-        style={{
-          marginBottom: 8,
-          color: isGreen ? "#166534" : isOrange ? "#9a3412" : "#374151",
-        }}
-      >
-        {isGreen
-          ? "Excellente correspondance : la parcelle intersecte des observations des espèces ciblées."
-          : isOrange
-            ? "Pas d'intersection directe, mais une observation est présente dans le buffer du filtre."
-            : "La parcelle n’intersecte aucune observation des espèces sélectionnées."}
-      </p>
-
-      {payload.nearest_observation_distance_m != null && (
-        <p className="ranking-line-empty" style={{ marginBottom: 8 }}>
-          Observation la plus proche :{" "}
-          <span className="mono">
-            {payload.nearest_observation_distance_m.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} m
-          </span>
-          {payload.nearest_species ? ` (${payload.nearest_species})` : ""}
-          {payload.buffer_radius_max_m != null ? (
-            <>
-              {" "}
-              • rayon max filtre :{" "}
-              <span className="mono">
-                {payload.buffer_radius_max_m.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} m
+        {payload.intersects_pm_database && (
+          <>
+            <div>
+              <span style={{ color: "#6b7280" }}>SIREN</span>{" "}
+              <span className="mono" style={{ color: "#111827" }}>
+                {payload.siren ?? "—"}
               </span>
-            </>
-          ) : null}
-        </p>
-      )}
-
-      {!!entries.length && (
-        <div className="veg-carhab-histo" role="list" aria-label="Observations intersectées par espèce">
-          {entries.map(([label, count]) => (
-            <div key={label} className="veg-carhab-row" role="listitem">
-              <span className="veg-carhab-label" title={label}>
-                {label}
-              </span>
-              <span className="veg-carhab-stats mono">{count} obs.</span>
             </div>
-          ))}
+            <div>
+              <span style={{ color: "#6b7280" }}>Dénomination</span>{" "}
+              <span style={{ color: "#111827" }}>{payload.denomination ?? "—"}</span>
+            </div>
+            <div>
+              <span style={{ color: "#6b7280" }}>Forme juridique</span>{" "}
+              <span style={{ color: "#111827" }}>{payload.forme_juridique ?? "—"}</span>
+            </div>
+          </>
+        )}
+        <div>
+          <span style={{ color: "#6b7280" }}>Propriétaire ayant déjà compensé (autre foncier)</span>{" "}
+          <strong style={{ color: compensation ? "#b45309" : "#6b7280" }}>{compensation ? "Oui" : "Non"}</strong>
         </div>
-      )}
+        {compensation && (
+          <>
+            {payload.parcelle_deja_en_mc != null && (
+              <div>
+                <span style={{ color: "#6b7280" }}>Cette parcelle déjà en mesure de compensation</span>{" "}
+                <span style={{ color: "#111827" }}>{payload.parcelle_deja_en_mc ? "Oui" : "Non"}</span>
+              </div>
+            )}
+            <div>
+              <span style={{ color: "#6b7280" }}>Mesures compensatoires distinctes (propriétaire)</span>{" "}
+              <span className="mono" style={{ color: "#111827" }}>
+                {formatCountFr(payload.nb_mc_distinctes)}
+              </span>
+            </div>
+            <div>
+              <span style={{ color: "#6b7280" }}>Parcelles du propriétaire déjà en MC</span>{" "}
+              <span className="mono" style={{ color: "#111827" }}>
+                {formatCountFr(payload.nb_parcelles_deja_en_mc)}
+              </span>
+            </div>
+            <div>
+              <span style={{ color: "#6b7280" }}>Surface totale concernée par les MC (propriétaire)</span>{" "}
+              <span className="mono" style={{ color: "#111827" }}>
+                {formatSurfaceM2Fr(payload.surface_deja_en_mc_m2)}
+              </span>
+            </div>
+            <p className="ranking-line-empty" style={{ margin: 0 }}>
+              Parcelle issue de la liste filtrée des prospects dont le propriétaire a déjà exercé de la
+              compensation sur d’autres parcelles.
+            </p>
+          </>
+        )}
+      </div>
     </div>
   );
 }
+
 
 export interface RankingLineProps {
   idu: string;
@@ -822,68 +429,51 @@ export function RankingLine({
     );
   }
 
-  const metricsOrdered = sortMetricsForDisplay(
-    metrics.filter((row) => row.metric_key !== "parcelles_personnes_morales"),
-  );
+  const pmRow = metrics.find((row) => row.metric_key === "parcelles_personnes_morales");
+  const pmPayload = pmRow
+    ? parsePersonnesMoralesPayload((pmRow.metric_value_jsonb ?? {}) as Record<string, unknown>)
+    : undefined;
+
+  const filterEnrichRow = metrics.find((row) => row.metric_key === "filter_enrich");
+  const filterEnrichPayload = filterEnrichRow
+    ? parseFilterEnrichPayload((filterEnrichRow.metric_value_jsonb ?? {}) as Record<string, unknown>)
+    : null;
+
+  const scoreRow = metrics.find((row) => row.metric_key === "score_eco");
+  const scorePayload = scoreRow
+    ? parseParcelScorePayload((scoreRow.metric_value_jsonb ?? {}) as Record<string, unknown>)
+    : null;
+
+  const hasVisibleMetrics = metrics.some((m) => VISIBLE_METRIC_KEYS.has(m.metric_key));
 
   return (
     <div className="ranking-line-detail" role="region" aria-label={`Détail parcelle ${idu}`}>
-      <div className="ranking-metrics-stack">
-        {metricsOrdered.map((row) => {
-          const title = METRIC_LABELS[row.metric_key] ?? row.metric_key;
-          const val = row.metric_value_jsonb ?? {};
-          const isZonageRatio =
-            row.metric_key === "vegetation_hybride_ratio" ||
-            row.metric_key === "cosia_zonage_ratio" ||
-            row.metric_key === "carhab_eunis_ratio" ||
-            row.metric_key === "arrachage_vignes_ratio";
-          const zonagePayload = isZonageRatio ? parseVegetationPayload(val) : null;
-          const scorePayload = row.metric_key === "score_eco" ? parseParcelScorePayload(val) : null;
-          const compositePayload = row.metric_key === "composite_score_v1" ? parseCompositeScorePayload(val) : null;
-          const especesFaunePayload = row.metric_key === "especes_faune" ? parseEspecesFaunePayload(val) : null;
-          const dureteFoncierePayload =
-            row.metric_key === "durete_fonciere" ? parseDureteFoncierePayload(val) : null;
+      {filterEnrichPayload ? (
+        <section className="ranking-metric-block">
+          <h4 className="ranking-metric-title">Enrichissement écologique (filtre)</h4>
+          <FilterEnrichBlock payload={filterEnrichPayload} />
+        </section>
+      ) : null}
 
-          return (
-            <section key={row.metric_key} className="ranking-metric-block">
-              <h4 className="ranking-metric-title">{title}</h4>
-              {zonagePayload ? (
-                <ZonageRatiosBlock
-                  payload={zonagePayload}
-                  {...(row.metric_key === "cosia_zonage_ratio"
-                    ? {
-                        emptyMessage: "Aucune intersection mesurée avec la couche COSIA (IGN).",
-                        totalLineLabel: "Intersection COSIA / parcelle :",
-                      }
-                    : row.metric_key === "carhab_eunis_ratio"
-                      ? {
-                          emptyMessage: "Aucune intersection mesurée avec la couche CARHAB (EUNIS).",
-                          totalLineLabel: "Surface parcelle (référence des % CARHAB) :",
-                          variant: "carhab_independent" as const,
-                        }
-                      : row.metric_key === "arrachage_vignes_ratio"
-                        ? {
-                            emptyMessage: "Aucune intersection mesurée avec la couche arrachage de vignes.",
-                            totalLineLabel: "Surface parcelle (référence des % arrachage) :",
-                            variant: "carhab_independent" as const,
-                          }
-                      : {})}
-                />
-              ) : scorePayload ? (
-                <ScoreBlock payload={scorePayload} />
-              ) : compositePayload ? (
-                <CompositeScoreBlock payload={compositePayload} />
-              ) : especesFaunePayload ? (
-                <EspecesFauneBlock payload={especesFaunePayload} />
-              ) : dureteFoncierePayload ? (
-                <DureteFonciereBlock payload={dureteFoncierePayload} />
-              ) : (
-                <GenericMetricBlock row={row} />
-              )}
-            </section>
-          );
-        })}
-      </div>
+      {scorePayload ? (
+        <section className="ranking-metric-block">
+          <h4 className="ranking-metric-title">Score écologique</h4>
+          <ScoreBlock payload={scorePayload} />
+        </section>
+      ) : null}
+
+      <section className="ranking-metric-block">
+        <h4 className="ranking-metric-title">Personnes morales & prospects compensation</h4>
+        {pmPayload ? (
+          <PersonnesMoralesBlock payload={pmPayload} />
+        ) : (
+          <p className="ranking-line-empty">
+            {hasVisibleMetrics
+              ? "Croisement PM / prospects non disponible pour cette parcelle."
+              : "Profilage non encore calculé — relancez un filtrage ou POST …/recompute-metrics."}
+          </p>
+        )}
+      </section>
     </div>
   );
 }

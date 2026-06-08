@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { fetchProjectStoredResults } from "../api";
+import type { UfFilterResponse } from "../types";
+import {
+  applyWsToPipelineProgress,
+  completedPipelineProgress,
+  INITIAL_PIPELINE_PROGRESS,
+  type PipelineProgress,
+} from "../utils/pipelineProgress";
 
 export interface FetchProgressEvent {
   event?: string;
@@ -6,15 +14,69 @@ export interface FetchProgressEvent {
   layers_status?: Record<string, unknown>;
   message?: string;
   layer_key?: string;
+  n_inserted?: number;
+  n_final?: number;
+}
+
+function countParcelles(lastResults: unknown): number {
+  if (!lastResults || typeof lastResults !== "object") return 0;
+  const p = (lastResults as { parcelles?: unknown[] }).parcelles;
+  return Array.isArray(p) ? p.length : 0;
+}
+
+function countUf(lastResultsUf: unknown): number {
+  if (!lastResultsUf || typeof lastResultsUf !== "object") return 0;
+  const uf = lastResultsUf as UfFilterResponse;
+  if (typeof uf.total_uf === "number") return uf.total_uf;
+  return Array.isArray(uf.unites_foncieres) ? uf.unites_foncieres.length : 0;
 }
 
 export function useFetchProgress(projectId: string | null) {
   const [connected, setConnected] = useState(false);
   const [progress, setProgress] = useState<FetchProgressEvent | null>(null);
+  const [parcellesReady, setParcellesReady] = useState(false);
+  const [ufReady, setUfReady] = useState(false);
+  const [pipelineProgress, setPipelineProgress] = useState<PipelineProgress>(INITIAL_PIPELINE_PROGRESS);
   const socketRef = useRef<WebSocket | null>(null);
+  const ufReadyRef = useRef(false);
+
+  const resetFetchPhases = useCallback(() => {
+    setParcellesReady(false);
+    setUfReady(false);
+    ufReadyRef.current = false;
+    setPipelineProgress(INITIAL_PIPELINE_PROGRESS);
+  }, []);
+
+  const syncFromStored = useCallback(async (pid: string) => {
+    try {
+      const stored = await fetchProjectStoredResults(pid);
+      const nParc = countParcelles(stored.last_results);
+      const nUf = countUf(stored.last_results_uf);
+
+      if (nParc > 0) {
+        setParcellesReady(true);
+      }
+      if (nUf > 0) {
+        setUfReady(true);
+        ufReadyRef.current = true;
+      }
+
+      if (nParc > 0 || nUf > 0) {
+        setPipelineProgress(completedPipelineProgress(nParc || undefined, nUf || undefined));
+      }
+      return { nParc, nUf, stored };
+    } catch {
+      return { nParc: 0, nUf: 0, stored: null };
+    }
+  }, []);
 
   useEffect(() => {
-    if (!projectId) return;
+    if (!projectId) {
+      resetFetchPhases();
+      return;
+    }
+
+    void syncFromStored(projectId);
 
     const API = import.meta.env.VITE_API_URL as string;
     const WS = API.replace(/^http/, "ws");
@@ -23,21 +85,34 @@ export function useFetchProgress(projectId: string | null) {
     socketRef.current = ws;
 
     ws.onopen = () => {
-      console.log("WS connected");
       setConnected(true);
     };
 
     ws.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data);
+        const data = JSON.parse(event.data) as FetchProgressEvent;
         setProgress(data);
+
+        const ev = data.event;
+        if (ev === "start") {
+          resetFetchPhases();
+        } else if (ev === "phase:parcelles_ready") {
+          setParcellesReady(true);
+        } else if (ev === "phase:uf_ready") {
+          setUfReady(true);
+          ufReadyRef.current = true;
+          void syncFromStored(projectId);
+        }
+
+        if (ev && ev !== "connected" && ev !== "ping") {
+          setPipelineProgress((prev) => applyWsToPipelineProgress(prev, data));
+        }
       } catch (e) {
         console.warn("WS parse error", e);
       }
     };
 
     ws.onclose = () => {
-      console.log("WS closed");
       setConnected(false);
     };
 
@@ -45,11 +120,27 @@ export function useFetchProgress(projectId: string | null) {
       console.error("WS error", err);
     };
 
+    // Repli : UF terminée en base mais event WS manqué (navigation / reconnexion)
+    const poll = window.setInterval(() => {
+      if (ufReadyRef.current) return;
+      void syncFromStored(projectId).then(({ nUf }) => {
+        if (nUf > 0) ufReadyRef.current = true;
+      });
+    }, 4000);
+
     return () => {
+      window.clearInterval(poll);
       ws.close();
     };
-  }, [projectId]);
+  }, [projectId, resetFetchPhases, syncFromStored]);
 
-  return { connected, progress };
+  return {
+    connected,
+    progress,
+    parcellesReady,
+    ufReady,
+    pipelineProgress,
+    resetFetchPhases,
+    syncFromStored,
+  };
 }
-

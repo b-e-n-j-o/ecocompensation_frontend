@@ -31,7 +31,7 @@ interface IndesirablesTableProps {
   poolMetricsByIdu: Record<string, ParcelPoolMetricRow[]> | null;
   poolMetricsLoading: boolean;
   onRestore: (idu: string) => void;
-  onRowDoubleClick?: (idu: string) => void;
+  onRowActivate?: (idu: string) => void;
 }
 
 export function IndesirablesTable({
@@ -41,7 +41,7 @@ export function IndesirablesTable({
   poolMetricsByIdu,
   poolMetricsLoading,
   onRestore,
-  onRowDoubleClick,
+  onRowActivate,
 }: IndesirablesTableProps) {
   const [hoveredIdu, setHoveredIdu] = useState<string | null>(null);
   const [expandedIdus, setExpandedIdus] = useState<Set<string>>(() => new Set());
@@ -58,6 +58,7 @@ export function IndesirablesTable({
   }, [identity]);
 
   function handleClick(idu: string) {
+    onRowActivate?.(idu);
     setExpandedIdus((prev) => {
       const next = new Set(prev);
       if (next.has(idu)) next.delete(idu);
@@ -151,7 +152,6 @@ export function IndesirablesTable({
                     onMouseEnter={() => setHoveredIdu(p.idu)}
                     onMouseLeave={() => setHoveredIdu(null)}
                     onClick={() => handleClick(p.idu)}
-                    onDoubleClick={() => onRowDoubleClick?.(p.idu)}
                   >
                     <td className="col-rank">
                       <span className="rank-badge mono" title={`Rang initial filtre : ${p.rank}`}>
