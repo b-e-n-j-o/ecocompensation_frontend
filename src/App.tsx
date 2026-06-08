@@ -12,12 +12,8 @@ import { PipelineProgressPanel } from "./components/PipelineProgressPanel";
 import "./components/pipelineProgressPanel.css";
 import type { ParcellesGeoJSON } from "./components/ResultPanel/MapResults/ParcellesMap";
 import {
-  runFilter,
-  runFilterUF,
   fetchParcellesGeojson,
   fetchPoolRunMetricsBulk,
-  computePoolRunMetrics,
-  computePoolRunScoreOnly,
   fetchProjectContextGeometry,
   fetchFoncierGeojson,
   fetchUfSubsetsGeojson,
@@ -34,13 +30,15 @@ import {
 } from "./api";
 import type { ProjectSummary } from "./api";
 import type { ResultsThematicPreload } from "./components/ResultPanel/MapResults/cartoCouchesRegistry";
-import type {
-  FilterOptions,
-  FilterResponse,
-  ParcelPoolMetricRow,
-  PoolRunListItem,
-  RankingSortKey,
-  UfFilterResponse,
+import {
+  DEFAULT_FILTER,
+  type CesbioLibelle,
+  type FilterOptions,
+  type FilterResponse,
+  type ParcelPoolMetricRow,
+  type PoolRunListItem,
+  type RankingSortKey,
+  type UfFilterResponse,
 } from "./types";
 import {
   buildVegetationPriorityChain,
@@ -209,7 +207,7 @@ function EcoCompensationApp({
   const [surfaceMaxHa, setSurfaceMaxHa] = useState<number>(0);
   const [sousEnsemblesStatus, setSousEnsemblesStatus] = useState<SousEnsemblesStatus>("idle");
   const [contextGeom, setContextGeom] = useState<Awaited<ReturnType<typeof fetchProjectContextGeometry>> | null>(null);
-  const { connected, progress, parcellesReady, ufReady, pipelineProgress, resetFetchPhases } =
+  const { connected, progress, parcellesReady, ufReady, pipelineProgress } =
     useFetchProgress(projectId ?? "");
   const projectIdRef = useRef<string | null>(null);
   const thematicPrefetchSeqRef = useRef(0);
@@ -268,10 +266,7 @@ function EcoCompensationApp({
         "Forêts de conifères",
         "Forêts de feuillus",
       ];
-    const faunaSpecies =
-      lastFilterOptions?.faune_criteria?.[0]?.tax_nom_val?.trim() ||
-      lastFilterOptions?.faune_criteria?.[0]?.species?.trim() ||
-      "";
+    const faunaSpecies = lastFilterOptions?.faune_criteria?.[0]?.tax_nom_val?.trim() || "";
 
     void fetchUfResults(projectId, {
       fauna_species: faunaSpecies || undefined,
@@ -470,39 +465,6 @@ function EcoCompensationApp({
     };
   }, [projectId, initialRunId]);
 
-  function handleProjectChange(newProjectId: string | null) {
-    if (initialRunId && onProjectChangeNavigate && newProjectId) {
-      onProjectChangeNavigate(newProjectId);
-      return;
-    }
-    setProjectId(newProjectId);
-    resetFetchPhases();
-    setResults(null);
-    setUfResults(null);
-    setUfGeojson(null);
-    setGeojson(null);
-    setFoncierGeojson(null);
-    setScrollToIdu(null);
-    setLinkedIdu(null);
-    setDistanceMaxKm(0);
-    setDistanceCursorKm(0);
-    setSurfaceMinHa(0);
-    setSurfaceMaxHa(0);
-    setMainResultsTab("parcelles");
-    setParcelSubView("classement");
-    setUfSubView("classement");
-    setContextGeom(null);
-    thematicPrefetchSeqRef.current += 1;
-    setThematicPreloadLoading(false);
-    setThematicPreload(null);
-    setPoolMetricsByIdu(null);
-    setLastFilterOptions(null);
-    setRankingSortKey("composite_score");
-    setIndesirableIdus([]);
-    setIndesirableParcellesStored([]);
-    setIndesirableMetricsByIdu({});
-  }
-
   useEffect(() => {
     if (!projectId) {
       setContextGeom(null);
@@ -545,18 +507,31 @@ function EcoCompensationApp({
           const raw = lf as Record<string, unknown>;
           if (Array.isArray(raw.cesbio_libelles) || Array.isArray(raw.fauna_criteria)) {
             setLastFilterOptions({
-              min_area_ha: Number(raw.min_area_ha ?? 7),
-              miller_threshold: Number(raw.miller_thresh ?? raw.miller_threshold ?? 0.39),
-              vegetation_hybride: {
-                cesbio_libelles: (raw.cesbio_libelles as string[]) ?? [],
-              },
-              faune_criteria: ((raw.fauna_criteria as Array<{ species?: string; dist_m?: number }>) ?? []).map(
-                (fc) => ({
-                  tax_nom_val: fc.species ?? "",
-                  dist_m: fc.dist_m ?? 1000,
-                }),
+              ...DEFAULT_FILTER,
+              min_area_ha: Number(raw.min_area_ha ?? DEFAULT_FILTER.min_area_ha),
+              miller_threshold: Number(
+                raw.miller_thresh ?? raw.miller_threshold ?? DEFAULT_FILTER.miller_threshold,
               ),
-            } as FilterOptions);
+              vegetation_hybride: {
+                ...DEFAULT_FILTER.vegetation_hybride,
+                cesbio_libelles:
+                  (raw.cesbio_libelles as CesbioLibelle[]) ??
+                  DEFAULT_FILTER.vegetation_hybride.cesbio_libelles,
+              },
+              faune_criteria: (
+                (raw.fauna_criteria as Array<{
+                  species?: string;
+                  tax_nom_val?: string;
+                  dist_m?: number;
+                  radius_m?: number;
+                }>) ?? []
+              ).map((fc) => ({
+                tax_nom_val: fc.tax_nom_val ?? fc.species ?? "",
+                mode: "within_radius" as const,
+                radius_m: fc.radius_m ?? fc.dist_m ?? 1000,
+                sources: [],
+              })),
+            });
           }
         }
 
@@ -730,124 +705,6 @@ function EcoCompensationApp({
       setIndesirableMetricsByIdu(next.by_idu ?? {});
     } catch (e) {
       alert(e instanceof Error ? e.message : "Impossible de réintégrer la parcelle au classement.");
-    }
-  }
-
-  async function handleSubmit(opts: FilterOptions, scoreOnlyMode = false, ufOnlyMode = false) {
-    if (!projectId) return;
-    setLoading(true);
-    setFilterLoadingStage("filtering");
-    thematicPrefetchSeqRef.current += 1;
-    setThematicPreloadLoading(false);
-    setThematicPreload(null);
-    setUfResults(null);
-    setUfGeojson(null);
-    setPoolMetricsByIdu(null);
-    setLastFilterOptions(null);
-    setRankingSortKey("composite_score");
-    setIndesirableIdus([]);
-    setIndesirableParcellesStored([]);
-    setIndesirableMetricsByIdu({});
-    try {
-      let createdPoolRunId: string | null = null;
-      let runUf = false;
-      if (sousEnsemblesStatus === "yes") {
-        runUf = true;
-      } else if (sousEnsemblesStatus === "loading") {
-        const st = await fetchSousEnsemblesStatus(projectId);
-        runUf = st.has_sous_ensembles;
-        setSousEnsemblesStatus(st.has_sous_ensembles ? "yes" : "no");
-      }
-
-      if (!ufOnlyMode) {
-        const data = await runFilter(projectId, opts);
-        setResults(data);
-        setLastFilterOptions(opts);
-        createdPoolRunId = data.pool_run_id ?? null;
-
-        if (data.pool_run_id) {
-          setFilterLoadingStage("profiling");
-          try {
-            if (scoreOnlyMode) await computePoolRunScoreOnly(projectId, data.pool_run_id);
-            else await computePoolRunMetrics(projectId, data.pool_run_id);
-          } catch (e) {
-            console.warn("Calcul métriques pool):", e);
-          }
-          setFilterLoadingStage("metrics_loading");
-          try {
-            const bulk = await fetchPoolRunMetricsBulk(projectId, data.pool_run_id);
-            setPoolMetricsByIdu(bulk.by_idu);
-          } catch (e) {
-            console.warn("Métriques pool (bulk):", e);
-            setPoolMetricsByIdu({});
-          }
-        } else {
-          setPoolMetricsByIdu({});
-        }
-
-        // GeoJSON seulement si des parcelles sont présentes
-        if (data.parcelles?.length) {
-          try {
-            const geo = await fetchParcellesGeojson(projectId);
-            setGeojson(geo as ParcellesGeoJSON);
-          } catch (err) {
-            console.warn("GeoJSON parcelles indisponible:", err);
-            setGeojson(null);
-          }
-        }
-
-        // Foncier : best-effort (peut être null si aucun foncier)
-        try {
-          const foncier = await fetchFoncierGeojson(projectId);
-          setFoncierGeojson(foncier);
-        } catch (err) {
-          console.warn("GeoJSON foncier indisponible:", err);
-        }
-      } else {
-        // Mode UF-only : on garde un shell de résultats pour afficher le panneau résultats.
-        setResults({
-          total: 0,
-          final_radius_km: 0,
-          parcelles: [],
-          funnel: [],
-          pool_run_id: null,
-        });
-        setPoolMetricsByIdu({});
-      }
-
-      if (runUf) {
-        const uf = await runFilterUF(projectId, opts);
-        const ufTyped = uf as UfFilterResponse;
-        setUfResults(ufTyped);
-        if (ufOnlyMode) {
-          setMainResultsTab("unites");
-          setUfSubView("classement");
-        }
-
-        const hasSubsets = (ufTyped.unites_foncieres ?? []).some(
-          (u) => (u.sous_ensembles ?? []).length > 0,
-        );
-        if (hasSubsets) {
-          try {
-            const ufGeo = await fetchUfSubsetsGeojson(projectId);
-            setUfGeojson(ufGeo);
-          } catch (err) {
-            console.warn("GeoJSON UF indisponible:", err);
-            setUfGeojson(null);
-          }
-        }
-      }
-
-      // URL persistante partageable : /projects/:projectId/runs/:runId
-      if (createdPoolRunId) {
-        navigate(`/projects/${projectId}/runs/${createdPoolRunId}`);
-      }
-    } catch (err) {
-      console.error("Erreur filtre:", err);
-      alert("Erreur lors du filtrage. Voir console.");
-    } finally {
-      setFilterLoadingStage("idle");
-      setLoading(false);
     }
   }
 

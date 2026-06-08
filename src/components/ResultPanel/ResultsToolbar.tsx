@@ -1,4 +1,5 @@
-import type { PoolRunListItem, ProjectSummary } from "../../api";
+import type { ProjectSummary } from "../../api";
+import type { PoolRunListItem } from "../../types";
 
 type Props = {
   projectId: string | null;
