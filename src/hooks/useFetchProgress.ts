@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchProjectStoredResults } from "../api";
+import { getWsBaseUrl } from "../config/apiBase";
 import type { UfFilterResponse } from "../types";
 import {
   applyWsToPipelineProgress,
@@ -18,11 +19,7 @@ export interface FetchProgressEvent {
   n_final?: number;
 }
 
-function countParcelles(lastResults: unknown): number {
-  if (!lastResults || typeof lastResults !== "object") return 0;
-  const p = (lastResults as { parcelles?: unknown[] }).parcelles;
-  return Array.isArray(p) ? p.length : 0;
-}
+import { parseStoredFilterResponse } from "../utils/storedFilterResults";
 
 function countUf(lastResultsUf: unknown): number {
   if (!lastResultsUf || typeof lastResultsUf !== "object") return 0;
@@ -50,10 +47,11 @@ export function useFetchProgress(projectId: string | null) {
   const syncFromStored = useCallback(async (pid: string) => {
     try {
       const stored = await fetchProjectStoredResults(pid);
-      const nParc = countParcelles(stored.last_results);
+      const parsed = parseStoredFilterResponse(stored.last_results);
+      const nParc = parsed?.total ?? 0;
       const nUf = countUf(stored.last_results_uf);
 
-      if (nParc > 0) {
+      if (parsed != null) {
         setParcellesReady(true);
       }
       if (nUf > 0) {
@@ -78,9 +76,7 @@ export function useFetchProgress(projectId: string | null) {
 
     void syncFromStored(projectId);
 
-    const API = import.meta.env.VITE_API_URL as string;
-    const WS = API.replace(/^http/, "ws");
-
+    const WS = getWsBaseUrl();
     const ws = new WebSocket(`${WS}/ws/projects/${projectId}/fetch-progress`);
     socketRef.current = ws;
 

@@ -4,6 +4,11 @@ import { exportCsv, exportRapportPdf, exportShp } from "../../api";
 import type { ParcelleResult, ParcelPoolMetricRow, RankingSortKey } from "../../types";
 import {
   type FaunaTableEntry,
+  compositeBadgeStyle,
+  dureteBadgeStyle,
+  dureteSkipReasonLabel,
+  getCompositeScoreMetric,
+  getDureteFonciereMetric,
   getFaunaTableEntries,
   getPersonnesMoralesMetric,
 } from "../../utils/poolMetrics";
@@ -11,8 +16,8 @@ import { RankingLine } from "./RankingLine";
 
 const PAGE_SIZE = 50;
 
-/** Colonnes fixes : #, éco, surface, dist espèce, espèce, dist projet, IDU, PM, prospect. */
-const RANKING_BASE_COL_COUNT = 9;
+/** Colonnes fixes : #, éco, dureté, composite, surface, dist espèce, espèce, dist projet, IDU, PM, prospect. */
+const RANKING_BASE_COL_COUNT = 11;
 
 interface RankingTableProps {
   parcelles: ParcelleResult[];
@@ -32,8 +37,17 @@ interface RankingTableProps {
   onMarkIndesirable?: (idu: string) => void;
   /** Filtrage manuel : envoyer plusieurs IDU vers les indésirables. */
   onBatchMarkIndesirable?: (idus: string[]) => Promise<void>;
+  /** Lance le calcul dureté / attractivité foncière sur le pool (hors indésirables). */
+  onRunDureteFonciere?: () => void | Promise<void>;
+  dureteFonciereLoading?: boolean;
   projectId?: string | null;
   exportPoolRunId?: string | null;
+  /** Affiche la colonne surface ZH intersectée (études zones humides). */
+  showZoneHumideColumn?: boolean;
+  /** Affiche la colonne distance au cours d'eau le plus proche. */
+  showDistHydroColumn?: boolean;
+  /** Affiche les colonnes surface / distance surfaces hydro. */
+  showSurfaceHydroColumn?: boolean;
 }
 
 function getEcologicalScore(metrics: ParcelPoolMetricRow[] | undefined): { score: number; max: number } | null {
@@ -128,8 +142,13 @@ export function RankingTable({
   scrollTableNonce = 0,
   onMarkIndesirable,
   onBatchMarkIndesirable,
+  onRunDureteFonciere,
+  dureteFonciereLoading = false,
   projectId,
   exportPoolRunId,
+  showZoneHumideColumn = false,
+  showDistHydroColumn = false,
+  showSurfaceHydroColumn = false,
 }: RankingTableProps) {
   const [hoveredIdu, setHoveredIdu] = useState<string | null>(null);
   const [expandedIdus, setExpandedIdus] = useState<Set<string>>(() => new Set());
@@ -231,13 +250,29 @@ export function RankingTable({
   const hasMore = parcelles.length > visibleCount;
   const showTrashColumn = !!(onMarkIndesirable && poolRunId && !selectionMode);
   const rankingColCount =
-    RANKING_BASE_COL_COUNT + (selectionMode ? 1 : 0) + (showTrashColumn ? 1 : 0);
+    RANKING_BASE_COL_COUNT +
+    (showZoneHumideColumn ? 1 : 0) +
+    (showDistHydroColumn ? 1 : 0) +
+    (showSurfaceHydroColumn ? 2 : 0) +
+    (selectionMode ? 1 : 0) +
+    (showTrashColumn ? 1 : 0);
 
   return (
     <div className="ranking-wrap">
       <div className="ranking-header">
         <span className="ranking-title">Classement</span>
         <div className="ranking-header-actions">
+          {onRunDureteFonciere && poolRunId && projectId && (
+            <button
+              type="button"
+              className="ranking-btn-durete"
+              disabled={dureteFonciereLoading || selectionMode || poolMetricsLoading}
+              title="Calcule la dureté foncière (attractivité) pour les parcelles PM du pool actif, hors indésirables"
+              onClick={() => void onRunDureteFonciere()}
+            >
+              {dureteFonciereLoading ? "Dureté foncière…" : "Calculer dureté foncière"}
+            </button>
+          )}
           {manualSelectionEnabled && !selectionMode && (
             <button
               type="button"
@@ -300,6 +335,18 @@ export function RankingTable({
               <option value="durete_score">Dureté foncière (croissant)</option>
               <option value="distance">Distance projet</option>
               <option value="surface">Surface</option>
+              {showZoneHumideColumn && (
+                <option value="zone_humide_ha">Surface ZH (décroissant)</option>
+              )}
+              {showDistHydroColumn && (
+                <option value="dist_hydro_m">Dist. cours d&apos;eau (croissant)</option>
+              )}
+              {showSurfaceHydroColumn && (
+                <>
+                  <option value="surface_hydro_ha">Surf. hydro (décroissant)</option>
+                  <option value="dist_surface_hydro_m">Dist. surface hydro (croissant)</option>
+                </>
+              )}
               <option value="miller">Miller</option>
               <option value="veg_dominant">Part dominante (zonage hybride)</option>
               <option
@@ -432,7 +479,33 @@ export function RankingTable({
               )}
               <th className="col-rank">#</th>
               <th className="col-eco">Score éco</th>
+              <th className="col-durete" title="Dureté foncière (0 = facile, 100 = difficile)">
+                Dureté
+              </th>
+              <th className="col-composite" title="Score composite (éco + attractivité foncière)">
+                Comp.
+              </th>
               <th className="col-surf">Surface</th>
+              {showZoneHumideColumn && (
+                <th className="col-zh" title="Surface de zone humide intersectée sur la parcelle">
+                  Surf. ZH
+                </th>
+              )}
+              {showDistHydroColumn && (
+                <th className="col-hydro" title="Distance au cours d'eau le plus proche">
+                  Dist. eau
+                </th>
+              )}
+              {showSurfaceHydroColumn && (
+                <>
+                  <th className="col-surf-hydro" title="Surface de parcelle intersectant une surface hydro">
+                    Surf. hydro
+                  </th>
+                  <th className="col-dist-surf-hydro" title="Distance à la surface hydro la plus proche">
+                    Dist. surf.
+                  </th>
+                </>
+              )}
               <th className="col-dist-espece">Dist espèce</th>
               <th className="col-espece">Espèce</th>
               <th className="col-dist">Dist projet</th>
@@ -457,6 +530,10 @@ export function RankingTable({
               const isChecked = checkedIdus.has(p.idu);
               const ecoScore = getEcologicalScore(poolMetricsByIdu?.[p.idu]);
               const ecoStyle = ecologicalBadgeStyle(ecoScore);
+              const dureteMetric = getDureteFonciereMetric(poolMetricsByIdu?.[p.idu]);
+              const dureteStyle = dureteBadgeStyle(dureteMetric?.score_final);
+              const compositeMetric = getCompositeScoreMetric(poolMetricsByIdu?.[p.idu]);
+              const compositeStyle = compositeBadgeStyle(compositeMetric?.score_composite);
               const faunaEntries = getFaunaTableEntries(poolMetricsByIdu?.[p.idu]);
               const pmMetric = getPersonnesMoralesMetric(poolMetricsByIdu?.[p.idu]);
               const pmStyle = pmBadgeStyle(
@@ -513,9 +590,149 @@ export function RankingTable({
                         {ecoScore == null ? "—" : ecoScore.score}
                       </span>
                     </td>
+                    <td className="col-durete">
+                      {dureteMetric == null ? (
+                        <span className="mono" style={{ color: "#9ca3af" }}>—</span>
+                      ) : dureteMetric.eligible && dureteMetric.score_final != null ? (
+                        <span
+                          className="mono"
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            minWidth: 42,
+                            padding: "2px 8px",
+                            borderRadius: 999,
+                            background: dureteStyle.bg,
+                            color: dureteStyle.fg,
+                            fontWeight: 700,
+                            fontSize: 12,
+                          }}
+                          title={[
+                            dureteMetric.niveau_durete,
+                            dureteMetric.attractivite_fonciere != null
+                              ? `Attractivité ${Math.round(dureteMetric.attractivite_fonciere)}/100`
+                              : null,
+                            dureteMetric.denomination,
+                          ].filter(Boolean).join(" · ")}
+                        >
+                          {Math.round(dureteMetric.score_final)}
+                        </span>
+                      ) : (
+                        <span
+                          className="mono"
+                          style={{ fontSize: 11, color: "#9ca3af" }}
+                          title={dureteSkipReasonLabel(dureteMetric.reason)}
+                        >
+                          n/a
+                        </span>
+                      )}
+                    </td>
+                    <td className="col-composite">
+                      {compositeMetric?.score_composite != null ? (
+                        <span
+                          className="mono"
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            minWidth: 42,
+                            padding: "2px 8px",
+                            borderRadius: 999,
+                            background: compositeStyle.bg,
+                            color: compositeStyle.fg,
+                            fontWeight: 700,
+                            fontSize: 12,
+                          }}
+                          title={
+                            compositeMetric.foncier_redhibitoire
+                              ? "Foncier rédhibitoire (attractivité < 20)"
+                              : compositeMetric.message ?? "Score composite"
+                          }
+                        >
+                          {Math.round(compositeMetric.score_composite)}
+                        </span>
+                      ) : (
+                        <span className="mono" style={{ color: "#9ca3af" }}>—</span>
+                      )}
+                    </td>
                     <td className="col-surf mono">
                       {p.surface_ha.toFixed(1)}<span className="unit"> ha</span>
                     </td>
+                    {showZoneHumideColumn && (
+                      <td className="col-zh mono">
+                        {typeof p.zone_humide_ha === "number" && Number.isFinite(p.zone_humide_ha)
+                          ? (
+                              <>
+                                {p.zone_humide_ha.toFixed(2)}
+                                <span className="unit"> ha</span>
+                              </>
+                            )
+                          : <span className="na">—</span>}
+                      </td>
+                    )}
+                    {showDistHydroColumn && (
+                      <td
+                        className="col-hydro mono"
+                        title={
+                          p.troncons_hydro_info?.length
+                            ? p.troncons_hydro_info
+                                .map((t) => {
+                                  const label = t.nom?.trim() || t.nature?.trim() || t.cleabs || "Tronçon";
+                                  const dist = typeof t.dist_m === "number" ? `${t.dist_m} m` : "?";
+                                  return `${label} (${dist})`;
+                                })
+                                .join(" · ")
+                            : undefined
+                        }
+                      >
+                        {typeof p.dist_hydro_m === "number" && Number.isFinite(p.dist_hydro_m)
+                          ? (
+                              <>
+                                {Math.round(p.dist_hydro_m).toLocaleString("fr-FR")}
+                                <span className="unit"> m</span>
+                              </>
+                            )
+                          : <span className="na">—</span>}
+                      </td>
+                    )}
+                    {showSurfaceHydroColumn && (
+                      <>
+                        <td
+                          className="col-surf-hydro mono"
+                          title={
+                            p.surfaces_hydro_info?.length
+                              ? p.surfaces_hydro_info
+                                  .map((s) => {
+                                    const label = s.nom?.trim() || s.nature?.trim() || s.cleabs || "Surface";
+                                    const ha = typeof s.intersect_ha === "number" ? `${s.intersect_ha} ha` : "0 ha";
+                                    return `${label} (${ha})`;
+                                  })
+                                  .join(" · ")
+                              : undefined
+                          }
+                        >
+                          {typeof p.surface_hydro_ha === "number" && Number.isFinite(p.surface_hydro_ha) && p.surface_hydro_ha > 0
+                            ? (
+                                <>
+                                  {p.surface_hydro_ha.toFixed(2)}
+                                  <span className="unit"> ha</span>
+                                </>
+                              )
+                            : <span className="na">—</span>}
+                        </td>
+                        <td className="col-dist-surf-hydro mono">
+                          {typeof p.dist_surface_hydro_m === "number" && Number.isFinite(p.dist_surface_hydro_m)
+                            ? (
+                                <>
+                                  {Math.round(p.dist_surface_hydro_m).toLocaleString("fr-FR")}
+                                  <span className="unit"> m</span>
+                                </>
+                              )
+                            : <span className="na">—</span>}
+                        </td>
+                      </>
+                    )}
                     <td className="col-dist-espece">
                       <FaunaDistanceStack entries={faunaEntries} />
                     </td>

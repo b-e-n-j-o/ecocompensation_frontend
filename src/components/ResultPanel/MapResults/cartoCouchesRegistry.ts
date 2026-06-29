@@ -104,16 +104,124 @@ export interface ResultsLayerDef {
       ],
     },
   ];
-  
-  /** Construit l'état initial des couches thématiques */
-  export function buildInitialThematic(): Record<string, ThematicLayerState> {
-    return Object.fromEntries(
-      RESULTS_LAYERS.map((d) => [
-        d.key,
-        { visible: false, loadState: "idle" as LayerLoadState, geojson: null, error: null },
-      ])
-    );
-  }
+
+/** Couches thématiques zones humides (ecocompensation_results.*). */
+export const ZH_RESULTS_LAYERS: ResultsLayerDef[] = [
+  {
+    key: "zone_humide",
+    label: "Zones humides établies",
+    fillColor: "#38bdf8",
+    lineColor: "#0369a1",
+    fillOpacity: 0.28,
+    lineWidth: 1.5,
+    popupFields: [
+      { field: "libelle", label: "Libellé" },
+      { field: "source", label: "Source" },
+      { field: "inv_nom", label: "Inventaire" },
+    ],
+  },
+  {
+    key: "zones_humides_probables",
+    label: "Zones humides probables",
+    fillColor: "#67e8f9",
+    lineColor: "#0891b2",
+    fillOpacity: 0.2,
+    lineWidth: 1,
+    discriminantField: "value",
+    popupFields: [
+      { field: "value", label: "Probabilité" },
+      { field: "rid", label: "Tuile raster" },
+    ],
+  },
+  {
+    key: "espaces_naturels_sensibles_ens",
+    label: "Espaces naturels sensibles (ENS)",
+    fillColor: "#4ade80",
+    lineColor: "#15803d",
+    fillOpacity: 0.22,
+    lineWidth: 1.5,
+    discriminantField: "nom_site",
+    popupFields: [
+      { field: "nom_site", label: "Site" },
+      { field: "commune", label: "Commune" },
+      { field: "texte", label: "Texte" },
+    ],
+  },
+  {
+    key: "preemption_ens",
+    label: "Préemption ENS",
+    fillColor: "#fbbf24",
+    lineColor: "#b45309",
+    fillOpacity: 0.18,
+    lineWidth: 1.5,
+    discriminantField: "nom_zpens",
+    popupFields: [
+      { field: "nom_zpens", label: "Zone préemption" },
+      { field: "commune", label: "Commune" },
+      { field: "texte", label: "Texte" },
+    ],
+  },
+  {
+    key: "troncons_hydros",
+    label: "Cours d'eau (tronçons hydro)",
+    fillColor: "transparent",
+    lineColor: "#2563eb",
+    fillOpacity: 0,
+    lineWidth: 2.5,
+    discriminantField: "nature",
+    popupFields: [
+      { field: "nom", label: "Nom" },
+      { field: "nature", label: "Nature" },
+      { field: "classe_de_largeur", label: "Classe de largeur" },
+      { field: "numero_d_ordre", label: "N° d'ordre" },
+      { field: "code_hydrographique", label: "Code hydro" },
+      { field: "type_de_bras", label: "Type de bras" },
+    ],
+  },
+  {
+    key: "surfaces_hydros",
+    label: "Surfaces hydrographiques",
+    fillColor: "#7dd3fc",
+    lineColor: "#0284c7",
+    fillOpacity: 0.35,
+    lineWidth: 1.5,
+    discriminantField: "nature",
+    popupFields: [
+      { field: "nom", label: "Nom" },
+      { field: "nature", label: "Nature" },
+      { field: "position_par_rapport_au_sol", label: "Position / sol" },
+      { field: "statut", label: "Statut" },
+      { field: "code_hydrographique", label: "Code hydro" },
+    ],
+  },
+];
+
+export const ALL_RESULTS_LAYERS: ResultsLayerDef[] = [
+  ...RESULTS_LAYERS,
+  ...ZH_RESULTS_LAYERS.filter((z) => !RESULTS_LAYERS.some((r) => r.key === z.key)),
+];
+
+export function getResultsLayerDefs(keys: string[]): ResultsLayerDef[] {
+  return keys
+    .map((key) => ALL_RESULTS_LAYERS.find((d) => d.key === key))
+    .filter((d): d is ResultsLayerDef => !!d);
+}
+
+/** Construit l'état initial des couches thématiques */
+export function buildInitialThematic(layerKeys?: string[]): Record<string, ThematicLayerState> {
+  const defs = layerKeys ? getResultsLayerDefs(layerKeys) : ALL_RESULTS_LAYERS;
+  return Object.fromEntries(
+    defs.map((d) => [
+      d.key,
+      { visible: false, loadState: "idle" as LayerLoadState, geojson: null, error: null },
+    ]),
+  );
+}
+
+/** @deprecated Utiliser buildInitialThematic(keys) */
+export function buildInitialThematicLegacy(): Record<string, ThematicLayerState> {
+  return buildInitialThematic(RESULTS_LAYERS.map((d) => d.key));
+}
   
   /** Extrait les valeurs distinctes d'un champ dans un GeoJSON */
   export function extractDistinctValues(

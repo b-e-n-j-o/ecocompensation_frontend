@@ -1,12 +1,21 @@
 // ─── RankingLine — détail enrichissement filter_v2 ────────────────────────────
 import type { ParcelPoolMetricRow } from "../../types";
 import type { FilterEnrichPayload } from "../../utils/poolMetrics";
+import {
+  type CompositeScoreMetric,
+  type DureteFonciereMetric,
+  dureteSkipReasonLabel,
+  getCompositeScoreMetric,
+  getDureteFonciereMetric,
+} from "../../utils/poolMetrics";
 
 /** Métriques affichées dans le détail de ligne (filter_v2). */
 const VISIBLE_METRIC_KEYS = new Set([
   "filter_enrich",
   "score_eco",
   "parcelles_personnes_morales",
+  "durete_fonciere",
+  "composite_score_v1",
 ]);
 
 /** Couleur stable par libellé : même chaîne → même teinte sur toutes les lignes du tableau. */
@@ -26,6 +35,7 @@ function colorForZonageLabel(label: string): { fill: string; border: string } {
 export function parseFilterEnrichPayload(v: Record<string, unknown>): FilterEnrichPayload | null {
   const veg = v.veg_libelles;
   const fauna = v.fauna_distances;
+  const troncons = v.troncons_hydro_info;
   const veg_libelles = Array.isArray(veg)
     ? veg.map((x) => String(x).trim()).filter(Boolean)
     : [];
@@ -36,8 +46,47 @@ export function parseFilterEnrichPayload(v: Record<string, unknown>): FilterEnri
       if (k.trim() && Number.isFinite(n) && n >= 0) fauna_distances[k.trim()] = n;
     }
   }
-  if (!veg_libelles.length && !Object.keys(fauna_distances).length) return null;
-  return { veg_libelles, fauna_distances };
+  const troncons_hydro_info = Array.isArray(troncons)
+    ? troncons.filter((x) => x && typeof x === "object") as FilterEnrichPayload["troncons_hydro_info"]
+    : [];
+  const surfaces = v.surfaces_hydro_info;
+  const surfaces_hydro_info = Array.isArray(surfaces)
+    ? surfaces.filter((x) => x && typeof x === "object") as FilterEnrichPayload["surfaces_hydro_info"]
+    : [];
+  const dist_hydro_m = typeof v.dist_hydro_m === "number" && Number.isFinite(v.dist_hydro_m)
+    ? v.dist_hydro_m
+    : undefined;
+  const dist_surface_hydro_m = typeof v.dist_surface_hydro_m === "number" && Number.isFinite(v.dist_surface_hydro_m)
+    ? v.dist_surface_hydro_m
+    : undefined;
+  const zone_humide_ha = typeof v.zone_humide_ha === "number" && Number.isFinite(v.zone_humide_ha)
+    ? v.zone_humide_ha
+    : undefined;
+  const surface_hydro_ha = typeof v.surface_hydro_ha === "number" && Number.isFinite(v.surface_hydro_ha)
+    ? v.surface_hydro_ha
+    : undefined;
+  if (
+    !veg_libelles.length
+    && !Object.keys(fauna_distances).length
+    && !troncons_hydro_info?.length
+    && !surfaces_hydro_info?.length
+    && dist_hydro_m == null
+    && dist_surface_hydro_m == null
+    && zone_humide_ha == null
+    && surface_hydro_ha == null
+  ) {
+    return null;
+  }
+  return {
+    veg_libelles,
+    fauna_distances,
+    troncons_hydro_info,
+    surfaces_hydro_info,
+    dist_hydro_m,
+    dist_surface_hydro_m,
+    zone_humide_ha,
+    surface_hydro_ha,
+  };
 }
 
 function faunaDistanceTone(distM: number): { bg: string; border: string; label: string } {
@@ -51,6 +100,8 @@ export function FilterEnrichBlock({ payload }: { payload: FilterEnrichPayload })
   const vegLabels = payload.veg_libelles ?? [];
   const faunaEntries = Object.entries(payload.fauna_distances ?? {}).sort((a, b) => a[1] - b[1]);
   const maxFaunaDist = faunaEntries.length ? Math.max(...faunaEntries.map(([, d]) => d), 1) : 1;
+  const troncons = payload.troncons_hydro_info ?? [];
+  const surfaces = payload.surfaces_hydro_info ?? [];
 
   return (
     <div className="filter-enrich-block">
@@ -117,6 +168,100 @@ export function FilterEnrichBlock({ payload }: { payload: FilterEnrichPayload })
           <p className="ranking-line-empty">Aucune distance faune enregistrée pour cette parcelle.</p>
         )}
       </div>
+
+      {(payload.dist_hydro_m != null || troncons.length > 0) && (
+        <div className="filter-enrich-section">
+          <div className="filter-enrich-section-head">
+            <span className="filter-enrich-section-title">Cours d&apos;eau (tronçons hydro)</span>
+            <span className="filter-enrich-section-count mono">
+              {payload.dist_hydro_m != null
+                ? `${Math.round(payload.dist_hydro_m).toLocaleString("fr-FR")} m`
+                : "—"}
+            </span>
+          </div>
+          {troncons.length ? (
+            <ul className="filter-enrich-fauna-list" aria-label="Tronçons hydro retenus par le filtre">
+              {troncons.map((t, idx) => {
+                const label = t.nom?.trim() || t.nature?.trim() || t.cleabs || `Tronçon ${idx + 1}`;
+                const distM = typeof t.dist_m === "number" ? t.dist_m : payload.dist_hydro_m ?? 0;
+                const tone = faunaDistanceTone(distM);
+                return (
+                  <li key={`${t.cleabs ?? idx}-${label}`} className="filter-enrich-fauna-row">
+                    <div className="filter-enrich-fauna-row-head">
+                      <span className="filter-enrich-fauna-species" title={label}>
+                        {label}
+                      </span>
+                      <span
+                        className="filter-enrich-fauna-badge mono"
+                        style={{ background: tone.bg, borderColor: tone.border, color: "#111827" }}
+                      >
+                        {distM <= 0 ? "0 m · intersection" : `${Math.round(distM).toLocaleString("fr-FR")} m`}
+                      </span>
+                    </div>
+                    <p className="filter-enrich-fauna-hint">
+                      {[t.nature, t.classe_de_largeur, t.numero_d_ordre != null ? `ordre ${t.numero_d_ordre}` : null]
+                        .filter(Boolean)
+                        .join(" · ") || "Attributs non renseignés"}
+                    </p>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="ranking-line-empty">Distance au cours d&apos;eau la plus proche enregistrée.</p>
+          )}
+        </div>
+      )}
+
+      {(payload.dist_surface_hydro_m != null || payload.surface_hydro_ha != null || surfaces.length > 0) && (
+        <div className="filter-enrich-section">
+          <div className="filter-enrich-section-head">
+            <span className="filter-enrich-section-title">Surfaces hydrographiques</span>
+            <span className="filter-enrich-section-count mono">
+              {typeof payload.surface_hydro_ha === "number" && payload.surface_hydro_ha > 0
+                ? `${payload.surface_hydro_ha.toFixed(2)} ha intersectés`
+                : payload.dist_surface_hydro_m != null
+                  ? `${Math.round(payload.dist_surface_hydro_m).toLocaleString("fr-FR")} m`
+                  : "—"}
+            </span>
+          </div>
+          {surfaces.length ? (
+            <ul className="filter-enrich-fauna-list" aria-label="Surfaces hydro retenues par le filtre">
+              {surfaces.map((s, idx) => {
+                const label = s.nom?.trim() || s.nature?.trim() || s.cleabs || `Surface ${idx + 1}`;
+                const distM = typeof s.dist_m === "number" ? s.dist_m : payload.dist_surface_hydro_m ?? 0;
+                const tone = faunaDistanceTone(distM);
+                return (
+                  <li key={`${s.cleabs ?? idx}-${label}`} className="filter-enrich-fauna-row">
+                    <div className="filter-enrich-fauna-row-head">
+                      <span className="filter-enrich-fauna-species" title={label}>
+                        {label}
+                      </span>
+                      <span
+                        className="filter-enrich-fauna-badge mono"
+                        style={{ background: tone.bg, borderColor: tone.border, color: "#111827" }}
+                      >
+                        {typeof s.intersect_ha === "number" && s.intersect_ha > 0
+                          ? `${s.intersect_ha.toFixed(2)} ha`
+                          : distM <= 0
+                            ? "0 m · intersection"
+                            : `${Math.round(distM).toLocaleString("fr-FR")} m`}
+                      </span>
+                    </div>
+                    <p className="filter-enrich-fauna-hint">
+                      {[s.nature, s.position_par_rapport_au_sol, s.statut]
+                        .filter(Boolean)
+                        .join(" · ") || "Attributs non renseignés"}
+                    </p>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="ranking-line-empty">Distance ou surface hydro enregistrée pour cette parcelle.</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -381,6 +526,113 @@ export function PersonnesMoralesBlock({ payload }: { payload: PersonnesMoralesPa
   );
 }
 
+function formatDureteAxis(label: string, score: number | null | undefined, note: string | null | undefined) {
+  if (score == null || !Number.isFinite(score)) return null;
+  return (
+    <div key={label} style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
+      <span style={{ color: "#111827", fontSize: 13 }}>
+        {label} — <span style={{ color: "#4b5563" }}>{note?.trim() || "—"}</span>
+      </span>
+      <span className="mono" style={{ color: "#5b21b6", flexShrink: 0 }}>
+        {Math.round(score)}/100
+      </span>
+    </div>
+  );
+}
+
+export function DureteFonciereBlock({ payload }: { payload: DureteFonciereMetric }) {
+  if (!payload.eligible) {
+    return (
+      <p className="ranking-line-empty" style={{ margin: 0 }}>
+        Dureté foncière non calculée : {dureteSkipReasonLabel(payload.reason)}.
+      </p>
+    );
+  }
+
+  const score = payload.score_final;
+  const style = score != null && score >= 61 ? "#991b1b" : score != null && score >= 41 ? "#b45309" : "#166534";
+  const bg =
+    score != null && score >= 61
+      ? "rgba(153,27,27,0.08)"
+      : score != null && score >= 41
+        ? "rgba(180,83,9,0.08)"
+        : "rgba(22,101,52,0.08)";
+  const axes = payload.detail_axes;
+  const axisLines = axes
+    ? [
+        formatDureteAxis("Axe 1 — Structure", axes.axe1, axes.axe1_note),
+        formatDureteAxis("Axe 2 — Dynamique", axes.axe2, axes.axe2_note),
+        formatDureteAxis("Axe 3 — Contexte", axes.axe3, axes.axe3_note),
+        formatDureteAxis("Axe 4 — Risques", axes.axe4, axes.axe4_note),
+        formatDureteAxis("Surcharges", axes.surcharges, axes.surcharges_note),
+      ].filter(Boolean)
+    : [];
+
+  return (
+    <div style={{ border: `1px solid ${style}`, borderRadius: 8, background: bg, padding: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <strong style={{ color: "#111827", fontSize: 14 }}>
+          Dureté : {score != null ? `${Math.round(score)}/100` : "—"}
+        </strong>
+        <span style={{ color: style, fontSize: 12, fontWeight: 600 }}>{payload.niveau_durete ?? "—"}</span>
+      </div>
+      <div style={{ display: "grid", gap: 4, marginBottom: 8 }}>
+        <div style={{ fontSize: 12, color: "#4b5563" }}>
+          Attractivité foncière :{" "}
+          <strong style={{ color: "#111827" }}>
+            {payload.attractivite_fonciere != null ? `${Math.round(payload.attractivite_fonciere)}/100` : "—"}
+          </strong>
+        </div>
+        {payload.siren && (
+          <div style={{ fontSize: 12, color: "#4b5563" }}>
+            SIREN <span className="mono">{payload.siren}</span>
+            {payload.denomination ? ` — ${payload.denomination}` : ""}
+          </div>
+        )}
+        {payload.intersects_arrachage_vigne && (
+          <div style={{ fontSize: 12, color: "#b45309" }}>Bonus arrachage vigne (+15 pts) appliqué si éligible.</div>
+        )}
+      </div>
+      {payload.explication ? (
+        <p style={{ margin: "0 0 8px", fontSize: 12.5, color: "#374151", lineHeight: 1.45 }}>{payload.explication}</p>
+      ) : null}
+      {axisLines.length ? <div style={{ display: "grid", gap: 6 }}>{axisLines}</div> : null}
+    </div>
+  );
+}
+
+export function CompositeScoreBlock({ payload }: { payload: CompositeScoreMetric }) {
+  const score = payload.score_composite;
+  const color = score != null && score >= 60 ? "#166534" : score != null && score >= 40 ? "#b45309" : "#991b1b";
+  const bg =
+    score != null && score >= 60
+      ? "rgba(22,101,52,0.08)"
+      : score != null && score >= 40
+        ? "rgba(180,83,9,0.08)"
+        : "rgba(153,27,27,0.08)";
+
+  return (
+    <div style={{ border: `1px solid ${color}`, borderRadius: 8, background: bg, padding: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+        <strong style={{ color: "#111827", fontSize: 14 }}>
+          Composite : {score != null ? `${Math.round(score)}/100` : "—"}
+        </strong>
+        {payload.foncier_redhibitoire && (
+          <span style={{ fontSize: 11, color: "#991b1b", fontWeight: 700 }}>Foncier rédhibitoire</span>
+        )}
+      </div>
+      {payload.message ? (
+        <p style={{ margin: 0, fontSize: 12, color: "#4b5563", lineHeight: 1.4 }}>{payload.message}</p>
+      ) : (
+        <p style={{ margin: 0, fontSize: 12, color: "#4b5563" }}>
+          60 % score éco + 40 % attractivité foncière
+          {payload.attractivite_fonciere != null ? ` (attractivité ${Math.round(payload.attractivite_fonciere)}/100)` : ""}.
+        </p>
+      )}
+    </div>
+  );
+}
+
 
 export interface RankingLineProps {
   idu: string;
@@ -444,6 +696,9 @@ export function RankingLine({
     ? parseParcelScorePayload((scoreRow.metric_value_jsonb ?? {}) as Record<string, unknown>)
     : null;
 
+  const duretePayload = getDureteFonciereMetric(metrics);
+  const compositePayload = getCompositeScoreMetric(metrics);
+
   const hasVisibleMetrics = metrics.some((m) => VISIBLE_METRIC_KEYS.has(m.metric_key));
 
   return (
@@ -459,6 +714,20 @@ export function RankingLine({
         <section className="ranking-metric-block">
           <h4 className="ranking-metric-title">Score écologique</h4>
           <ScoreBlock payload={scorePayload} />
+        </section>
+      ) : null}
+
+      {duretePayload ? (
+        <section className="ranking-metric-block">
+          <h4 className="ranking-metric-title">Dureté & attractivité foncière</h4>
+          <DureteFonciereBlock payload={duretePayload} />
+        </section>
+      ) : null}
+
+      {compositePayload ? (
+        <section className="ranking-metric-block">
+          <h4 className="ranking-metric-title">Score composite</h4>
+          <CompositeScoreBlock payload={compositePayload} />
         </section>
       ) : null}
 

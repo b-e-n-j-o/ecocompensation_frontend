@@ -444,6 +444,22 @@
   background: #fff;
 }
 
+.eco-aoi-bv-names {
+  margin: 0.45rem 0 0;
+  padding: 0.55rem 0.7rem 0.55rem 1.35rem;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--eco-accent-hover);
+  border: 1px solid rgba(40, 159, 1, 0.25);
+  border-radius: 0.55rem;
+  background: #fff;
+  list-style: disc;
+}
+
+.eco-aoi-bv-names li + li {
+  margin-top: 0.2rem;
+}
+
 .eco-aoi-error {
   padding: 0.65rem 0.75rem;
   background: #fff5f4;
@@ -610,6 +626,11 @@
 .eco-aoi-legend-swatch--buffer {
   background: rgba(133, 227, 114, 0.35);
   border: 2px dashed var(--eco-accent);
+}
+
+.eco-aoi-legend-swatch--initial {
+  background: rgba(245, 200, 66, 0.35);
+  border: 2px dashed #d4a012;
 }
 
 /* Logs / progression */
@@ -846,7 +867,49 @@
   cursor: pointer;
 }
 
+.eco-national-exclusions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-top: 0.5rem;
+}
+
+.eco-national-exclusion-item {
+  align-items: flex-start;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--eco-border);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.eco-national-exclusion-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
 .eco-filter-fauna-detail {
   margin-top: 0.75rem;
   padding-left: 0.25rem;
+}
+
+.eco-zh-fieldset {
+  border: 1px solid var(--eco-border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem 1rem;
+  margin: 1rem 0 0;
+}
+
+.eco-zh-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.eco-zh-mode {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--eco-text);
 }

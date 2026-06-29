@@ -358,8 +358,51 @@
   font-size: 0.9rem;
 }
 
-@media (max-width: 960px) {
-  .results-split {
+.study-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+}
+
+.study-badge--faune {
+  background: rgba(16, 185, 129, 0.12);
+  color: #047857;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+.study-badge--zh {
+  background: rgba(14, 165, 233, 0.12);
+  color: #0369a1;
+  border: 1px solid rgba(14, 165, 233, 0.35);
+}
+
+.eco-zh-fieldset {
+  border: 1px solid var(--eco-border, #e8e8e8);
+  border-radius: 8px;
+  padding: 0.75rem 1rem 1rem;
+  margin: 1rem 0 0;
+}
+
+.eco-zh-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.eco-zh-mode {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--eco-text, #111);
+}
+
+@media (max-width: 960px) {  .results-split {
     flex-direction: column;
   }
 

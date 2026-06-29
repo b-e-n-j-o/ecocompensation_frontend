@@ -1,6 +1,7 @@
 import { CESBIO_LIBELLES } from "../../types";
 import type { CesbioLibelle } from "../../types";
 import { FaunaSpeciesPicker } from "../../components/FilterPanel/FaunaSpeciesPicker";
+import { SelectNationalExclusions } from "./SelectNationalExclusions";
 
 export type FaunaFilterCriterion = {
   species: string;
@@ -20,6 +21,8 @@ type Props = {
   onFaunaSpeciesChange: (v: string[]) => void;
   faunaDistM: number;
   onFaunaDistMChange: (v: number) => void;
+  excludedLayers: string[];
+  onExcludedLayersChange: (v: string[]) => void;
   disabled?: boolean;
 };
 
@@ -36,6 +39,8 @@ export function SelectFilterCriteria({
   onFaunaSpeciesChange,
   faunaDistM,
   onFaunaDistMChange,
+  excludedLayers,
+  onExcludedLayersChange,
   disabled = false,
 }: Props) {
   function toggleCesbio(lib: CesbioLibelle) {
@@ -145,6 +150,12 @@ export function SelectFilterCriteria({
           </div>
         )}
       </div>
+
+      <SelectNationalExclusions
+        excludedLayers={excludedLayers}
+        onExcludedLayersChange={onExcludedLayersChange}
+        disabled={disabled}
+      />
     </div>
   );
 }

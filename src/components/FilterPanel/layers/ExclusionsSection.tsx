@@ -6,6 +6,8 @@ import type { CSSProperties } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SectionCard, filterTheme, Hint } from "../shared";
 import { fetchPoolIndesirablesCount } from "../../../api";
+import { getApiBaseUrl } from "../../../config/apiBase";
+import { NATIONAL_EXCLUSION_LAYERS } from "../../../constants/nationalExclusionLayers";
 
 interface LayerInfo {
   key: string;
@@ -28,8 +30,14 @@ export function ExclusionsSection({ projectId, value, onChange }: ExclusionsSect
   /** Natura 2000 : filtre dédié plus bas, pas dans les exclusions scoring. */
   const selectableLayers = useMemo(() => {
     const base = layers.filter((l) => l.key !== "natura2000");
+    const national = NATIONAL_EXCLUSION_LAYERS.map((l) => ({
+      key: l.key,
+      label: l.label,
+      fast: true,
+    }));
     return [
-      ...base,
+      ...national,
+      ...base.filter((l) => !national.some((n) => n.key === l.key)),
       {
         key: PROJECT_INDESIRABLES_KEY,
         label: `Parcelles indésirables du projet (${projectIndesirablesCount})`,
@@ -39,7 +47,7 @@ export function ExclusionsSection({ projectId, value, onChange }: ExclusionsSect
   }, [layers, projectIndesirablesCount]);
 
   useEffect(() => {
-    const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+    const API = getApiBaseUrl();
     fetch(`${API}/api/layers`)
       .then((res) => res.json())
       .then((data: LayerInfo[]) => setLayers(data))
@@ -94,7 +102,7 @@ export function ExclusionsSection({ projectId, value, onChange }: ExclusionsSect
   return (
     <SectionCard title="Exclusions automatiques" icon="⊘" accent="red" collapsible>
       <Hint>
-        Les parcelles ne seront pas pénalisées par les données des couches listées (ex. masquer le GEOMCE du scoring).
+        Les parcelles intersectant une couche cochée seront exclues (GEOMCE, préemption ENS, ENS…).
         Natura 2000 se règle dans la section « Natura 2000 » du filtre, pas ici.
       </Hint>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
@@ -130,7 +138,9 @@ export function ExclusionsSection({ projectId, value, onChange }: ExclusionsSect
       </div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         {visibleKeys.map((key) => {
-          const layer = layers.find((l) => l.key === key);
+          const layer =
+            layers.find((l) => l.key === key) ??
+            NATIONAL_EXCLUSION_LAYERS.find((l) => l.key === key);
           const label = layer?.label ?? key;
           return (
             <button
@@ -138,7 +148,13 @@ export function ExclusionsSection({ projectId, value, onChange }: ExclusionsSect
               type="button"
               style={chipStyle(true)}
               onClick={() => toggleLayer(key)}
-              title={layer?.fast != null ? (layer.fast ? "Couche rapide" : "Couche longue / WFS") : ""}
+              title={
+                layer && "fast" in layer && layer.fast != null
+                  ? layer.fast
+                    ? "Couche rapide"
+                    : "Couche longue / WFS"
+                  : ""
+              }
             >
               <span>✕</span>
               <span>{label}</span>

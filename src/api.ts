@@ -10,23 +10,26 @@ import type {
 import type { FeatureCollection, Geometry, GeoJsonProperties } from "geojson";
 import {
   RESULTS_LAYERS,
+  getResultsLayerDefs,
   type ResultsThematicPreload,
 } from "./components/ResultPanel/MapResults/cartoCouchesRegistry";
+
+import { getApiBaseUrl, resolveApiUrl } from "./config/apiBase";
 
 /**
  * Base URL du backend.
  * En dev, chaîne vide → URLs relatives (`/api/...`) et proxy Vite : même origine, pas de CORS.
- * Sinon `fetch` vers `http://localhost:8000` depuis le port 5173 peut échouer (« Failed to fetch »).
- * Surcharger avec VITE_API_URL si besoin d’appeler le backend en direct.
+ * En prod, `VITE_API_URL` ou fallback localhost:8000.
  */
-const API =
-  import.meta.env.VITE_API_URL?.trim() ||
-  (import.meta.env.DEV ? "" : "http://localhost:8000");
+const API = getApiBaseUrl();
+
+import type { StudyType } from "./types/studyTypes";
 
 export type ProjectSummary = {
   id: string;
   name: string;
   status: string;
+  study_type?: StudyType;
   layers_status: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -58,8 +61,9 @@ export type LayerInfo = {
   fast: boolean;
 };
 
-export async function fetchProjects(): Promise<ProjectSummary[]> {
-  const res = await fetch(`${API}/api/projects`);
+export async function fetchProjects(studyType?: StudyType): Promise<ProjectSummary[]> {
+  const qs = studyType ? `?study_type=${encodeURIComponent(studyType)}` : "";
+  const res = await fetch(`${API}/api/projects${qs}`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -96,6 +100,7 @@ export type FromParcelleBody = {
   numero: string;
   name: string;
   buffer_km: number;
+  study_type?: StudyType;
 };
 
 export type ParcelleRef = {
@@ -108,6 +113,7 @@ export type FromParcellesBody = {
   parcelles: ParcelleRef[];
   name: string;
   buffer_km: number;
+  study_type?: StudyType;
 };
 
 export type FromParcelleResponse = {
@@ -120,7 +126,20 @@ export type FromParcelleResponse = {
 
 export type FoncierUploadPreviewResponse = {
   area_ha: number;
+  /** Surface de la zone uploadée (ZH uniquement). */
+  upload_area_ha?: number;
+  /** Nombre de BV entiers retenus (ZH uniquement). */
+  bv_count?: number;
+  /** Libellés NomBVSpeMD des BV retenus (ZH uniquement). */
+  bv_names?: string[];
+  study_type?: StudyType;
   feature: {
+    type: "Feature";
+    geometry: Geometry;
+    properties: Record<string, unknown>;
+  };
+  /** Zone initiale uploadée en GeoJSON (ZH uniquement). */
+  upload_feature?: {
     type: "Feature";
     geometry: Geometry;
     properties: Record<string, unknown>;
@@ -133,6 +152,10 @@ export type FoncierImportResponse = {
   project_id: string;
   area_ha: number;
   buffer_km: number;
+  study_type?: StudyType;
+  bv_count?: number;
+  bv_names?: string[];
+  aoi_area_ha?: number;
 };
 
 export type ProjectContextGeometryResponse = {
@@ -336,9 +359,13 @@ export async function createProjectFromParcelles(
   return res.json();
 }
 
-export async function previewFoncierUpload(file: File): Promise<FoncierUploadPreviewResponse> {
+export async function previewFoncierUpload(
+  file: File,
+  studyType?: StudyType,
+): Promise<FoncierUploadPreviewResponse> {
   const form = new FormData();
   form.append("file", file);
+  if (studyType) form.append("study_type", studyType);
   const res = await fetch(`${API}/api/foncier/preview`, {
     method: "POST",
     body: form,
@@ -350,11 +377,13 @@ export async function previewFoncierUpload(file: File): Promise<FoncierUploadPre
 export async function createProjectFromFoncierUpload(params: {
   name: string;
   buffer_km: number;
+  study_type?: StudyType;
   file: File;
 }): Promise<FoncierImportResponse> {
   const form = new FormData();
   form.append("name", params.name);
   form.append("buffer_km", String(params.buffer_km));
+  form.append("study_type", params.study_type ?? "faune_buffer");
   form.append("file", params.file);
   const res = await fetch(`${API}/api/foncier/import`, {
     method: "POST",
@@ -410,6 +439,15 @@ export type FilterPipelineBody = {
   miller_thresh: number;
   cesbio_libelles: string[];
   fauna_criteria: { species: string; dist_m: number }[];
+  zone_humide_mode?: "ignore" | "intersect" | "exclude";
+  zones_humides_probables_mode?: "ignore" | "intersect" | "exclude";
+  /** Surface min. (ha) de ZH établie intersectant la parcelle (mode intersect). */
+  min_zone_humide_ha?: number;
+  /** Couches nationales à exclure si intersection (geomce, preemption_ens, ens). */
+  excluded_layers?: string[];
+  /** Distance max (m) au tronçon hydro ; omis ou null = critère ignoré. */
+  troncons_hydros_max_dist_m?: number | null;
+  surfaces_hydros_max_dist_m?: number | null;
 };
 
 export async function fetchFilterPhases(): Promise<FilterPhaseInfo[]> {
@@ -608,6 +646,33 @@ export async function computePoolRunScoreOnly(projectId: string, runId: string):
   if (!res.ok) throw new Error(await res.text());
 }
 
+export type PoolDureteRecomputeResponse = {
+  status: string;
+  project_id: string;
+  run_id: string;
+  metric_key: string;
+  updated_count: number;
+  active_idus: number;
+  skipped_indesirables: number;
+  eligible_pm: number;
+  pm_upserts: number;
+  composite_updated: number;
+  duration_s: number;
+};
+
+/** Dureté foncière (attractivité) sur le pool actif — hors parcelles indésirables. */
+export async function computePoolRunDurete(
+  projectId: string,
+  runId: string,
+): Promise<PoolDureteRecomputeResponse> {
+  const res = await fetch(
+    `${API}/api/projects/${projectId}/pool/runs/${runId}/recompute-durete`,
+    { method: "POST" },
+  );
+  if (!res.ok) await throwHttpError(res);
+  return res.json();
+}
+
 export async function fetchUfResults(
   projectId: string,
   params?: {
@@ -615,12 +680,18 @@ export async function fetchUfResults(
     cesbio_libelles?: string[];
     fauna_dist_m?: number;
     miller_thresh?: number;
+    study_type?: string;
+    min_zone_humide_ha?: number;
   },
 ): Promise<UfFilterResponse> {
   const q = new URLSearchParams();
   if (params?.fauna_species) q.set("fauna_species", params.fauna_species);
   if (params?.fauna_dist_m != null) q.set("fauna_dist_m", String(params.fauna_dist_m));
   if (params?.miller_thresh != null) q.set("miller_thresh", String(params.miller_thresh));
+  if (params?.study_type) q.set("study_type", params.study_type);
+  if (params?.min_zone_humide_ha != null) {
+    q.set("min_zone_humide_ha", String(params.min_zone_humide_ha));
+  }
   for (const lib of params?.cesbio_libelles ?? []) {
     q.append("cesbio_libelles", lib);
   }
@@ -790,15 +861,7 @@ export async function exportShp(
  * Même si `.env` définit `VITE_API_URL=http://localhost:8000`, ce cas est contourné ici.
  */
 function apiUrlForFetch(path: string): string {
-  const p = path.startsWith("/") ? path : `/${path}`;
-  if (import.meta.env.DEV && typeof window !== "undefined") {
-    return `${window.location.origin}${p}`;
-  }
-  const explicit = import.meta.env.VITE_API_URL?.trim();
-  if (explicit) {
-    return `${explicit.replace(/\/$/, "")}${p}`;
-  }
-  return `http://localhost:8000${p}`;
+  return resolveApiUrl(path);
 }
 
 function isSameOriginAsPage(url: string): boolean {
@@ -893,10 +956,14 @@ export async function fetchResultsLayerGeojson(
 export async function prefetchAllResultsThematicLayers(
   projectId: string,
   poolRunId?: string | null,
+  layerKeys?: string[],
 ): Promise<ResultsThematicPreload> {
+  const defs = layerKeys?.length
+    ? getResultsLayerDefs(layerKeys)
+    : RESULTS_LAYERS;
   const out: ResultsThematicPreload = {};
   await Promise.all(
-    RESULTS_LAYERS.map(async (def) => {
+    defs.map(async (def) => {
       try {
         const data = await fetchResultsLayerGeojson(projectId, def.key, poolRunId);
         out[def.key] = { geojson: data, error: null };

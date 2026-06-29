@@ -572,6 +572,7 @@
 .col-dist-espece { width: 88px; text-align: right; vertical-align: top; }
 .col-dist, .col-surf { width: 88px; text-align: right; }
 .col-eco { width: 72px; text-align: center; }
+.col-durete, .col-composite { width: 64px; text-align: center; }
 .col-pm, .col-prospect { width: 64px; text-align: center; }
 .col-indesirable {
   width: 36px;
@@ -597,6 +598,7 @@
 }
 
 .ranking-btn-select-mode,
+.ranking-btn-durete,
 .ranking-btn-keep-selected,
 .ranking-btn-select-cancel,
 .ranking-btn-select-all {
@@ -616,6 +618,22 @@
 
 .ranking-btn-select-mode:hover {
   background: rgba(37, 99, 235, 0.14);
+}
+
+.ranking-btn-durete {
+  border: 1px solid #7c3aed;
+  color: #5b21b6;
+  background: #faf5ff;
+}
+
+.ranking-btn-durete:hover:not(:disabled) {
+  background: #f3e8ff;
+  border-color: #6d28d9;
+}
+
+.ranking-btn-durete:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .ranking-selection-bar {

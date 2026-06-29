@@ -154,6 +154,12 @@ export interface FilterOptions {
   arrachage_vignes_mode: ArrachageVignesMode;
   /** Zones humides (`ecocompensation_results.zone_humide`) : intersecter, exclure, ou ignorer. */
   zone_humide_mode: ZoneHumideMode;
+  /** Surface min. (ha) de ZH établie intersectant la parcelle (mode intersect). 0 = toute intersection. */
+  min_zone_humide_ha?: number;
+  /** Distance max (m) au tronçon hydro (filter_v2 zones humides). */
+  troncons_hydros_max_dist_m?: number | null;
+  /** Distance max (m) à une surface hydro (filter_v2 zones humides). */
+  surfaces_hydros_max_dist_m?: number | null;
 
   /**
    * Remontées de nappes — `classefiab` dans `ecocompensation_results.remontee_de_nappes` ;
@@ -207,7 +213,7 @@ export const DEFAULT_FILTER: FilterOptions = {
   reserves_naturelles_mode: "ignore",
   znieff_mode: "ignore",
   carhab_nom_eunis: [],
-  excluded_layers: ["geomce"],
+  excluded_layers: ["geomce", "preemption_ens", "ens"],
   troncon_hydro_mode: "none",
   troncon_hydro_radius_m: 500,
   surface_hydro_mode: "none",
@@ -232,6 +238,35 @@ export interface ParcelleResult {
   miller: number;
   distance_km: number;
   dist_hydro_m: number | null;
+  /** Surface de zone humide établie intersectant la parcelle (ha). */
+  zone_humide_ha?: number;
+  /** Tronçons hydro retenus par le filtre (nom, nature, distance…). */
+  troncons_hydro_info?: TronconHydroMatch[];
+  /** Distance à la surface hydro la plus proche (m). */
+  dist_surface_hydro_m?: number | null;
+  /** Surface totale intersectant les surfaces hydro (ha). */
+  surface_hydro_ha?: number;
+  /** Surfaces hydro retenues par le filtre. */
+  surfaces_hydro_info?: SurfaceHydroMatch[];
+}
+
+export interface TronconHydroMatch {
+  cleabs?: string | null;
+  nom?: string | null;
+  nature?: string | null;
+  classe_de_largeur?: string | null;
+  numero_d_ordre?: number | null;
+  dist_m?: number | null;
+}
+
+export interface SurfaceHydroMatch {
+  cleabs?: string | null;
+  nom?: string | null;
+  nature?: string | null;
+  position_par_rapport_au_sol?: string | null;
+  statut?: string | null;
+  dist_m?: number | null;
+  intersect_ha?: number | null;
 }
 
 export interface FunnelStep {
@@ -306,6 +341,14 @@ export type RankingSortKey =
   | "veg_dominant"
   /** Ordre décroissant des parts `libelle_prio` selon la chaîne BD TOPO puis CESBIO du dernier filtre. */
   | "veg_priority"
+  /** Surface ZH intersectée (ha) — études zones humides. */
+  | "zone_humide_ha"
+  /** Distance au cours d'eau le plus proche (m). */
+  | "dist_hydro_m"
+  /** Surface hydro intersectée (ha). */
+  | "surface_hydro_ha"
+  /** Distance à la surface hydro la plus proche (m). */
+  | "dist_surface_hydro_m"
   /** Parcelles rattachées à une personne morale en premier. */
   | "pm_personne_morale"
   /** Propriétaires ayant déjà compensé (autre foncier) en premier. */

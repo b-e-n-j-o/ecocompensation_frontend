@@ -1,5 +1,10 @@
 import type { ProjectSummary } from "../../api";
 import type { PoolRunListItem } from "../../types";
+import type { StudyType } from "../../types/studyTypes";
+import { getStudyProfile, studyTypeFilterLabel } from "../../pages/Etude/studyProfiles";
+import { normalizeStudyType } from "../../types/studyTypes";
+
+type StudyTypeFilter = "all" | StudyType;
 
 type Props = {
   projectId: string | null;
@@ -7,6 +12,8 @@ type Props = {
   projectsLoading?: boolean;
   poolRuns: PoolRunListItem[];
   activeRunId: string | null;
+  studyTypeFilter?: StudyTypeFilter;
+  onStudyTypeFilterChange?: (filter: StudyTypeFilter) => void;
   onNewStudy?: () => void;
   onProjectChange: (projectId: string) => void;
   onRunChange: (runId: string) => void;
@@ -18,11 +25,16 @@ export function ResultsToolbar({
   projectsLoading = false,
   poolRuns,
   activeRunId,
+  studyTypeFilter = "all",
+  onStudyTypeFilterChange,
   onNewStudy,
   onProjectChange,
   onRunChange,
 }: Props) {
   const currentProject = projects.find((p) => p.id === projectId);
+  const currentProfile = currentProject
+    ? getStudyProfile(normalizeStudyType(currentProject.study_type))
+    : null;
 
   return (
     <header className="results-toolbar">
@@ -35,6 +47,21 @@ export function ResultsToolbar({
       </div>
 
       <div className="results-toolbar__center">
+        {onStudyTypeFilterChange && (
+          <label className="results-toolbar__field">
+            <span className="results-toolbar__label">Type</span>
+            <select
+              className="results-toolbar__select"
+              value={studyTypeFilter}
+              onChange={(e) => onStudyTypeFilterChange(e.target.value as StudyTypeFilter)}
+            >
+              <option value="all">{studyTypeFilterLabel("all")}</option>
+              <option value="faune_buffer">{studyTypeFilterLabel("faune_buffer")}</option>
+              <option value="zones_humides_intra">{studyTypeFilterLabel("zones_humides_intra")}</option>
+            </select>
+          </label>
+        )}
+
         <label className="results-toolbar__field">
           <span className="results-toolbar__label">Projet</span>
           <select
@@ -47,11 +74,14 @@ export function ResultsToolbar({
             }}
           >
             {!projectId && <option value="">— Sélectionner —</option>}
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name || p.id.slice(0, 8)}
-              </option>
-            ))}
+            {projects.map((p) => {
+              const profile = getStudyProfile(normalizeStudyType(p.study_type));
+              return (
+                <option key={p.id} value={p.id}>
+                  [{profile.shortLabel}] {p.name || p.id.slice(0, 8)}
+                </option>
+              );
+            })}
           </select>
         </label>
 
@@ -94,6 +124,11 @@ export function ResultsToolbar({
       </div>
 
       <div className="results-toolbar__right">
+        {currentProfile && (
+          <span className={currentProfile.badgeClass} title={currentProfile.methodologyHint}>
+            {currentProfile.badgeLabel}
+          </span>
+        )}
         {currentProject && (
           <span className="results-toolbar__meta">
             {currentProject.status === "ready" ? "Prêt" : currentProject.status}

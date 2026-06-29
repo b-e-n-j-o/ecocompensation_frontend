@@ -40,7 +40,10 @@ const SATELLITE_STYLE: maplibregl.StyleSpecification = {
 
 export interface CartoAoiProps {
   className?: string;
+  /** Emprise principale (BV union en ZH, parcelle / fichier sinon). */
   parcelFeature?: Feature<Polygon | MultiPolygon> | null;
+  /** Zone initiale uploadée — affichée en sous-couche discrète (ZH). */
+  initialZoneFeature?: Feature<Polygon | MultiPolygon> | null;
   bufferKm?: number;
 }
 
@@ -64,7 +67,12 @@ function extendBoundsFromCoords(
   for (const item of coords) extendBoundsFromCoords(bounds, item);
 }
 
-export function CartoAoi({ className, parcelFeature, bufferKm = 0 }: CartoAoiProps) {
+export function CartoAoi({
+  className,
+  parcelFeature,
+  initialZoneFeature,
+  bufferKm = 0,
+}: CartoAoiProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
 
@@ -91,6 +99,10 @@ export function CartoAoi({ className, parcelFeature, bufferKm = 0 }: CartoAoiPro
         type: "geojson",
         data: emptyFeatureCollection(),
       });
+      map.addSource("initial-zone-source", {
+        type: "geojson",
+        data: emptyFeatureCollection(),
+      });
 
       map.addLayer({
         id: "aoi-buffer-fill",
@@ -110,6 +122,26 @@ export function CartoAoi({ className, parcelFeature, bufferKm = 0 }: CartoAoiPro
           "line-width": 2,
           "line-dasharray": [2, 1.5],
           "line-opacity": 0.85,
+        },
+      });
+      map.addLayer({
+        id: "initial-zone-fill",
+        type: "fill",
+        source: "initial-zone-source",
+        paint: {
+          "fill-color": "#f5c842",
+          "fill-opacity": 0.2,
+        },
+      });
+      map.addLayer({
+        id: "initial-zone-line",
+        type: "line",
+        source: "initial-zone-source",
+        paint: {
+          "line-color": "#d4a012",
+          "line-width": 1.5,
+          "line-dasharray": [2, 2],
+          "line-opacity": 0.9,
         },
       });
       map.addLayer({
@@ -145,17 +177,24 @@ export function CartoAoi({ className, parcelFeature, bufferKm = 0 }: CartoAoiPro
     if (!map || !map.isStyleLoaded()) return;
     const parcelSource = map.getSource("parcel-source") as maplibregl.GeoJSONSource | undefined;
     const bufferSource = map.getSource("aoi-buffer-source") as maplibregl.GeoJSONSource | undefined;
-    if (!parcelSource || !bufferSource) return;
+    const initialZoneSource = map.getSource("initial-zone-source") as maplibregl.GeoJSONSource | undefined;
+    if (!parcelSource || !bufferSource || !initialZoneSource) return;
 
     if (!parcelFeature) {
       parcelSource.setData(emptyFeatureCollection());
       bufferSource.setData(emptyFeatureCollection());
+      initialZoneSource.setData(emptyFeatureCollection());
       return;
     }
 
     parcelSource.setData({
       type: "FeatureCollection",
       features: [parcelFeature],
+    });
+
+    initialZoneSource.setData({
+      type: "FeatureCollection",
+      features: initialZoneFeature ? [initialZoneFeature] : [],
     });
 
     let bufferedFeature: Feature<Polygon | MultiPolygon> | null = null;
@@ -174,13 +213,16 @@ export function CartoAoi({ className, parcelFeature, bufferKm = 0 }: CartoAoiPro
 
     const bounds = new maplibregl.LngLatBounds();
     extendBoundsFromCoords(bounds, parcelFeature.geometry.coordinates);
+    if (initialZoneFeature?.geometry) {
+      extendBoundsFromCoords(bounds, initialZoneFeature.geometry.coordinates);
+    }
     if (bufferedFeature?.geometry) {
       extendBoundsFromCoords(bounds, bufferedFeature.geometry.coordinates);
     }
     if (!bounds.isEmpty()) {
       map.fitBounds(bounds, { padding: 56, duration: 700, maxZoom: 14 });
     }
-  }, [parcelFeature, bufferKm]);
+  }, [parcelFeature, initialZoneFeature, bufferKm]);
 
   return (
     <div

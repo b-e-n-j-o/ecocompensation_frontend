@@ -1,10 +1,9 @@
 /**
  * Résumé lisible d’un run à partir de `parcelles_pool_runs.options_json`
  * (même schéma que `FilterOptions` / `FiltreOptionsDTO` côté API).
- *
- * Note : dans `vrai_filtre.py`, le filtre spatial est l’AOI ; `radius_start_km` /
- * `radius_min_km` ne réduisent plus le périmètre en SQL (valeurs conservées pour l’UI / historique).
  */
+
+import { exclusionLabel } from "../constants/nationalExclusionLayers";
 
 function str(v: unknown): string {
   if (v == null) return "";
@@ -102,6 +101,36 @@ export function formatRunFilterSummaryLines(opts: Record<string, unknown> | unde
   lines.push(
     `Arrachage vignes : ${layerModeFr(opts.arrachage_vignes_mode)} · Zones humides : ${layerModeFr(opts.zone_humide_mode)}`,
   );
+
+  const exLayers = Array.isArray(opts.excluded_layers) ? opts.excluded_layers.map(String) : [];
+  if (exLayers.length > 0) {
+    lines.push(
+      `Exclusions actives : ${exLayers.map((k) => exclusionLabel(k)).join(" · ")}`,
+    );
+  }
+
+  const minZh = opts.min_zone_humide_ha;
+  if (opts.zone_humide_mode === "intersect" && typeof minZh === "number" && minZh > 0) {
+    lines.push(`Surface ZH intersectée ≥ ${Number(minZh).toFixed(2)} ha`);
+  }
+
+  const hydroMax = opts.troncons_hydros_max_dist_m;
+  if (typeof hydroMax === "number") {
+    lines.push(
+      hydroMax <= 0
+        ? "Tronçons hydro : intersection directe"
+        : `Tronçons hydro : ≤ ${Math.round(hydroMax)} m`,
+    );
+  }
+
+  const surfMax = opts.surfaces_hydros_max_dist_m;
+  if (typeof surfMax === "number") {
+    lines.push(
+      surfMax <= 0
+        ? "Surfaces hydro : intersection directe"
+        : `Surfaces hydro : ≤ ${Math.round(surfMax)} m`,
+    );
+  }
 
   const rdn = opts.remontee_nappes_classefiab;
   const nRdn = Array.isArray(rdn) ? rdn.length : 0;

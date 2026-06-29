@@ -3,6 +3,27 @@ import type { ParcelPoolMetricRow, VegetationHybrideValue } from "../types";
 export type FilterEnrichPayload = {
   veg_libelles?: string[];
   fauna_distances?: Record<string, number>;
+  zone_humide_ha?: number;
+  dist_hydro_m?: number;
+  troncons_hydro_info?: Array<{
+    cleabs?: string | null;
+    nom?: string | null;
+    nature?: string | null;
+    classe_de_largeur?: string | null;
+    numero_d_ordre?: number | null;
+    dist_m?: number | null;
+  }>;
+  dist_surface_hydro_m?: number;
+  surface_hydro_ha?: number;
+  surfaces_hydro_info?: Array<{
+    cleabs?: string | null;
+    nom?: string | null;
+    nature?: string | null;
+    position_par_rapport_au_sol?: string | null;
+    statut?: string | null;
+    dist_m?: number | null;
+    intersect_ha?: number | null;
+  }>;
 };
 
 /** Métrique légère filter_v2 (zonage CESBIO + distances faune KNN). */
@@ -165,6 +186,128 @@ export function getPersonnesMoralesMetric(
         ? rec.surface_deja_en_mc_m2
         : null,
   };
+}
+
+export type DureteFonciereMetric = {
+  eligible: boolean;
+  reason: string | null;
+  score_final: number | null;
+  attractivite_fonciere: number | null;
+  niveau_durete: string | null;
+  explication: string | null;
+  siren: string | null;
+  denomination: string | null;
+  intersects_arrachage_vigne: boolean;
+  detail_axes: {
+    axe1?: number | null;
+    axe1_note?: string | null;
+    axe2?: number | null;
+    axe2_note?: string | null;
+    axe3?: number | null;
+    axe3_note?: string | null;
+    axe4?: number | null;
+    axe4_note?: string | null;
+    surcharges?: number | null;
+    surcharges_note?: string | null;
+  } | null;
+};
+
+export type CompositeScoreMetric = {
+  score_composite: number | null;
+  composite_status: string | null;
+  attractivite_fonciere: number | null;
+  durete_fonciere: number | null;
+  foncier_redhibitoire: boolean;
+  message: string | null;
+};
+
+/** Score dureté 0–100 (plus élevé = plus difficile à acquérir). */
+export function getDureteFonciereMetric(
+  metrics: ParcelPoolMetricRow[] | undefined,
+): DureteFonciereMetric | null {
+  const row = metrics?.find((m) => m.metric_key === "durete_fonciere");
+  const v = row?.metric_value_jsonb;
+  if (!v || typeof v !== "object") return null;
+  const rec = v as Record<string, unknown>;
+  if (typeof rec.eligible !== "boolean") return null;
+  const score =
+    typeof rec.score_final === "number" && Number.isFinite(rec.score_final) ? rec.score_final : null;
+  const attractivite =
+    score != null && score >= 0 && score <= 100 ? Math.round((100 - score) * 100) / 100 : null;
+  const axesRaw = rec.detail_axes;
+  const detail_axes =
+    axesRaw && typeof axesRaw === "object" ? (axesRaw as DureteFonciereMetric["detail_axes"]) : null;
+  return {
+    eligible: rec.eligible,
+    reason: typeof rec.reason === "string" ? rec.reason : null,
+    score_final: score,
+    attractivite_fonciere: attractivite,
+    niveau_durete: typeof rec.niveau_durete === "string" ? rec.niveau_durete : null,
+    explication: typeof rec.explication === "string" ? rec.explication : null,
+    siren: typeof rec.siren === "string" ? rec.siren : rec.siren == null ? null : String(rec.siren),
+    denomination:
+      typeof rec.denomination === "string" ? rec.denomination : rec.denomination == null ? null : String(rec.denomination),
+    intersects_arrachage_vigne: rec.intersects_arrachage_vigne === true,
+    detail_axes,
+  };
+}
+
+export function getCompositeScoreMetric(
+  metrics: ParcelPoolMetricRow[] | undefined,
+): CompositeScoreMetric | null {
+  const row = metrics?.find((m) => m.metric_key === "composite_score_v1");
+  const v = row?.metric_value_jsonb;
+  if (!v || typeof v !== "object") return null;
+  const rec = v as Record<string, unknown>;
+  const score =
+    typeof rec.score_composite === "number" && Number.isFinite(rec.score_composite)
+      ? rec.score_composite
+      : null;
+  return {
+    score_composite: score,
+    composite_status: typeof rec.composite_status === "string" ? rec.composite_status : null,
+    attractivite_fonciere:
+      typeof rec.attractivite_fonciere === "number" && Number.isFinite(rec.attractivite_fonciere)
+        ? rec.attractivite_fonciere
+        : null,
+    durete_fonciere:
+      typeof rec.durete_fonciere === "number" && Number.isFinite(rec.durete_fonciere)
+        ? rec.durete_fonciere
+        : null,
+    foncier_redhibitoire: rec.foncier_redhibitoire === true,
+    message: typeof rec.message === "string" ? rec.message : null,
+  };
+}
+
+/** Badge tableau : dureté élevée = rouge, faible = vert. */
+export function dureteBadgeStyle(score: number | null | undefined): { bg: string; fg: string } {
+  if (score == null || !Number.isFinite(score)) return { bg: "#e5e7eb", fg: "#374151" };
+  if (score >= 81) return { bg: "#fee2e2", fg: "#991b1b" };
+  if (score >= 61) return { bg: "#ffedd5", fg: "#c2410c" };
+  if (score >= 41) return { bg: "#fef3c7", fg: "#92400e" };
+  if (score >= 21) return { bg: "#dcfce7", fg: "#166534" };
+  return { bg: "#d1fae5", fg: "#065f46" };
+}
+
+export function compositeBadgeStyle(score: number | null | undefined): { bg: string; fg: string } {
+  if (score == null || !Number.isFinite(score)) return { bg: "#e5e7eb", fg: "#374151" };
+  if (score >= 80) return { bg: "#dcfce7", fg: "#166534" };
+  if (score >= 60) return { bg: "#bbf7d0", fg: "#15803d" };
+  if (score >= 40) return { bg: "#fef3c7", fg: "#92400e" };
+  return { bg: "#fee2e2", fg: "#991b1b" };
+}
+
+export function dureteSkipReasonLabel(reason: string | null | undefined): string {
+  switch (reason) {
+    case "not_pm":
+      return "Hors personne morale";
+    case "missing_or_invalid_siren":
+      return "SIREN invalide";
+    case "pipeline_exception":
+      return "Erreur pipeline";
+    default:
+      return reason?.trim() ? reason : "Non éligible";
+  }
 }
 
 function boolDesc(a: boolean, b: boolean): number {

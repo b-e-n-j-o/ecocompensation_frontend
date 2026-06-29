@@ -13,15 +13,19 @@ import type { CesbioLibelle } from "../../types";
 import type { Feature, MultiPolygon, Polygon } from "geojson";
 import { CartoAoi } from "./CartoAoi";
 import { SelectFilterCriteria } from "./SelectFilterCriteria";
+import { SelectFilterCriteriaZonesHumides } from "./SelectFilterCriteriaZonesHumides";
 import { PipelineProgressPanel } from "../../components/PipelineProgressPanel";
+import type { StudyType } from "../../types/studyTypes";
+import type { ZoneHumideMode } from "../../types";
+import { DEFAULT_ZH_CRITERIA, getStudyProfile } from "../Etude/studyProfiles";
+import { DEFAULT_EXCLUDED_LAYERS } from "../../constants/nationalExclusionLayers";
 import {
   applyWsToPipelineProgress,
   INITIAL_PIPELINE_PROGRESS,
   type PipelineProgress,
 } from "../../utils/pipelineProgress";
+import { getWsBaseUrl } from "../../config/apiBase";
 import "./createAoiPage.css";
-
-const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
 type ParcelleFeature = Feature<Polygon | MultiPolygon>;
 
@@ -35,11 +39,18 @@ const DEFAULT_FILTER_PHASES: FilterPhaseInfo[] = [
 ];
 
 interface CreateAoiPageProps {
+  studyType?: StudyType;
   onDone: (projectId: string) => void;
   onBack: () => void;
 }
 
-export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
+export function CreateAoiPage({
+  studyType = "faune_buffer",
+  onDone,
+  onBack,
+}: CreateAoiPageProps) {
+  const isZh = studyType === "zones_humides_intra";
+  const profile = getStudyProfile(studyType);
   const [codeInsee, setCodeInsee] = useState("");
   const [section, setSection] = useState("");
   const [numero, setNumero] = useState("");
@@ -52,11 +63,14 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
   const [summary, setSummary] = useState<SummaryState>(null);
   const [parcelFeature, setParcelFeature] = useState<ParcelleFeature | null>(null);
   const [isSearchingParcel, setIsSearchingParcel] = useState(false);
-  const [sourceMode, setSourceMode] = useState<"parcelle" | "fichier">("fichier");
+  const [sourceMode, setSourceMode] = useState<"parcelle" | "fichier">(isZh ? "fichier" : "fichier");
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [uploadedFeature, setUploadedFeature] = useState<ParcelleFeature | null>(null);
+  const [initialUploadFeature, setInitialUploadFeature] = useState<ParcelleFeature | null>(null);
+  const [bvPreviewCount, setBvPreviewCount] = useState<number | null>(null);
+  const [bvPreviewNames, setBvPreviewNames] = useState<string[]>([]);
   const [isUploadingGeom, setIsUploadingGeom] = useState(false);
   const [filterPhases, setFilterPhases] = useState<FilterPhaseInfo[]>(DEFAULT_FILTER_PHASES);
   const [phasesLoadError, setPhasesLoadError] = useState<string | null>(null);
@@ -77,10 +91,18 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
   const [selectedExistingProjectId, setSelectedExistingProjectId] = useState<string>("");
   const [projectTab, setProjectTab] = useState<"new" | "existing">("new");
   const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
-  const logEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const [filterSession, setFilterSession] = useState(0);
   const [ufInProgress, setUfInProgress] = useState(false);
+  const [zonesHumidesProbablesMode, setZonesHumidesProbablesMode] = useState<ZoneHumideMode>(
+    DEFAULT_ZH_CRITERIA.zones_humides_probables_mode,
+  );
+  const [minZoneHumideHa, setMinZoneHumideHa] = useState(DEFAULT_ZH_CRITERIA.min_zone_humide_ha);
+  const [tronconsHydroEnabled, setTronconsHydroEnabled] = useState(DEFAULT_ZH_CRITERIA.troncons_hydro_enabled);
+  const [tronconsHydroMaxDistM, setTronconsHydroMaxDistM] = useState(DEFAULT_ZH_CRITERIA.troncons_hydro_max_dist_m);
+  const [surfacesHydroEnabled, setSurfacesHydroEnabled] = useState(DEFAULT_ZH_CRITERIA.surfaces_hydro_enabled);
+  const [surfacesHydroMaxDistM, setSurfacesHydroMaxDistM] = useState(DEFAULT_ZH_CRITERIA.surfaces_hydro_max_dist_m);
+  const [excludedLayers, setExcludedLayers] = useState<string[]>([...DEFAULT_EXCLUDED_LAYERS]);
 
   useEffect(() => {
     let cancelled = false;
@@ -144,15 +166,11 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
   }, [suggestedName, nameTouched]);
 
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [pipelineProgress, summary]);
-
-  useEffect(() => {
     if (!projectId || filterSession === 0) return;
     setPipelineProgress(INITIAL_PIPELINE_PROGRESS);
     setSummary(null);
     setUfInProgress(false);
-    const WS = API.replace(/^http/, "ws");
+    const WS = getWsBaseUrl();
     const ws = new WebSocket(`${WS}/ws/projects/${projectId}/fetch-progress`);
     wsRef.current = ws;
 
@@ -187,6 +205,13 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
 
         setPipelineProgress((prev) => applyWsToPipelineProgress(prev, data));
 
+        if (ev === "error") {
+          setStep("error");
+          setError(typeof data.message === "string" ? data.message : "Erreur pendant le filtrage.");
+          setUfInProgress(false);
+          return;
+        }
+
         if (ev === "complete") {
           setSummary({
             n_ok: data.n_ok ?? 0,
@@ -194,6 +219,16 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
             n_err: data.n_err ?? 0,
             total_s: data.total_s ?? 0,
           });
+          if ((data.n_err ?? 0) > 0) {
+            setStep("error");
+            setError(
+              typeof data.message === "string"
+                ? data.message
+                : "Le filtrage a échoué côté serveur. Relancez l'étude après correction.",
+            );
+            setUfInProgress(false);
+            return;
+          }
           setStep("done");
           setUfInProgress(true);
         }
@@ -217,11 +252,30 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
     e.preventDefault();
     setError(null);
 
-    if (cesbioLibelles.length === 0 && (!faunaEnabled || faunaSpecies.length === 0)) {
+    if (isZh) {
+      if (
+        minZoneHumideHa <= 0
+        && zonesHumidesProbablesMode === "ignore"
+        && !tronconsHydroEnabled
+        && !surfacesHydroEnabled
+        && !(faunaEnabled && faunaSpecies.length > 0)
+      ) {
+        setError("Activez au moins un critère zones humides, hydrographique ou faunistique.");
+        return;
+      }
+      if (sourceMode !== "fichier" || !uploadedFile || !uploadedFeature) {
+        setError("Le mode zones humides requiert une zone initiale (SHP/ZIP ou GPKG).");
+        return;
+      }
+    } else if (cesbioLibelles.length === 0 && (!faunaEnabled || faunaSpecies.length === 0)) {
       setError("Sélectionnez au moins un libellé CESBIO ou une espèce faune.");
       return;
     }
-    if (faunaEnabled && faunaSpecies.length === 0) {
+    if (isZh && faunaEnabled && faunaSpecies.length === 0) {
+      setError("Sélectionnez au moins une espèce si le filtre faune est activé.");
+      return;
+    }
+    if (!isZh && faunaEnabled && faunaSpecies.length === 0) {
       setError("Sélectionnez au moins une espèce si le filtre faune est activé.");
       return;
     }
@@ -263,6 +317,7 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
               section: section.trim().toUpperCase(),
               numero: numero.trim(),
             }];
+      const effectiveBufferKm = isZh ? 0 : bufferKm;
       const res =
         sourceMode === "parcelle"
           ? (
@@ -270,32 +325,51 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
               ? await createProjectFromParcelles({
                   parcelles: parcellesForProject,
                   name: projectName,
-                  buffer_km: bufferKm,
+                  buffer_km: effectiveBufferKm,
+                  study_type: studyType,
                 })
               : await createProjectFromParcelle({
                   code_insee: parcellesForProject[0].code_insee,
                   section: parcellesForProject[0].section,
                   numero: parcellesForProject[0].numero,
                   name: projectName,
-                  buffer_km: bufferKm,
+                  buffer_km: effectiveBufferKm,
+                  study_type: studyType,
                 } satisfies FromParcelleBody)
           )
           : await createProjectFromFoncierUpload({
               name: projectName,
-              buffer_km: bufferKm,
+              buffer_km: effectiveBufferKm,
+              study_type: studyType,
               file: uploadedFile as File,
             });
       setProjectId(res.project_id);
       setStep("fetching");
       setFilterSession((s) => s + 1);
-      await startFilterPipeline(res.project_id, {
-        min_area_ha: minAreaHa,
-        miller_thresh: millerThresh,
-        cesbio_libelles: cesbioLibelles,
-        fauna_criteria: faunaEnabled
-          ? faunaSpecies.map((species) => ({ species, dist_m: faunaDistM }))
-          : [],
-      });
+      await startFilterPipeline(res.project_id, isZh
+        ? {
+            min_area_ha: minAreaHa,
+            miller_thresh: millerThresh,
+            cesbio_libelles: [],
+            fauna_criteria: faunaEnabled
+              ? faunaSpecies.map((species) => ({ species, dist_m: faunaDistM }))
+              : [],
+            zone_humide_mode: minZoneHumideHa > 0 ? "intersect" : "ignore",
+            zones_humides_probables_mode: zonesHumidesProbablesMode,
+            min_zone_humide_ha: minZoneHumideHa,
+            excluded_layers: excludedLayers,
+            troncons_hydros_max_dist_m: tronconsHydroEnabled ? tronconsHydroMaxDistM : null,
+            surfaces_hydros_max_dist_m: surfacesHydroEnabled ? surfacesHydroMaxDistM : null,
+          }
+        : {
+            min_area_ha: minAreaHa,
+            miller_thresh: millerThresh,
+            cesbio_libelles: cesbioLibelles,
+            fauna_criteria: faunaEnabled
+              ? faunaSpecies.map((species) => ({ species, dist_m: faunaDistM }))
+              : [],
+            excluded_layers: excludedLayers,
+          });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur création projet");
       setStep("error");
@@ -310,8 +384,13 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
   const phasesReady = filterPhases.length > 0 && !phasesLoadError;
   const sourceFeature = sourceMode === "parcelle" ? parcelFeature : uploadedFeature;
   const geoFileAccept = ".gpkg,.zip";
-  const hasFilterCriteria =
-    cesbioLibelles.length > 0 || (faunaEnabled && faunaSpecies.length > 0);
+  const hasFilterCriteria = isZh
+    ? minZoneHumideHa > 0
+      || zonesHumidesProbablesMode !== "ignore"
+      || tronconsHydroEnabled
+      || surfacesHydroEnabled
+      || (faunaEnabled && faunaSpecies.length > 0)
+    : cesbioLibelles.length > 0 || (faunaEnabled && faunaSpecies.length > 0);
   const canCreateAoi =
     step === "form" &&
     !isSearchingParcel &&
@@ -319,7 +398,11 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
     !!sourceFeature &&
     hasFilterCriteria &&
     (!faunaEnabled || faunaSpecies.length > 0) &&
-    (sourceMode === "parcelle" ? (ufParcelles.length > 0 || (!!codeInsee.trim() && !!section.trim() && !!numero.trim())) : !!uploadedFile) &&
+    (isZh
+      ? !!uploadedFile
+      : sourceMode === "parcelle"
+        ? (ufParcelles.length > 0 || (!!codeInsee.trim() && !!section.trim() && !!numero.trim()))
+        : !!uploadedFile) &&
     phasesReady;
   const canLoadExistingProject = !!selectedExistingProjectId && step === "form";
   const parcelFormFilled =
@@ -415,32 +498,55 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
     setError(null);
     setIsUploadingGeom(true);
     try {
-      const preview = await previewFoncierUpload(file);
+      const preview = await previewFoncierUpload(file, isZh ? studyType : undefined);
       const geometryType = preview.feature.geometry?.type;
       if (geometryType !== "Polygon" && geometryType !== "MultiPolygon") {
         throw new Error("La géométrie d'emprise doit être de type Polygon/MultiPolygon.");
       }
       setUploadedFile(file);
       setUploadedFeature(preview.feature as ParcelleFeature);
+      setInitialUploadFeature(
+        isZh && preview.upload_feature
+          ? (preview.upload_feature as ParcelleFeature)
+          : null,
+      );
+      setBvPreviewCount(isZh ? (preview.bv_count ?? null) : null);
+      setBvPreviewNames(isZh ? (preview.bv_names ?? []) : []);
     } catch (err) {
       setUploadedFile(null);
       setUploadedFeature(null);
+      setInitialUploadFeature(null);
+      setBvPreviewCount(null);
+      setBvPreviewNames([]);
       setError(err instanceof Error ? err.message : "Erreur lecture du fichier géographique");
     } finally {
       setIsUploadingGeom(false);
     }
   }
 
-  const stepLabels: Record<1 | 2 | 3, string> = {
-    1: "Charger le projet",
-    2: "Définir la zone de recherche",
-    3: "Critères de filtrage",
-  };
+  const stepLabels: Record<1 | 2 | 3, string> = isZh
+    ? {
+        1: "Zone initiale",
+        2: "Nommer le projet",
+        3: "Critères zones humides",
+      }
+    : {
+        1: "Charger le projet",
+        2: "Définir la zone de recherche",
+        3: "Critères de filtrage",
+      };
 
   function renderParcelStep() {
     return (
       <>
-        <h2 className="eco-aoi-section-title">Source géométrique</h2>
+        <h2 className="eco-aoi-section-title">{isZh ? "Zone initiale" : "Source géométrique"}</h2>
+        {isZh && (
+          <p className="eco-aoi-intro">
+            Importez la zone initiale. Le périmètre de recherche sera l&apos;union des bassins versants
+            (masses d&apos;eau) qui l&apos;intersectent — entités BV complètes, pas seulement la zone de recouvrement.
+          </p>
+        )}
+        {!isZh && (
         <div className="eco-aoi-tabs eco-aoi-tabs--inline" role="tablist" aria-label="Type de source">
           <button
             type="button"
@@ -463,74 +569,8 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
             Référence cadastrale
           </button>
         </div>
-        {sourceMode === "parcelle" ? (
-          <>
-            <div className="eco-aoi-row">
-              <label className="create-aoi-label" htmlFor="aoi-insee">Code INSEE</label>
-              <input
-                id="aoi-insee"
-                type="text"
-                className="create-aoi-input"
-                value={codeInsee}
-                onChange={(e) => setCodeInsee(e.target.value)}
-                placeholder="ex. 33274"
-                maxLength={5}
-                disabled={isWizardLocked}
-              />
-            </div>
-            <div className="eco-aoi-row">
-              <label className="create-aoi-label" htmlFor="aoi-section">Section</label>
-              <input
-                id="aoi-section"
-                type="text"
-                className="create-aoi-input"
-                value={section}
-                onChange={(e) => setSection(e.target.value)}
-                placeholder="ex. 0D"
-                disabled={isWizardLocked}
-              />
-            </div>
-            <div className="eco-aoi-row">
-              <label className="create-aoi-label" htmlFor="aoi-numero">Numéro</label>
-              <input
-                id="aoi-numero"
-                type="text"
-                className="create-aoi-input"
-                value={numero}
-                onChange={(e) => setNumero(e.target.value)}
-                placeholder="ex. 0962"
-                disabled={isWizardLocked}
-              />
-            </div>
-            <button
-              type="button"
-              className="eco-aoi-btn"
-              onClick={() => void handleSearchParcelle()}
-              disabled={isSearchingParcel || isWizardLocked}
-            >
-              {isSearchingParcel ? "Recherche parcelle(s)…" : "Rechercher parcelle(s) (IGN)"}
-            </button>
-            <button
-              type="button"
-              className="eco-aoi-btn"
-              onClick={handleAddParcelleToUf}
-              disabled={isWizardLocked}
-            >
-              Ajouter à l&apos;unité foncière
-            </button>
-            {ufParcelles.length > 0 && (
-              <div className="eco-aoi-status eco-aoi-status--ok">
-                UF composée ({ufParcelles.length}) :{" "}
-                {ufParcelles.map((p) => `${p.code_insee}/${p.section}/${p.numero}`).join(" · ")}
-              </div>
-            )}
-            <div className={`eco-aoi-status ${parcelFeature ? "eco-aoi-status--ok" : "eco-aoi-status--muted"}`}>
-              {parcelFeature
-                ? "Géométrie source trouvée et affichée sur la carte."
-                : "Parcelle ou UF non recherchée."}
-            </div>
-          </>
-        ) : (
+        )}
+        {(isZh || sourceMode === "fichier") ? (
           <>
             <input
               ref={fileInputRef}
@@ -598,10 +638,86 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
             </div>
             <div className={`eco-aoi-status ${uploadedFeature ? "eco-aoi-status--ok" : "eco-aoi-status--muted"}`}>
               {isUploadingGeom
-                ? "Analyse du fichier en cours…"
+                ? "Analyse du fichier et sélection des bassins versants…"
                 : uploadedFeature
-                  ? `Emprise chargée : ${uploadedFile?.name ?? "fichier"}`
+                  ? isZh && bvPreviewCount != null
+                    ? `Zone de recherche : ${bvPreviewCount} bassin(s) versant(s) retenu(s)`
+                    : `Emprise chargée : ${uploadedFile?.name ?? "fichier"}`
                   : "Aucun fichier analysé."}
+            </div>
+            {isZh && bvPreviewNames.length > 0 && (
+              <ul className="eco-aoi-bv-names" aria-label="Bassins versants retenus">
+                {bvPreviewNames.map((bvName) => (
+                  <li key={bvName}>{bvName}</li>
+                ))}
+              </ul>
+            )}
+          </>
+        ) : (
+          <>
+            <div className="eco-aoi-row">
+              <label className="create-aoi-label" htmlFor="aoi-insee">Code INSEE</label>
+              <input
+                id="aoi-insee"
+                type="text"
+                className="create-aoi-input"
+                value={codeInsee}
+                onChange={(e) => setCodeInsee(e.target.value)}
+                placeholder="ex. 33274"
+                maxLength={5}
+                disabled={isWizardLocked}
+              />
+            </div>
+            <div className="eco-aoi-row">
+              <label className="create-aoi-label" htmlFor="aoi-section">Section</label>
+              <input
+                id="aoi-section"
+                type="text"
+                className="create-aoi-input"
+                value={section}
+                onChange={(e) => setSection(e.target.value)}
+                placeholder="ex. 0D"
+                disabled={isWizardLocked}
+              />
+            </div>
+            <div className="eco-aoi-row">
+              <label className="create-aoi-label" htmlFor="aoi-numero">Numéro</label>
+              <input
+                id="aoi-numero"
+                type="text"
+                className="create-aoi-input"
+                value={numero}
+                onChange={(e) => setNumero(e.target.value)}
+                placeholder="ex. 0962"
+                disabled={isWizardLocked}
+              />
+            </div>
+            <button
+              type="button"
+              className="eco-aoi-btn"
+              onClick={() => void handleSearchParcelle()}
+              disabled={isSearchingParcel || isWizardLocked}
+            >
+              {isSearchingParcel ? "Recherche parcelle(s)…" : "Rechercher parcelle(s) (IGN)"}
+            </button>
+            <button
+              type="button"
+              className="eco-aoi-btn"
+              onClick={handleAddParcelleToUf}
+              disabled={isWizardLocked}
+            >
+              Ajouter à l&apos;unité foncière
+            </button>
+            {ufParcelles.length > 0 && (
+              <div className="eco-aoi-status eco-aoi-status--ok">
+                UF composée ({ufParcelles.length}) :{" "}
+                {ufParcelles.map((p) => `${p.code_insee}/${p.section}/${p.numero}`).join(" · ")}
+              </div>
+            )}
+            <div className={`eco-aoi-status ${parcelFeature ? "eco-aoi-status--ok" : "eco-aoi-status--muted"}`}>
+              {parcelFeature
+                ? "Géométrie source trouvée et affichée sur la carte."
+                : "Parcelle ou UF non recherchée."}
             </div>
           </>
         )}
@@ -613,10 +729,11 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
     return (
       <>
         <p className="eco-aoi-intro">
-          Nommez le projet et ajustez la zone de recherche. Le contour vert en pointillés sur la carte
-          correspond au buffer autour de la parcelle.
+          {isZh
+            ? "Nommez le projet. La recherche de parcelles se fera dans l'union des bassins versants retenus (pas de buffer)."
+            : "Nommez le projet et ajustez la zone de recherche. Le contour vert en pointillés sur la carte correspond au buffer autour de la parcelle."}
         </p>
-        <h2 className="eco-aoi-section-title">Zone de recherche</h2>
+        <h2 className="eco-aoi-section-title">{isZh ? "Projet" : "Zone de recherche"}</h2>
         <div className="eco-aoi-row">
           <label className="create-aoi-label" htmlFor="aoi-name">Nom du projet</label>
           <input
@@ -628,32 +745,39 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
               setName(e.target.value);
               setNameTouched(true);
             }}
-            placeholder="ex. PARCELLE_33274_0D_0962"
+            placeholder={isZh ? "ex. DOMAINE_MARENSIN_ZH" : "ex. PARCELLE_33274_0D_0962"}
             disabled={isWizardLocked}
           />
         </div>
-        <div className="eco-aoi-slider">
-          <div className="eco-aoi-slider-head">
-            <span className="eco-aoi-label">Zone de recherche (Buffer)</span>
-            <span className="eco-aoi-slider-value">{bufferKm.toFixed(1)} km</span>
+        {!isZh && (
+          <div className="eco-aoi-slider">
+            <div className="eco-aoi-slider-head">
+              <span className="eco-aoi-label">Zone de recherche (Buffer)</span>
+              <span className="eco-aoi-slider-value">{bufferKm.toFixed(1)} km</span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={20}
+              step={0.5}
+              value={bufferKm}
+              disabled={isWizardLocked}
+              onChange={(e) => setBufferKm(Number(e.target.value))}
+            />
+            <div className="eco-aoi-slider-hints">
+              <span>0 km</span>
+              <span>20 km</span>
+            </div>
+            <p className="eco-aoi-slider-caption">
+              Distance ajoutée autour de l&apos;emprise du projet (zone d&apos;étude AOI).
+            </p>
           </div>
-          <input
-            type="range"
-            min={0}
-            max={20}
-            step={0.5}
-            value={bufferKm}
-            disabled={isWizardLocked}
-            onChange={(e) => setBufferKm(Number(e.target.value))}
-          />
-          <div className="eco-aoi-slider-hints">
-            <span>0 km</span>
-            <span>20 km</span>
-          </div>
+        )}
+        {isZh && (
           <p className="eco-aoi-slider-caption">
-            Distance ajoutée autour de l&apos;emprise du projet (zone d&apos;étude AOI).
+            Périmètre de recherche = union des bassins versants intersectant la zone initiale.
           </p>
-        </div>
+        )}
       </>
     );
   }
@@ -662,21 +786,53 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
     return (
       <>
         {phasesLoadError && <div className="eco-aoi-error">Phases : {phasesLoadError}</div>}
-        <SelectFilterCriteria
-          minAreaHa={minAreaHa}
-          onMinAreaHaChange={setMinAreaHa}
-          millerThresh={millerThresh}
-          onMillerThreshChange={setMillerThresh}
-          cesbioLibelles={cesbioLibelles}
-          onCesbioLibellesChange={setCesbioLibelles}
-          faunaEnabled={faunaEnabled}
-          onFaunaEnabledChange={setFaunaEnabled}
-          faunaSpecies={faunaSpecies}
-          onFaunaSpeciesChange={setFaunaSpecies}
-          faunaDistM={faunaDistM}
-          onFaunaDistMChange={setFaunaDistM}
-          disabled={isWizardLocked}
-        />
+        {isZh ? (
+          <SelectFilterCriteriaZonesHumides
+            minAreaHa={minAreaHa}
+            onMinAreaHaChange={setMinAreaHa}
+            minZoneHumideHa={minZoneHumideHa}
+            onMinZoneHumideHaChange={setMinZoneHumideHa}
+            millerThresh={millerThresh}
+            onMillerThreshChange={setMillerThresh}
+            zonesHumidesProbablesMode={zonesHumidesProbablesMode}
+            onZonesHumidesProbablesModeChange={setZonesHumidesProbablesMode}
+            excludedLayers={excludedLayers}
+            onExcludedLayersChange={setExcludedLayers}
+            faunaEnabled={faunaEnabled}
+            onFaunaEnabledChange={setFaunaEnabled}
+            faunaSpecies={faunaSpecies}
+            onFaunaSpeciesChange={setFaunaSpecies}
+            faunaDistM={faunaDistM}
+            onFaunaDistMChange={setFaunaDistM}
+            tronconsHydroEnabled={tronconsHydroEnabled}
+            onTronconsHydroEnabledChange={setTronconsHydroEnabled}
+            tronconsHydroMaxDistM={tronconsHydroMaxDistM}
+            onTronconsHydroMaxDistMChange={setTronconsHydroMaxDistM}
+            surfacesHydroEnabled={surfacesHydroEnabled}
+            onSurfacesHydroEnabledChange={setSurfacesHydroEnabled}
+            surfacesHydroMaxDistM={surfacesHydroMaxDistM}
+            onSurfacesHydroMaxDistMChange={setSurfacesHydroMaxDistM}
+            disabled={isWizardLocked}
+          />
+        ) : (
+          <SelectFilterCriteria
+            minAreaHa={minAreaHa}
+            onMinAreaHaChange={setMinAreaHa}
+            millerThresh={millerThresh}
+            onMillerThreshChange={setMillerThresh}
+            cesbioLibelles={cesbioLibelles}
+            onCesbioLibellesChange={setCesbioLibelles}
+            faunaEnabled={faunaEnabled}
+            onFaunaEnabledChange={setFaunaEnabled}
+            faunaSpecies={faunaSpecies}
+            onFaunaSpeciesChange={setFaunaSpecies}
+            faunaDistM={faunaDistM}
+            onFaunaDistMChange={setFaunaDistM}
+            excludedLayers={excludedLayers}
+            onExcludedLayersChange={setExcludedLayers}
+            disabled={isWizardLocked}
+          />
+        )}
         <button type="submit" className="eco-aoi-btn eco-aoi-btn--primary" disabled={!canCreateAoi}>
           Lancer le filtrage
         </button>
@@ -711,7 +867,7 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
         </div>
         <PipelineProgressPanel progress={pipelineProgress} />
         {summary && (
-          <div className="eco-aoi-summary" ref={logEndRef}>
+          <div className="eco-aoi-summary">
             <p>
               <strong>Réussies : {summary.n_ok}</strong>
               {" · "}
@@ -724,8 +880,6 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
             </p>
           </div>
         )}
-        {!summary && (step === "creating" || step === "fetching") && <div ref={logEndRef} />}
-        {ufInProgress && step === "done" && <div ref={logEndRef} />}
       </div>
     );
   }
@@ -738,7 +892,7 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
             <button type="button" className="eco-aoi-icon-btn" onClick={onBack} title="Retour au filtrage" aria-label="Retour">
               ←
             </button>
-            <h1>Zone de recherche</h1>
+            <h1>{profile.hubTitle}</h1>
           </div>
 
           <div className="eco-aoi-tabs" role="tablist">
@@ -921,20 +1075,42 @@ export function CreateAoiPage({ onDone, onBack }: CreateAoiPageProps) {
         <div className="eco-aoi-map-wrap">
           {projectTab === "new" && sourceFeature && (
             <div className="eco-aoi-map-legend" aria-hidden>
-              <div className="eco-aoi-legend-item">
-                <span className="eco-aoi-legend-swatch eco-aoi-legend-swatch--parcel" />
-                Parcelle / emprise
-              </div>
-              {bufferKm > 0 && (
+              {!isZh && (
+                <div className="eco-aoi-legend-item">
+                  <span className="eco-aoi-legend-swatch eco-aoi-legend-swatch--parcel" />
+                  Parcelle / emprise
+                </div>
+              )}
+              {isZh && initialUploadFeature && (
+                <div className="eco-aoi-legend-item">
+                  <span className="eco-aoi-legend-swatch eco-aoi-legend-swatch--initial" />
+                  Zone initiale uploadée
+                </div>
+              )}
+              {!isZh && bufferKm > 0 && (
                 <div className="eco-aoi-legend-item">
                   <span className="eco-aoi-legend-swatch eco-aoi-legend-swatch--buffer" />
                   Zone de recherche ({bufferKm.toFixed(1)} km)
                 </div>
               )}
+              {isZh && (
+                <div className="eco-aoi-legend-item">
+                  <span className="eco-aoi-legend-swatch eco-aoi-legend-swatch--parcel" />
+                  {bvPreviewNames.length === 1
+                    ? bvPreviewNames[0]
+                    : bvPreviewNames.length > 1
+                      ? `Périmètre BV (${bvPreviewNames.length})`
+                      : "Périmètre de recherche (bassins versants)"}
+                </div>
+              )}
             </div>
           )}
 
-          <CartoAoi parcelFeature={sourceFeature} bufferKm={bufferKm} />
+          <CartoAoi
+            parcelFeature={sourceFeature}
+            initialZoneFeature={isZh ? initialUploadFeature : null}
+            bufferKm={isZh ? 0 : bufferKm}
+          />
         </div>
       </div>
     </div>

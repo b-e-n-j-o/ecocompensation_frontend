@@ -19,6 +19,7 @@ import {
   buildInitialThematic,
   buildDiscriminantColorExpression,
   extractDistinctValues,
+  getResultsLayerDefs,
   thematicLayerIds,
   type ResultsThematicPreload,
   type ThematicLayerState,
@@ -131,6 +132,8 @@ interface SousEnsemblesMapProps {
   projectId?: string | null;
   preloadedThematic?: ResultsThematicPreload | null;
   thematicPreloadLoading?: boolean;
+  /** Clés des couches thématiques à afficher (selon type d'étude). */
+  thematicLayerKeys?: string[];
   focusSubsetId?: string | null;
   focusUfId?: string | null;
   onSubsetClick?: (subsetId: string) => void;
@@ -146,10 +149,19 @@ export function SousEnsemblesMap({
   projectId,
   preloadedThematic,
   thematicPreloadLoading = false,
+  thematicLayerKeys,
   focusSubsetId = null,
   focusUfId = null,
   onSubsetClick,
 }: SousEnsemblesMapProps) {
+  const activeLayers = useMemo(
+    () =>
+      getResultsLayerDefs(
+        thematicLayerKeys ?? RESULTS_LAYERS.map((d) => d.key),
+      ),
+    [thematicLayerKeys],
+  );
+
   const mapContainer = useRef<HTMLDivElement>(null);
   const map          = useRef<maplibregl.Map | null>(null);
   const fetchedRef   = useRef<Set<string>>(new Set());
@@ -159,27 +171,29 @@ export function SousEnsemblesMap({
   const subsetHandlersBoundRef = useRef(false);
   const didInitialFitRef = useRef(false);
 
-  const [thematicState, setThematicState] = useState<Record<string, ThematicLayerState>>(buildInitialThematic);
+  const [thematicState, setThematicState] = useState<Record<string, ThematicLayerState>>(() =>
+    buildInitialThematic(thematicLayerKeys),
+  );
   const [subsetsVisible, setSubsetsVisible] = useState(true);
   const [baseMapMode, setBaseMapMode] = useState<BaseMapMode>("satellite");
 
   // Reset au changement de projet
   useEffect(() => {
-    setThematicState(buildInitialThematic());
+    setThematicState(buildInitialThematic(thematicLayerKeys));
     fetchedRef.current = new Set();
     didInitialFitRef.current = false;
-  }, [projectId]);
+  }, [projectId, thematicLayerKeys]);
 
   useEffect(() => {
     if (preloadedThematic === undefined) return;
     if (preloadedThematic === null) {
-      setThematicState(buildInitialThematic());
+      setThematicState(buildInitialThematic(thematicLayerKeys));
       fetchedRef.current = new Set();
       return;
     }
     setThematicState((prev) => {
       const next = { ...prev };
-      for (const def of RESULTS_LAYERS) {
+      for (const def of activeLayers) {
         const p = preloadedThematic[def.key];
         if (!p) continue;
         const cur = prev[def.key];
@@ -202,7 +216,7 @@ export function SousEnsemblesMap({
       }
       return next;
     });
-  }, [preloadedThematic]);
+  }, [preloadedThematic, activeLayers, thematicLayerKeys]);
 
   const geojsonWithScores = useMemo(() => {
     if (!geojson?.features?.length) return null;
@@ -299,7 +313,7 @@ export function SousEnsemblesMap({
         });
         ensureHighlightOutlineLayer(map.current);
 
-        for (const def of RESULTS_LAYERS) {
+        for (const def of activeLayers) {
           const { sourceId, fillId, lineId } = thematicLayerIds(def.key);
           if (!map.current.getSource(sourceId)) {
             map.current.addSource(sourceId, { type: "geojson", data: emptyFC() });
@@ -315,7 +329,7 @@ export function SousEnsemblesMap({
         }
 
         const popup = createMapHoverPopup("260px");
-        const thematicFillIds = RESULTS_LAYERS.map((d) => thematicLayerIds(d.key).fillId);
+        const thematicFillIds = activeLayers.map((d) => thematicLayerIds(d.key).fillId);
 
         map.current.on("mousemove", (e) => {
           if (!map.current) return;
@@ -326,7 +340,7 @@ export function SousEnsemblesMap({
           const features = map.current.queryRenderedFeatures(e.point, { layers: visible });
           if (!features.length) { hideMapHoverPopup(popup); return; }
           const f = features[0];
-          const def = RESULTS_LAYERS.find((d) => thematicLayerIds(d.key).fillId === f.layer?.id);
+          const def = activeLayers.find((d) => thematicLayerIds(d.key).fillId === f.layer?.id);
           if (!def) return;
           const rows = def.popupFields
             .filter(({ field }) => f.properties?.[field] != null)
@@ -482,7 +496,7 @@ export function SousEnsemblesMap({
   // ── Sync couches thématiques ──────────────────────────────────────────────
   useEffect(() => {
     if (!map.current || !map.current.isStyleLoaded()) return;
-    for (const def of RESULTS_LAYERS) {
+    for (const def of activeLayers) {
       const st = thematicState[def.key];
       if (!st) continue;
       const { sourceId, fillId, lineId } = thematicLayerIds(def.key);
@@ -545,7 +559,7 @@ export function SousEnsemblesMap({
     setThematicState((prev) => {
       const cur = prev[layerKey];
       if (!cur || !cur.geojson) return prev;
-      const def = RESULTS_LAYERS.find((d) => d.key === layerKey);
+      const def = activeLayers.find((d) => d.key === layerKey);
       if (!def?.discriminantField) return prev;
 
       const allValues = extractDistinctValues(cur.geojson, def.discriminantField);
@@ -635,7 +649,7 @@ export function SousEnsemblesMap({
         title="Sous-ensembles UF — colorés par score écologique"
       />
       <LegendeMapResultats
-        layers={RESULTS_LAYERS}
+        layers={activeLayers}
         layersState={thematicState}
         onToggle={toggleLayer}
         bulkLoading={thematicPreloadLoading}
