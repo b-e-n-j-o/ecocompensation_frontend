@@ -1,34 +1,23 @@
 import type { LayerInfo } from "../../api";
 
 /** Toujours exécutées — pas de case à cocher. */
-export const ALWAYS_FETCH_KEYS = new Set(["parcelles", "geomce"]);
+export const ALWAYS_FETCH_KEYS = new Set(["parcelles"]);
 
-/** Liées : une seule option pour les deux. */
-export const UF_BUNDLE_KEYS = ["unites_foncieres", "sous_ensembles"] as const;
+/** Cluster PPM → sous-ensembles, toujours exécuté avec le fetch UF. */
+export const UF_BUNDLE_KEYS = ["sous_ensembles"] as const;
 export const FAUNA_LAYER_KEY = "fauna" as const;
 
 export const PRIMARY_OPTIONAL_LAYER_KEYS = [
   "bd_topo_et_cesbio",
   "zone_humide",
-  "ebc",
-  "natura2000",
-  "znieff",
-  "reserves_naturelles",
+  "espaces_naturels_sensibles_ens",
+  "preemption_ens",
 ] as const;
 
 export const SECONDARY_OPTIONAL_LAYER_KEYS = [
-  "remontee_de_nappes",
-  "troncons_hydro",
-  "routes",
-  "voies_ferrees",
-  "zone_de_vegetation",
-  "cesbio",
-  "carhab",
-  "sites_classes",
-  "arrachage_vignes",
-  "fragmentation",
   "zones_humides_probables",
-  "surfaces_hydro",
+  "troncons_hydros",
+  "surfaces_hydros",
 ] as const;
 
 const PRIMARY_SET = new Set<string>(PRIMARY_OPTIONAL_LAYER_KEYS);
@@ -65,7 +54,7 @@ export function splitOptionalLayersByGroup(optionalLayers: LayerInfo[]): {
 }
 
 /**
- * Clés de fetch dans l’ordre du registre serveur : UF (si activé), puis parcelles / geomce
+ * Clés de fetch dans l’ordre du registre serveur : UF (si activé), puis parcelles
  * obligatoires, puis les couches optionnelles cochées.
  */
 export function buildFetchLayerKeys(

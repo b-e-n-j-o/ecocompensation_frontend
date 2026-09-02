@@ -541,20 +541,6 @@ async function throwHttpError(res: Response): Promise<never> {
   throw new Error(text || `Erreur HTTP ${res.status}`);
 }
 
-export async function runFilter(
-  projectId: string,
-  options: FilterOptions
-): Promise<FilterResponse> {
-  const payload = buildFilterRequestPayload(options);
-  const res = await fetch(`${API}/api/projects/${projectId}/filter`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) await throwHttpError(res);
-  return res.json();
-}
-
 /** Métriques détaillées du pool pour une parcelle (run de filtre donné). */
 export async function fetchPoolParcelMetrics(
   projectId: string,
@@ -700,20 +686,6 @@ export async function fetchUfResults(
     ? `${API}/api/projects/${projectId}/uf-pool?${qs}`
     : `${API}/api/projects/${projectId}/uf-pool`;
   const res = await fetch(url);
-  if (!res.ok) await throwHttpError(res);
-  return res.json();
-}
-
-export async function runFilterUF(
-  projectId: string,
-  options: FilterOptions
-): Promise<UfFilterResponse> {
-  const payload = buildFilterRequestPayload(options);
-  const res = await fetch(`${API}/api/projects/${projectId}/filter/uf`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
   if (!res.ok) await throwHttpError(res);
   return res.json();
 }

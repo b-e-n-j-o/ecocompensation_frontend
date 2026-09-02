@@ -273,7 +273,7 @@ export function EtudeResultats({
     setProjectId(fixedProjectId ?? null);
   }, [fixedProjectId]);
 
-  /** S’il existe des sous-ensembles en base pour ce projet, le filtre peut aussi appeler /filter/uf */
+  /** S’il existe des sous-ensembles en base pour ce projet, le pool UF est disponible. */
   useEffect(() => {
     if (!projectId) {
       setSousEnsemblesStatus("idle");
@@ -523,7 +523,7 @@ export function EtudeResultats({
     };
   }, [projectId]);
 
-  /** Après le nouveau pipeline (CreateAoiPage), charge last_results + UF sans relancer /filter. */
+  /** Après filter_v2 (CreateAoiPage), charge last_results + UF sans relancer le pipeline. */
   useEffect(() => {
     if (!projectId || initialRunId) return;
     let cancelled = false;

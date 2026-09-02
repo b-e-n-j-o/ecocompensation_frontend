@@ -104,7 +104,6 @@ export function applyWsLayerEvent(
 }
 
 export const DEFAULT_UF_PHASES = [
-  { key: "unites_foncieres", label: "Unités foncières (PPM + clustering)" },
-  { key: "sous_ensembles", label: "Sous-ensembles contigus" },
+  { key: "sous_ensembles", label: "Unités foncières (PPM → sous-ensembles)" },
   { key: "enrich_uf", label: "Enrichissement UF (végétation / faune)" },
 ] as const;
