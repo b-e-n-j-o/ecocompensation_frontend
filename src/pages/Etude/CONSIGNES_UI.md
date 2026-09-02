@@ -26,7 +26,7 @@ Le couple **classement + carto** est le produit. Tout le reste (contexte de pool
 3. Actions tableau (dureté, ajout de foncier, sélection, PDF, tri, export) + curseurs Distance / Surface → panneau **Outils** (fermé par défaut). Pastilles si un filtre est actif (`≤ 8,2 km`, `≥ 0,5 ha`).
    - **Dureté foncière** : au clic, tout le pool ou choisir des parcelles.
    - **Ajouter du foncier** : au clic, un champ IDU compact.
-   - **Export** : au clic, CSV ou Shapefile. Rapport PDF reste un bouton à part.
+   - **Export** : au clic, CSV ou GeoPackage (zone projet + AOI + parcelles). Rapport PDF reste un bouton à part.
 4. Légende carte légère (pastilles), pas de gros blocs.
 
 ## Fait — rail de navigation repliable

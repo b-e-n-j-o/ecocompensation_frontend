@@ -25,8 +25,10 @@ import {
   ETUDE_FAMILY,
   ETUDE_LAYER_DEFS,
   isEtudeLayerKey,
+  loadEtudeContext,
   loadEtudeOverlay,
   raiseEtudeLayers,
+  type EtudeOverlayPayload,
 } from "./etudeOverlay";
 import {
   fetchAllPoolRunsList,
@@ -37,6 +39,7 @@ import type { PoolRunListItem } from "../../types";
 import { getStudyProfile } from "../Etude/studyProfiles";
 import { normalizeStudyType } from "../../types/studyTypes";
 import "./DonneesInternesPage.css";
+import { FeatureInspectSidebar, type InspectPayload, type InspectRow } from "./FeatureInspectSidebar";
 
 const USER_SOURCE = "user-overlay";
 const GIRONDE: [number, number] = [-0.58, 44.84];
@@ -44,9 +47,27 @@ const GIRONDE: [number, number] = [-0.58, 44.84];
 const PROP_LABELS: Record<string, string> = {
   idu: "IDU",
   statut_pool: "Statut pool",
+  rang: "Rang",
   rank: "Rang",
+  surf_ha: "Surface (ha)",
   surface_ha: "Surface (ha)",
+  dist_km: "Distance (km)",
   distance_km: "Distance (km)",
+  dist_hyd: "Dist. cours d'eau (m)",
+  zh_ha: "Zone humide (ha)",
+  score_eco: "Score éco",
+  eco_max: "Score éco max",
+  score_comp: "Score composite",
+  score_dur: "Dureté foncière",
+  attr_fonc: "Attractivité foncière",
+  dur_niv: "Niveau dureté",
+  cesbio: "Occupation du sol",
+  espece_esp: "Espèce",
+  rayon_esp: "Dist. espèce (m)",
+  p_morale: "Personne morale",
+  pm_denom: "Dénomination",
+  pm_prosp: "Prospect compensation",
+  txt_dure: "Justification dureté",
   geo_parcel: "Parcelle",
   tex: "N°",
   nomcommune: "Commune",
@@ -107,13 +128,20 @@ function featureStateSpec(ref: { source: string; id: string | number; sourceLaye
     : { source: ref.source, id: ref.id };
 }
 
-function escapeHtml(s: unknown): string {
-  if (s == null) return "";
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+const SKIP_PROP_KEYS = new Set([
+  "id",
+  "fid",
+  "cluster",
+  "cluster_id",
+  "point_count",
+  "point_count_abbreviated",
+]);
+
+function humanizeKey(key: string): string {
+  return key
+    .replace(/_/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/^\w/, (c) => c.toUpperCase());
 }
 
 function formatPropValue(v: unknown): string {
@@ -124,38 +152,62 @@ function formatPropValue(v: unknown): string {
   if (typeof v === "number" && Number.isFinite(v)) {
     return Number.isInteger(v) ? v.toLocaleString("fr-FR") : v.toLocaleString("fr-FR", { maximumFractionDigits: 1 });
   }
-  const s = String(v);
-  return PROP_VALUE_LABELS[s] ?? s;
-}
-
-function popupHtml(props: Record<string, unknown>): string {
-  const title =
-    [props.tex, props.numero, props.nomcommune || props.nom_commune].filter(Boolean).join(" · ") ||
-    props.libelle_prio ||
-    props.libelle ||
-    props.inv_nom ||
-    (typeof props.projet === "string" ? props.projet : "") ||
-    (typeof props.source === "string" ? PROP_VALUE_LABELS[props.source] : "") ||
-    props.denomination ||
-    props.idu ||
-    (props.identifiant != null ? `GEOMCE ${props.identifiant}` : "") ||
-    "Entité";
-  const rows: string[] = [];
-  for (const [key, label] of Object.entries(PROP_LABELS)) {
-    const val = formatPropValue(props[key]);
-    if (!val) continue;
-    rows.push(`<div><span>${escapeHtml(label)}</span><b>${escapeHtml(val)}</b></div>`);
+  if (Array.isArray(v)) {
+    return v.map((item) => formatPropValue(item)).filter(Boolean).join(" · ");
   }
-  if (rows.length === 0) {
-    for (const [key, raw] of Object.entries(props)) {
-      if (key.startsWith("_")) continue;
-      const val = formatPropValue(raw);
-      if (!val) continue;
-      rows.push(`<div><span>${escapeHtml(key)}</span><b>${escapeHtml(val)}</b></div>`);
-      if (rows.length >= 10) break;
+  if (typeof v === "object") {
+    try {
+      return JSON.stringify(v, null, 2);
+    } catch {
+      return String(v);
     }
   }
-  return `<div class="di-popup"><strong>${escapeHtml(String(title))}</strong>${rows.join("")}</div>`;
+  const s = String(v).trim();
+  if (PROP_VALUE_LABELS[s]) return PROP_VALUE_LABELS[s];
+  if ((s.startsWith("{") && s.endsWith("}")) || (s.startsWith("[") && s.endsWith("]"))) {
+    try {
+      return JSON.stringify(JSON.parse(s), null, 2);
+    } catch {
+      return s;
+    }
+  }
+  return s;
+}
+
+function featureTitle(props: Record<string, unknown>): string {
+  return (
+    String(
+      [props.tex, props.numero, props.nomcommune || props.nom_commune].filter(Boolean).join(" · ") ||
+        props.libelle_prio ||
+        props.idu ||
+        props.libelle ||
+        props.inv_nom ||
+        props.projet ||
+        (typeof props.source === "string" ? PROP_VALUE_LABELS[props.source] : "") ||
+        props.denomination ||
+        (props.identifiant != null ? `GEOMCE ${props.identifiant}` : "") ||
+        "",
+    ).trim() || "Entité"
+  );
+}
+
+function collectInspectRows(props: Record<string, unknown>): InspectRow[] {
+  const seen = new Set<string>();
+  const rows: InspectRow[] = [];
+  for (const [key, label] of Object.entries(PROP_LABELS)) {
+    if (!(key in props) || SKIP_PROP_KEYS.has(key)) continue;
+    const val = formatPropValue(props[key]);
+    if (!val) continue;
+    seen.add(key);
+    rows.push({ key, label, value: val });
+  }
+  for (const [key, raw] of Object.entries(props)) {
+    if (seen.has(key) || SKIP_PROP_KEYS.has(key) || key.startsWith("_")) continue;
+    const val = formatPropValue(raw);
+    if (!val) continue;
+    rows.push({ key, label: PROP_LABELS[key] ?? humanizeKey(key), value: val });
+  }
+  return rows;
 }
 
 function sourceId(key: string): string {
@@ -576,8 +628,12 @@ export default function DonneesInternesPage() {
   const mapRef = useRef<MapLibreMap | null>(null);
   const hoverRef = useRef<{ source: string; id: string | number; sourceLayer?: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const inspectRef = useRef<(payload: InspectPayload | null) => void>(() => undefined);
+  const userNameRef = useRef<string | null>(null);
   const didFit = useRef(false);
   const [mapReady, setMapReady] = useState(false);
+  const [inspect, setInspect] = useState<InspectPayload | null>(null);
+  inspectRef.current = setInspect;
 
   const [catalog, setCatalog] = useState<InternalLayerInfo[]>([]);
   const [etudeLayers, setEtudeLayers] = useState<InternalLayerInfo[]>(() => emptyEtudeLayers());
@@ -588,6 +644,7 @@ export default function DonneesInternesPage() {
   const [error, setError] = useState<string | null>(null);
   const [userFc, setUserFc] = useState<FeatureCollection | null>(null);
   const [userName, setUserName] = useState<string | null>(null);
+  userNameRef.current = userName;
   const [userVisible, setUserVisible] = useState(true);
   const [zoom, setZoom] = useState(8.4);
   const [openFam, setOpenFam] = useState<Record<string, boolean>>({});
@@ -826,36 +883,54 @@ export default function DonneesInternesPage() {
     }
     let cancelled = false;
     setEtudeBusy(true);
-    void loadEtudeOverlay(etudeProjectId, etudeRunId)
-      .then((payload) => {
-        if (cancelled) return;
-        etudeFcRef.current = payload.fcByKey;
-        fittedEtudeRunRef.current = null;
-        const map = mapRef.current;
-        if (map?.isStyleLoaded()) {
-          for (const l of payload.layers) {
-            if (map.getSource(sourceId(l.key))) removeLayerFromMap(map, l);
-          }
+    const applyPayload = (payload: EtudeOverlayPayload, phase: "context" | "pool") => {
+      etudeFcRef.current = payload.fcByKey;
+      if (phase === "context") fittedEtudeRunRef.current = null;
+      const map = mapRef.current;
+      if (map?.isStyleLoaded()) {
+        for (const l of payload.layers) {
+          if (phase === "pool" && (l.key === "etude-foncier" || l.key === "etude-aoi")) continue;
+          if (map.getSource(sourceId(l.key))) removeLayerFromMap(map, l);
         }
-        setEtudeLayers(payload.layers);
-        setVisible((prev) => {
-          const next = { ...prev };
-          for (const l of payload.layers) next[l.key] = Boolean(l.default_visible && l.available);
-          return next;
-        });
-        setLoaded((prev) => {
-          const next = { ...prev };
-          for (const l of payload.layers) next[l.key] = false;
-          return next;
-        });
-        setOpenFam((prev) => ({ ...prev, [ETUDE_FAMILY]: true }));
-      })
-      .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-      })
-      .finally(() => {
-        if (!cancelled) setEtudeBusy(false);
+      }
+      setEtudeLayers(payload.layers);
+      setVisible((prev) => {
+        const next = { ...prev };
+        for (const l of payload.layers) next[l.key] = Boolean(l.default_visible && l.available);
+        return next;
       });
+      setLoaded((prev) => {
+        const next = { ...prev };
+        for (const l of payload.layers) {
+          if (phase === "pool" && (l.key === "etude-foncier" || l.key === "etude-aoi") && prev[l.key]) {
+            continue;
+          }
+          next[l.key] = false;
+        }
+        return next;
+      });
+      setOpenFam((prev) => ({ ...prev, [ETUDE_FAMILY]: true }));
+    };
+
+    void (async () => {
+      let contextPayload: EtudeOverlayPayload | null = null;
+      try {
+        contextPayload = await loadEtudeContext(etudeProjectId);
+        if (cancelled) return;
+        applyPayload(contextPayload, "context");
+      } catch {
+        /* le pool peut quand même arriver */
+      }
+      try {
+        const poolPayload = await loadEtudeOverlay(etudeProjectId, etudeRunId, contextPayload);
+        if (cancelled) return;
+        applyPayload(poolPayload, "pool");
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!cancelled) setEtudeBusy(false);
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -974,7 +1049,7 @@ export default function DonneesInternesPage() {
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!map || !mapReady) return;
 
     const hitLayers = () =>
       [
@@ -1069,11 +1144,21 @@ export default function DonneesInternesPage() {
       const hits = map.queryRenderedFeatures(e.point, { layers: hitLayers() });
       const f = hits[0];
       const props = f?.properties as Record<string, unknown> | undefined;
-      if (!props) return;
-      new maplibregl.Popup({ closeButton: true, maxWidth: "280px", className: "di-map-popup" })
-        .setLngLat(e.lngLat)
-        .setHTML(popupHtml(props))
-        .addTo(map);
+      if (!props) {
+        inspectRef.current(null);
+        return;
+      }
+      const src = String(f.source || "");
+      const layerKey = src.replace(/^di-/, "").replace(/-pts$/, "");
+      const layerLabel =
+        src === USER_SOURCE
+          ? userNameRef.current || "Import"
+          : layers.find((l) => l.key === layerKey)?.label ?? null;
+      inspectRef.current({
+        title: featureTitle(props),
+        layerLabel,
+        rows: collectInspectRows(props),
+      });
     };
 
     map.on("mousemove", onMove);
@@ -1084,7 +1169,7 @@ export default function DonneesInternesPage() {
       map.off("click", onClick);
       map.off("mouseleave", clearHover);
     };
-  }, [layers]);
+  }, [layers, mapReady]);
 
   const toggleLayer = (key: string) => {
     setVisible((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -1408,7 +1493,7 @@ export default function DonneesInternesPage() {
       </div>
 
       <div
-        className={`di-map-wrap${fauna.drawActive ? (fauna.drawTool === "point" ? " is-drawing-point" : " is-drawing") : ""}`}
+        className={`di-map-wrap${fauna.drawActive ? (fauna.drawTool === "point" ? " is-drawing-point" : " is-drawing") : ""}${inspect ? " has-inspect" : ""}`}
       >
         <div ref={mapEl} className="di-map" />
         <button
@@ -1482,6 +1567,7 @@ export default function DonneesInternesPage() {
             ))}
           </div>
         )}
+        <FeatureInspectSidebar inspect={inspect} onClose={() => setInspect(null)} />
       </div>
     </div>
   );

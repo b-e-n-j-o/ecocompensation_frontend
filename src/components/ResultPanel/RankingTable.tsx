@@ -551,7 +551,7 @@ export function RankingTable({
                         type="button"
                         className="ranking-btn-pdf"
                         disabled={exporting || exportingPdf}
-                        title="Rapport PDF du pool (même périmètre que CSV / SHP)"
+                        title="Rapport PDF du pool (même périmètre que CSV / GPKG)"
                         onClick={() => void handlePdf()}
                       >
                         {exportingPdf ? "Rapport…" : "Rapport PDF"}
@@ -594,9 +594,10 @@ export function RankingTable({
                       type="button"
                       className="ranking-btn-export"
                       disabled={exporting || exportingPdf}
+                      title="GeoPackage : parcelles + zone projet + aire d'étude. Textes complets (dureté, etc.). Un shapefile tronqué est aussi dans le zip."
                       onClick={() => void handleExport("shp")}
                     >
-                      Shapefile
+                      GPKG
                     </button>
                   </div>
                 )}

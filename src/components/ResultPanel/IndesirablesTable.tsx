@@ -121,6 +121,7 @@ export function IndesirablesTable({
                 type="button"
                 className="ranking-btn-export"
                 disabled={exporting}
+                title="GeoPackage : parcelles + zone projet + aire d'étude"
                 onClick={async () => {
                   setExporting(true);
                   try {
@@ -133,7 +134,7 @@ export function IndesirablesTable({
                   }
                 }}
               >
-                Shapefile
+                GPKG
               </button>
             </div>
           </div>

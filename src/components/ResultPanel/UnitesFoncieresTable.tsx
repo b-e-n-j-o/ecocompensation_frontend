@@ -157,6 +157,7 @@ export function UnitesFoncieresTable({
                   type="button"
                   className="ranking-btn-export"
                   disabled={exporting}
+                  title="GeoPackage : sous-ensembles + zone projet + aire d'étude"
                   onClick={async () => {
                     setExporting(true);
                     try {
@@ -169,7 +170,7 @@ export function UnitesFoncieresTable({
                     }
                   }}
                 >
-                  Shapefile
+                  GPKG
                 </button>
               </div>
             </div>

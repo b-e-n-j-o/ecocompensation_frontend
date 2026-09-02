@@ -749,6 +749,22 @@ export async function fetchParcellesGeojson(
   return res.json();
 }
 
+/** Parcelles pool + attributs enrichis pour la carte Données internes. */
+export async function fetchPoolMapOverlay(
+  projectId: string,
+  runId: string,
+): Promise<{
+  retenues: FeatureCollection<Geometry, GeoJsonProperties>;
+  ajoutees: FeatureCollection<Geometry, GeoJsonProperties>;
+  indesirables: FeatureCollection<Geometry, GeoJsonProperties>;
+}> {
+  const res = await fetch(
+    `${API}/api/projects/${projectId}/pool/runs/${encodeURIComponent(runId)}/map-overlay`,
+  );
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 /** Liste des runs pool parcelles (ou autres scopes) pour un projet. */
 export async function fetchPoolRunsList(
   projectId: string,

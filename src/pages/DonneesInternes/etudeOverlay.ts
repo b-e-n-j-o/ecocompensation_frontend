@@ -1,12 +1,7 @@
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 import type { Map as MapLibreMap } from "maplibre-gl";
 
-import {
-  fetchParcellesGeojson,
-  fetchPoolIndesirables,
-  fetchPoolRunMetricsBulk,
-  fetchProjectContextGeometry,
-} from "../../api";
+import { fetchPoolMapOverlay, fetchProjectContextGeometry } from "../../api";
 import type { InternalLayerInfo } from "./api";
 
 export const ETUDE_FAMILY = "etude";
@@ -113,46 +108,9 @@ function asLayer(
   };
 }
 
-function isManualOrigin(metrics: { metric_key: string; metric_value_jsonb?: Record<string, unknown> }[] | undefined): boolean {
-  const row = (metrics ?? []).find((m) => m.metric_key === "pool_origin");
-  const src = row?.metric_value_jsonb?.source;
-  return src === "manual_idu";
-}
-
-function splitParcelles(
-  geojson: FeatureCollection | null,
-  indesirableIdus: Set<string>,
-  manualIdus: Set<string>,
-): { retenues: FeatureCollection; ajoutees: FeatureCollection; indesirables: FeatureCollection } {
-  const retenues: Feature[] = [];
-  const ajoutees: Feature[] = [];
-  const indesirables: Feature[] = [];
-  for (const f of geojson?.features ?? []) {
-    const idu = String(f.properties?.idu ?? f.id ?? "");
-    if (!idu) continue;
-    const tagged: Feature = {
-      ...f,
-      id: idu,
-      properties: {
-        ...(f.properties ?? {}),
-        id: idu,
-        idu,
-        statut_pool: indesirableIdus.has(idu)
-          ? "Indésirable"
-          : manualIdus.has(idu)
-            ? "Ajoutée"
-            : "Retenue",
-      },
-    };
-    if (indesirableIdus.has(idu)) indesirables.push(tagged);
-    else if (manualIdus.has(idu)) ajoutees.push(tagged);
-    else retenues.push(tagged);
-  }
-  return {
-    retenues: { type: "FeatureCollection", features: retenues },
-    ajoutees: { type: "FeatureCollection", features: ajoutees },
-    indesirables: { type: "FeatureCollection", features: indesirables },
-  };
+function asFc(raw: FeatureCollection | null | undefined): FeatureCollection {
+  if (raw && raw.type === "FeatureCollection" && Array.isArray(raw.features)) return raw;
+  return emptyFC();
 }
 
 export type EtudeOverlayPayload = {
@@ -164,30 +122,36 @@ export function emptyEtudeLayers(): InternalLayerInfo[] {
   return ETUDE_LAYER_DEFS.map((def) => asLayer(def, emptyFC(), false));
 }
 
-export async function loadEtudeOverlay(
-  projectId: string,
-  runId: string,
-): Promise<EtudeOverlayPayload> {
-  const [ctxSettled, geoSettled, indSettled, metricsSettled] = await Promise.allSettled([
-    fetchProjectContextGeometry(projectId),
-    fetchParcellesGeojson(projectId, runId),
-    fetchPoolIndesirables(projectId),
-    fetchPoolRunMetricsBulk(projectId, runId),
-  ]);
+function payloadFromParts(parts: {
+  foncier: FeatureCollection;
+  aoi: FeatureCollection;
+  retenues: FeatureCollection;
+  ajoutees: FeatureCollection;
+  indesirables: FeatureCollection;
+}): EtudeOverlayPayload {
+  const fcByKey: Record<string, FeatureCollection> = {
+    "etude-foncier": parts.foncier,
+    "etude-aoi": parts.aoi,
+    "etude-pool": parts.retenues,
+    "etude-ajoutees": parts.ajoutees,
+    "etude-indesirables": parts.indesirables,
+  };
+  const ready =
+    parts.foncier.features.length > 0 ||
+    parts.aoi.features.length > 0 ||
+    parts.retenues.features.length > 0 ||
+    parts.ajoutees.features.length > 0 ||
+    parts.indesirables.features.length > 0;
+  const layers = ETUDE_LAYER_DEFS.map((def) => {
+    const fc = fcByKey[def.key] ?? emptyFC();
+    return asLayer(def, fc, ready && fc.features.length > 0);
+  });
+  return { layers, fcByKey };
+}
 
-  const ctx = ctxSettled.status === "fulfilled" ? ctxSettled.value : null;
-  const rawGeo = geoSettled.status === "fulfilled" ? geoSettled.value : null;
-  const geojson = (rawGeo as FeatureCollection | null) ?? emptyFC();
-  const indus =
-    indSettled.status === "fulfilled" ? new Set(indSettled.value.idus ?? []) : new Set<string>();
-  const byIdu =
-    metricsSettled.status === "fulfilled" ? (metricsSettled.value.by_idu ?? {}) : {};
-
-  const manualIdus = new Set<string>();
-  for (const [idu, rows] of Object.entries(byIdu)) {
-    if (isManualOrigin(rows)) manualIdus.add(idu);
-  }
-
+function contextCollections(
+  ctx: Awaited<ReturnType<typeof fetchProjectContextGeometry>> | null,
+): { foncier: FeatureCollection; aoi: FeatureCollection } {
   const foncierFeat = featureFromContext(
     ctx?.foncier as Feature | undefined,
     "foncier",
@@ -198,28 +162,48 @@ export async function loadEtudeOverlay(
     "aoi",
     { libelle: "Aire d'étude" },
   );
-  const foncier: FeatureCollection = {
-    type: "FeatureCollection",
-    features: foncierFeat ? [foncierFeat] : [],
+  return {
+    foncier: { type: "FeatureCollection", features: foncierFeat ? [foncierFeat] : [] },
+    aoi: { type: "FeatureCollection", features: aoiFeat ? [aoiFeat] : [] },
   };
-  const aoi: FeatureCollection = {
-    type: "FeatureCollection",
-    features: aoiFeat ? [aoiFeat] : [],
-  };
-  const split = splitParcelles(geojson, indus, manualIdus);
+}
 
-  const fcByKey: Record<string, FeatureCollection> = {
-    "etude-foncier": foncier,
-    "etude-aoi": aoi,
-    "etude-pool": split.retenues,
-    "etude-ajoutees": split.ajoutees,
-    "etude-indesirables": split.indesirables,
-  };
-
-  const ready = Boolean(ctx) || geojson.features.length > 0;
-  const layers = ETUDE_LAYER_DEFS.map((def) => {
-    const fc = fcByKey[def.key] ?? emptyFC();
-    return asLayer(def, fc, ready && fc.features.length > 0);
+/** Zone projet + AOI seulement — à peindre dès que le contexte est là. */
+export async function loadEtudeContext(projectId: string): Promise<EtudeOverlayPayload> {
+  const ctx = await fetchProjectContextGeometry(projectId);
+  const { foncier, aoi } = contextCollections(ctx);
+  return payloadFromParts({
+    foncier,
+    aoi,
+    retenues: emptyFC(),
+    ajoutees: emptyFC(),
+    indesirables: emptyFC(),
   });
-  return { layers, fcByKey };
+}
+
+/** Pool enrichi (une requête) + contexte si pas déjà chargé. */
+export async function loadEtudeOverlay(
+  projectId: string,
+  runId: string,
+  previous?: EtudeOverlayPayload | null,
+): Promise<EtudeOverlayPayload> {
+  const overlayP = fetchPoolMapOverlay(projectId, runId);
+  const ctxP =
+    previous?.fcByKey["etude-foncier"]?.features.length || previous?.fcByKey["etude-aoi"]?.features.length
+      ? Promise.resolve(null)
+      : fetchProjectContextGeometry(projectId).catch(() => null);
+
+  const [overlay, ctx] = await Promise.all([overlayP, ctxP]);
+  const fromPrev = {
+    foncier: previous?.fcByKey["etude-foncier"] ?? emptyFC(),
+    aoi: previous?.fcByKey["etude-aoi"] ?? emptyFC(),
+  };
+  const fromCtx = ctx ? contextCollections(ctx) : fromPrev;
+  return payloadFromParts({
+    foncier: fromCtx.foncier.features.length ? fromCtx.foncier : fromPrev.foncier,
+    aoi: fromCtx.aoi.features.length ? fromCtx.aoi : fromPrev.aoi,
+    retenues: asFc(overlay.retenues),
+    ajoutees: asFc(overlay.ajoutees),
+    indesirables: asFc(overlay.indesirables),
+  });
 }

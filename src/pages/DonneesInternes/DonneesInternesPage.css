@@ -88,6 +88,7 @@
   top: 10px;
   right: 3.15rem;
   z-index: 2;
+  transition: right 0.28s ease;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -114,10 +115,167 @@
   border-color: #111;
 }
 
+.di-map-wrap.has-inspect .di-basemap-btn {
+  right: calc(22rem + 3.15rem);
+}
+
+.di-map-wrap.has-inspect .di-zoom-level {
+  right: calc(22rem + 10px);
+}
+
+.di-map-wrap.has-inspect .maplibregl-ctrl-top-right {
+  right: calc(22rem + 10px);
+}
+
+.di-inspect {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  width: min(22rem, 92vw);
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-left: 1px solid var(--di-border);
+  box-shadow: -8px 0 24px rgba(17, 17, 17, 0.08);
+  transform: translateX(100%);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.28s ease, opacity 0.22s ease;
+}
+
+.di-inspect.is-open,
+.di-inspect:has(.di-inspect__head) {
+  pointer-events: auto;
+}
+
+.di-inspect.is-open {
+  transform: translateX(0);
+  opacity: 1;
+}
+
+.di-inspect__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.85rem 0.85rem 0.7rem;
+  border-bottom: 1px solid var(--di-border);
+  flex-shrink: 0;
+}
+
+.di-inspect__head-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.di-inspect__layer {
+  margin: 0 0 0.2rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--di-muted);
+}
+
+.di-inspect__title {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 650;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.di-inspect__close {
+  flex-shrink: 0;
+  width: 1.7rem;
+  height: 1.7rem;
+  border: 1px solid var(--di-border);
+  border-radius: 0.4rem;
+  background: #fff;
+  color: var(--di-muted);
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.di-inspect__close:hover {
+  color: var(--di-text);
+  border-color: #ccc;
+}
+
+.di-inspect__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 0.35rem 0 0.85rem;
+}
+
+.di-inspect__empty {
+  margin: 0.85rem;
+  font-size: 0.8rem;
+  color: var(--di-muted);
+}
+
+.di-inspect__list {
+  margin: 0;
+}
+
+.di-inspect__row {
+  padding: 0.45rem 0.9rem;
+  border-bottom: 1px solid #f1f1f1;
+}
+
+.di-inspect__row dt {
+  margin: 0 0 0.18rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--di-muted);
+  overflow-wrap: anywhere;
+}
+
+.di-inspect__row dd {
+  margin: 0;
+}
+
+.di-inspect__val {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.di-inspect__val.is-clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  line-clamp: 5;
+  overflow: hidden;
+  white-space: normal;
+}
+
+.di-inspect__more {
+  margin-top: 0.28rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--di-accent-hover);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.di-inspect__more:hover {
+  text-decoration: underline;
+}
+
 .di-zoom-level {
   position: absolute;
   top: 5.35rem;
   right: 10px;
+  transition: right 0.28s ease;
   margin: 0;
   padding: 0.16rem 0.38rem;
   border-radius: 0.35rem;
@@ -535,49 +693,8 @@
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
 }
 
-.di-root .maplibregl-popup-content {
-  padding: 0;
-  border-radius: 0.65rem;
-  box-shadow: 0 8px 24px rgba(17, 17, 17, 0.12);
-}
-
-.di-root .maplibregl-popup-close-button {
-  font-size: 16px;
-  color: var(--di-muted);
-  padding: 0 6px;
-}
-
-.di-popup {
-  padding: 0.7rem 0.85rem 0.75rem;
-  min-width: 180px;
-  max-width: 260px;
-  font-size: 0.75rem;
-  line-height: 1.4;
-}
-
-.di-popup strong {
-  display: block;
-  font-size: 0.8rem;
-  font-weight: 600;
-  margin-bottom: 0.45rem;
-}
-
-.di-popup div {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.12rem 0;
-}
-
-.di-popup span {
-  color: var(--di-muted);
-  flex-shrink: 0;
-}
-
-.di-popup b {
-  font-weight: 500;
-  text-align: right;
-  overflow-wrap: anywhere;
+.di-root .maplibregl-ctrl-top-right {
+  transition: right 0.28s ease;
 }
 
 .di-fauna {
