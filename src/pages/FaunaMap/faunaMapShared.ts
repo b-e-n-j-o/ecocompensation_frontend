@@ -2,7 +2,10 @@ import buffer from "@turf/buffer";
 import maplibregl, { type Map as MapLibreMap } from "maplibre-gl";
 import type { Feature, FeatureCollection } from "geojson";
 
-export const API_BASE = "/api/fauna";
+import { getApiBaseUrl } from "../../config/apiBase";
+
+/** En dev : `/api/fauna` (proxy Vite). En prod : `VITE_API_URL` + `/api/fauna`. */
+export const API_BASE = `${getApiBaseUrl()}/api/fauna`;
 export const USER_SHP_SOURCE = "user-shp";
 export const USER_SHP_CENTROID_SOURCE = "user-shp-centroid";
 export const DRAW_ZONE_SOURCE = "fauna-draw-zone";
