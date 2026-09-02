@@ -28,7 +28,6 @@ import {
   buildAllSpeciesEntries,
   buffersFromPoints,
   centroidMarkerFromBbox,
-  clampRadiusKm,
   emptyFC,
   formatBbox,
   formatPoint,
