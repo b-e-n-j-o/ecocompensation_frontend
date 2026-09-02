@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Routes, Route, NavLink, Navigate, useNavigate, useParams, useLocation } from "react-router-dom";
 
 import { CreateAoiPage } from "./pages/FiltreEcologique/CreateAoiPage";
@@ -10,6 +11,15 @@ import type { StudyType } from "./types/studyTypes";
 import "./App.css";
 
 const ROUTE_ECOCOMPENSATION = "/ecocompensation";
+const RAIL_COLLAPSED_KEY = "kerelia-rail-collapsed";
+
+function readRailCollapsed(): boolean {
+  try {
+    return localStorage.getItem(RAIL_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 function CreateAoiRoutePage({ studyType }: { studyType: StudyType }) {
   const navigate = useNavigate();
@@ -55,9 +65,23 @@ function StudyHomeRoutePage() {
 }
 
 export default function App() {
+  const [railCollapsed, setRailCollapsed] = useState(readRailCollapsed);
+
+  function toggleRail() {
+    setRailCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(RAIL_COLLAPSED_KEY, next ? "1" : "0");
+      } catch {
+        /* stockage indisponible */
+      }
+      return next;
+    });
+  }
+
   return (
-    <div className="kerelia-app">
-      <AppRail />
+    <div className={`kerelia-app${railCollapsed ? " kerelia-app--rail-collapsed" : ""}`}>
+      <AppRail collapsed={railCollapsed} onToggle={toggleRail} />
       <div className="kerelia-app__body">
         <AppHeader />
 
@@ -124,7 +148,7 @@ const RAIL_ITEMS = [
   },
 ] as const;
 
-function AppRail() {
+function AppRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const { pathname } = useLocation();
 
   return (
@@ -133,12 +157,30 @@ function AppRail() {
         <NavLink
           key={item.to}
           to={item.to}
+          title={item.label}
           className={`kerelia-rail__item${item.isActive(pathname) ? " kerelia-rail__item--active" : ""}`}
         >
           {item.icon}
           <span>{item.label}</span>
         </NavLink>
       ))}
+      <button
+        type="button"
+        className="kerelia-rail__toggle"
+        onClick={onToggle}
+        aria-expanded={!collapsed}
+        aria-label={collapsed ? "Déplier le menu" : "Replier le menu"}
+        title={collapsed ? "Déplier le menu" : "Replier le menu"}
+      >
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden>
+          {collapsed ? (
+            <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+          ) : (
+            <path d="M15 6l-6 6 6 6" strokeLinecap="round" strokeLinejoin="round" />
+          )}
+        </svg>
+        <span>Replier</span>
+      </button>
     </nav>
   );
 }

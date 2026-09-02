@@ -7,6 +7,8 @@ type Props = {
   onMinAreaHaChange: (v: number) => void;
   minZoneHumideHa: number;
   onMinZoneHumideHaChange: (v: number) => void;
+  millerEnabled: boolean;
+  onMillerEnabledChange: (v: boolean) => void;
   millerThresh: number;
   onMillerThreshChange: (v: number) => void;
   zonesHumidesProbablesMode: ZoneHumideMode;
@@ -32,54 +34,17 @@ type Props = {
 
 const MODE_OPTIONS: { value: ZoneHumideMode; label: string }[] = [
   { value: "ignore", label: "Ignorer" },
-  { value: "intersect", label: "Doit intersecter" },
-  { value: "exclude", label: "Ne doit pas intersecter" },
+  { value: "intersect", label: "Intersecter" },
+  { value: "exclude", label: "Exclure" },
 ];
-
-function ModeField({
-  name,
-  title,
-  hint,
-  value,
-  onChange,
-  disabled,
-}: {
-  name: string;
-  title: string;
-  hint: string;
-  value: ZoneHumideMode;
-  onChange: (v: ZoneHumideMode) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <fieldset className="eco-zh-fieldset" disabled={disabled}>
-      <legend className="eco-aoi-label">{title}</legend>
-      <p className="eco-aoi-intro" style={{ marginTop: 0 }}>
-        {hint}
-      </p>
-      <div className="eco-zh-modes">
-        {MODE_OPTIONS.map((opt) => (
-          <label key={opt.value} className="eco-zh-mode">
-            <input
-              type="radio"
-              name={name}
-              value={opt.value}
-              checked={value === opt.value}
-              onChange={() => onChange(opt.value)}
-            />
-            {opt.label}
-          </label>
-        ))}
-      </div>
-    </fieldset>
-  );
-}
 
 export function SelectFilterCriteriaZonesHumides({
   minAreaHa,
   onMinAreaHaChange,
   minZoneHumideHa,
   onMinZoneHumideHaChange,
+  millerEnabled,
+  onMillerEnabledChange,
   millerThresh,
   onMillerThreshChange,
   zonesHumidesProbablesMode,
@@ -104,154 +69,154 @@ export function SelectFilterCriteriaZonesHumides({
 }: Props) {
   return (
     <div className="eco-filter-criteria">
-      <h2 className="eco-aoi-section-title">Critères zones humides</h2>
-      <p className="eco-aoi-intro">
-        Les parcelles candidates seront recherchées{" "}
-        <strong>dans l&apos;union des bassins versants (masses d&apos;eau) intersectant votre zone initiale</strong>
-        {" "}(entités BV complètes, pas seulement la zone de recouvrement).
-        Les couches zones humides sont chargées automatiquement avant le filtrage.
-      </p>
-
-      <div className="eco-aoi-slider">
-        <div className="eco-aoi-slider-head">
-          <span className="eco-aoi-label">Surface minimale parcelle</span>
-          <span className="eco-aoi-slider-value">{minAreaHa.toFixed(1)} ha</span>
-        </div>
-        <input
-          type="range"
-          min={1}
-          max={50}
-          step={0.5}
-          value={minAreaHa}
-          disabled={disabled}
-          onChange={(e) => onMinAreaHaChange(parseFloat(e.target.value))}
-        />
-        <p className="eco-aoi-slider-caption">
-          Surface cadastrale totale de la parcelle (emprise pure).
-        </p>
-      </div>
-
-      <div className="eco-aoi-slider">
-        <div className="eco-aoi-slider-head">
-          <span className="eco-aoi-label">Zones humides (RPDZH) — surface min. sur parcelle</span>
-          <span className="eco-aoi-slider-value">
-            {minZoneHumideHa <= 0 ? "Critère ignoré" : `${minZoneHumideHa.toFixed(2)} ha`}
-          </span>
-        </div>
-        <input
-          type="range"
-          min={0}
-          max={20}
-          step={0.05}
-          value={minZoneHumideHa}
-          disabled={disabled}
-          onChange={(e) => onMinZoneHumideHaChange(parseFloat(e.target.value))}
-        />
-        <p className="eco-aoi-slider-caption">
-          Filtre sur{" "}
-          <code style={{ fontSize: "0.85em" }}>ecocompensation_results.zone_humide</code>.
-          {" "}0 = pas de filtre ZH établies ; au-delà de 0, la parcelle est retenue si la somme des
-          intersections parcelle ∩ zone humide atteint ce seuil (ha).
-        </p>
-      </div>
-
-      <div className="eco-aoi-slider">
-        <div className="eco-aoi-slider-head">
-          <span className="eco-aoi-label">Indice de Miller (forme)</span>
-          <span className="eco-aoi-slider-value">{millerThresh.toFixed(2)}</span>
-        </div>
-        <input
-          type="range"
-          min={0.1}
-          max={0.8}
-          step={0.01}
-          value={millerThresh}
-          disabled={disabled}
-          onChange={(e) => onMillerThreshChange(parseFloat(e.target.value))}
-        />
-      </div>
-
-      <ModeField
-        name="zones-humides-probables-mode"
-        title="Zones humides probables"
-        hint="Filtre sur ecocompensation_results.zones_humides_probables."
-        value={zonesHumidesProbablesMode}
-        onChange={onZonesHumidesProbablesModeChange}
-        disabled={disabled}
-      />
-
-      <div className="eco-filter-block">
-        <label className="eco-filter-check">
+      <div className="eco-filter-block eco-filter-block--first">
+        <h3 className="eco-filter-block-title">Filtre géométrique</h3>
+        <div className="eco-aoi-slider">
+          <div className="eco-aoi-slider-head">
+            <span className="eco-aoi-label">Surface minimale du foncier recherché</span>
+            <span className="eco-aoi-slider-value">{minAreaHa.toFixed(1)} ha</span>
+          </div>
           <input
-            type="checkbox"
-            checked={tronconsHydroEnabled}
+            type="range"
+            min={1}
+            max={50}
+            step={0.5}
+            value={minAreaHa}
             disabled={disabled}
-            onChange={(e) => onTronconsHydroEnabledChange(e.target.checked)}
+            onChange={(e) => onMinAreaHaChange(parseFloat(e.target.value))}
           />
-          <span>Proximité d&apos;un cours d&apos;eau (tronçons hydro BD TOPO)</span>
-        </label>
-        {tronconsHydroEnabled && (
-          <div className="eco-filter-fauna-detail">
-            <div className="eco-aoi-slider" style={{ marginTop: "0.75rem" }}>
-              <div className="eco-aoi-slider-head">
-                <span className="eco-aoi-label">Distance max au cours d&apos;eau</span>
-                <span className="eco-aoi-slider-value">
-                  {tronconsHydroMaxDistM <= 0 ? "Intersection" : `${tronconsHydroMaxDistM.toFixed(0)} m`}
-                </span>
-              </div>
-              <input
-                type="range"
-                min={0}
-                max={2000}
-                step={25}
-                value={tronconsHydroMaxDistM}
-                disabled={disabled}
-                onChange={(e) => onTronconsHydroMaxDistMChange(Number(e.target.value))}
-              />
-              <p className="eco-aoi-slider-caption">
-                Parcelles retenues si elles intersectent un tronçon ou en ont un à ≤ cette distance
-                (<code style={{ fontSize: "0.85em" }}>ecocompensation.troncons_hydros</code>).
-                0 m = intersection directe uniquement.
-              </p>
+        </div>
+        <button
+          type="button"
+          className={`eco-layer-row eco-layer-row--inset${millerEnabled ? " is-on" : ""}`}
+          disabled={disabled}
+          aria-pressed={millerEnabled}
+          onClick={() => onMillerEnabledChange(!millerEnabled)}
+        >
+          <span className={`eco-dot${millerEnabled ? " is-on" : ""}`} aria-hidden />
+          <span className="eco-layer-row__label">Indice de Miller</span>
+        </button>
+        {millerEnabled && (
+          <div className="eco-aoi-slider eco-filter-nested">
+            <div className="eco-aoi-slider-head">
+              <span className="eco-aoi-label">Compacité minimale</span>
+              <span className="eco-aoi-slider-value">{millerThresh.toFixed(2)}</span>
             </div>
+            <input
+              type="range"
+              min={0.1}
+              max={0.8}
+              step={0.01}
+              value={millerThresh}
+              disabled={disabled}
+              onChange={(e) => onMillerThreshChange(parseFloat(e.target.value))}
+            />
           </div>
         )}
       </div>
 
       <div className="eco-filter-block">
-        <label className="eco-filter-check">
+        <h3 className="eco-filter-block-title">Zones humides</h3>
+        <div className="eco-aoi-slider">
+          <div className="eco-aoi-slider-head">
+            <span className="eco-aoi-label">Surface min. ZH établies</span>
+            <span className="eco-aoi-slider-value">
+              {minZoneHumideHa <= 0 ? "Off" : `${minZoneHumideHa.toFixed(2)} ha`}
+            </span>
+          </div>
           <input
-            type="checkbox"
-            checked={surfacesHydroEnabled}
+            type="range"
+            min={0}
+            max={20}
+            step={0.05}
+            value={minZoneHumideHa}
             disabled={disabled}
-            onChange={(e) => onSurfacesHydroEnabledChange(e.target.checked)}
+            onChange={(e) => onMinZoneHumideHaChange(parseFloat(e.target.value))}
           />
-          <span>Proximité d&apos;une surface hydrographique (plans d&apos;eau, étangs…)</span>
-        </label>
-        {surfacesHydroEnabled && (
-          <div className="eco-filter-fauna-detail">
-            <div className="eco-aoi-slider" style={{ marginTop: "0.75rem" }}>
-              <div className="eco-aoi-slider-head">
-                <span className="eco-aoi-label">Distance max à la surface hydro</span>
-                <span className="eco-aoi-slider-value">
-                  {surfacesHydroMaxDistM <= 0 ? "Intersection" : `${surfacesHydroMaxDistM.toFixed(0)} m`}
-                </span>
-              </div>
-              <input
-                type="range"
-                min={0}
-                max={2000}
-                step={25}
-                value={surfacesHydroMaxDistM}
-                disabled={disabled}
-                onChange={(e) => onSurfacesHydroMaxDistMChange(Number(e.target.value))}
-              />
-              <p className="eco-aoi-slider-caption">
-                Parcelles retenues si elles intersectent une surface ou en ont une à ≤ cette distance
-                (<code style={{ fontSize: "0.85em" }}>ecocompensation.surfaces_hydros</code>).
-                La surface intersectée (ha) est calculée en enrichissement.
-              </p>
+        </div>
+        <fieldset className="eco-zh-fieldset" disabled={disabled}>
+          <legend className="eco-aoi-label">ZH probables</legend>
+          <div className="eco-zh-modes">
+            {MODE_OPTIONS.map((opt) => (
+              <label key={opt.value} className="eco-zh-mode">
+                <input
+                  type="radio"
+                  name="zones-humides-probables-mode"
+                  value={opt.value}
+                  checked={zonesHumidesProbablesMode === opt.value}
+                  onChange={() => onZonesHumidesProbablesModeChange(opt.value)}
+                />
+                {opt.label}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      </div>
+
+      <div className="eco-filter-block">
+        <h3 className="eco-filter-block-title">Hydrographie</h3>
+        <button
+          type="button"
+          className={`eco-layer-row eco-layer-row--inset${tronconsHydroEnabled ? " is-on" : ""}`}
+          disabled={disabled}
+          aria-pressed={tronconsHydroEnabled}
+          onClick={() => onTronconsHydroEnabledChange(!tronconsHydroEnabled)}
+        >
+          <span className={`eco-dot${tronconsHydroEnabled ? " is-on" : ""}`} aria-hidden />
+          <span className="eco-layer-row__text">
+            <span className="eco-layer-row__label">Cours d&apos;eau</span>
+            <span className="eco-layer-row__meta">ecocompensation.troncons_hydros</span>
+          </span>
+        </button>
+        {tronconsHydroEnabled && (
+          <div className="eco-aoi-slider eco-filter-nested">
+            <div className="eco-aoi-slider-head">
+              <span className="eco-aoi-label">Distance max</span>
+              <span className="eco-aoi-slider-value">
+                {tronconsHydroMaxDistM <= 0 ? "Intersection" : `${tronconsHydroMaxDistM.toFixed(0)} m`}
+              </span>
             </div>
+            <input
+              type="range"
+              min={0}
+              max={2000}
+              step={25}
+              value={tronconsHydroMaxDistM}
+              disabled={disabled}
+              onChange={(e) => onTronconsHydroMaxDistMChange(Number(e.target.value))}
+            />
+          </div>
+        )}
+        <button
+          type="button"
+          className={`eco-layer-row eco-layer-row--inset${surfacesHydroEnabled ? " is-on" : ""}`}
+          disabled={disabled}
+          aria-pressed={surfacesHydroEnabled}
+          onClick={() => onSurfacesHydroEnabledChange(!surfacesHydroEnabled)}
+        >
+          <span className={`eco-dot${surfacesHydroEnabled ? " is-on" : ""}`} aria-hidden />
+          <span className="eco-layer-row__text">
+            <span className="eco-layer-row__label">Plans d&apos;eau</span>
+            <span className="eco-layer-row__meta">ecocompensation.surfaces_hydros</span>
+          </span>
+        </button>
+        {surfacesHydroEnabled && (
+          <div className="eco-aoi-slider eco-filter-nested">
+            <div className="eco-aoi-slider-head">
+              <span className="eco-aoi-label">Distance max</span>
+              <span className="eco-aoi-slider-value">
+                {surfacesHydroMaxDistM <= 0 ? "Intersection" : `${surfacesHydroMaxDistM.toFixed(0)} m`}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={2000}
+              step={25}
+              value={surfacesHydroMaxDistM}
+              disabled={disabled}
+              onChange={(e) => onSurfacesHydroMaxDistMChange(Number(e.target.value))}
+            />
           </div>
         )}
       </div>
@@ -263,26 +228,27 @@ export function SelectFilterCriteriaZonesHumides({
       />
 
       <div className="eco-filter-block">
-        <label className="eco-filter-check">
-          <input
-            type="checkbox"
-            checked={faunaEnabled}
-            disabled={disabled}
-            onChange={(e) => onFaunaEnabledChange(e.target.checked)}
-          />
-          <span>Filtrer par présence de faune (observations)</span>
-        </label>
-
+        <button
+          type="button"
+          className={`eco-filter-block-toggle${faunaEnabled ? " is-on" : ""}`}
+          disabled={disabled}
+          aria-pressed={faunaEnabled}
+          onClick={() => onFaunaEnabledChange(!faunaEnabled)}
+        >
+          <span className={`eco-dot${faunaEnabled ? " is-on" : ""}`} aria-hidden />
+          <h3 className="eco-filter-block-title">Présence d&apos;espèce(s)</h3>
+        </button>
         {faunaEnabled && (
-          <div className="eco-filter-fauna-detail">
+          <div className="eco-filter-nested">
             <FaunaSpeciesPicker
               selectedSpecies={faunaSpecies}
               onChange={onFaunaSpeciesChange}
               disabled={disabled}
+              compact
             />
-            <div className="eco-aoi-slider" style={{ marginTop: "0.75rem" }}>
+            <div className="eco-aoi-slider" style={{ marginTop: "0.65rem" }}>
               <div className="eco-aoi-slider-head">
-                <span className="eco-aoi-label">Distance max à l&apos;observation</span>
+                <span className="eco-aoi-label">Distance max</span>
                 <span className="eco-aoi-slider-value">{faunaDistM.toFixed(0)} m</span>
               </div>
               <input

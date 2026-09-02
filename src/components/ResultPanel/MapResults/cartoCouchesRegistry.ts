@@ -57,7 +57,7 @@ export interface ResultsLayerDef {
   export const RESULTS_LAYERS: ResultsLayerDef[] = [
     {
       key: "cesbio",
-      label: "Végétation CESBIO (emprise AOI)",
+      label: "Végétation CESBIO",
       fillColor: "#86efac",
       lineColor: "#15803d",
       fillOpacity: 0.22,
@@ -72,7 +72,7 @@ export interface ResultsLayerDef {
     },
     {
       key: "fauna",
-      label: "Observations faune (filtre)",
+      label: "Observations faune",
       fillColor: "#f97316",
       lineColor: "#c2410c",
       fillOpacity: 0.15,
@@ -91,7 +91,7 @@ export interface ResultsLayerDef {
     },
     {
       key: "fauna_buffer",
-      label: "Buffers faune (filtre)",
+      label: "Buffers faune",
       fillColor: "#f472b6",
       lineColor: "#db2777",
       fillOpacity: 0.08,

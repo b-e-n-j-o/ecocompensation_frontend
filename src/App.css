@@ -45,6 +45,8 @@
   gap: 0.2rem;
   background: #ffffff;
   border-right: 1px solid var(--kerelia-border);
+  transition: width 0.18s ease;
+  overflow: hidden;
 }
 
 .kerelia-rail__item {
@@ -78,6 +80,56 @@
 .kerelia-rail__item--active {
   color: var(--kerelia-accent-hover);
   background: var(--kerelia-accent-soft);
+}
+
+.kerelia-rail__toggle {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 2.45rem;
+  padding: 0.4rem 0.6rem;
+  border: none;
+  border-radius: 0.6rem;
+  background: transparent;
+  color: var(--kerelia-text-muted);
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 500;
+  line-height: 1.2;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s, color 0.15s;
+}
+
+.kerelia-rail__toggle svg {
+  flex-shrink: 0;
+}
+
+.kerelia-rail__toggle:hover {
+  color: var(--kerelia-text);
+  background: var(--kerelia-surface);
+}
+
+.kerelia-app--rail-collapsed .kerelia-rail {
+  width: 3.4rem;
+  padding: 0.7rem 0.38rem;
+}
+
+.kerelia-app--rail-collapsed .kerelia-rail__item,
+.kerelia-app--rail-collapsed .kerelia-rail__toggle {
+  justify-content: center;
+  padding: 0.45rem;
+  gap: 0;
+}
+
+.kerelia-app--rail-collapsed .kerelia-rail__item span,
+.kerelia-app--rail-collapsed .kerelia-rail__toggle span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
 }
 
 .kerelia-app__header {

@@ -6,9 +6,15 @@ interface FaunaSpeciesPickerProps {
   selectedSpecies: string[];
   onChange: (v: string[]) => void;
   disabled?: boolean;
+  compact?: boolean;
 }
 
-export function FaunaSpeciesPicker({ selectedSpecies, onChange, disabled = false }: FaunaSpeciesPickerProps) {
+export function FaunaSpeciesPicker({
+  selectedSpecies,
+  onChange,
+  disabled = false,
+  compact = false,
+}: FaunaSpeciesPickerProps) {
   const [taxa, setTaxa] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,16 +70,19 @@ export function FaunaSpeciesPicker({ selectedSpecies, onChange, disabled = false
   return (
     <div className="fauna-species-picker">
       <div className="fauna-species-picker__field">
-        <label className="create-aoi-label" htmlFor="fauna-species-search">
-          Filtrage par espèce
-        </label>
+        {!compact && (
+          <label className="create-aoi-label" htmlFor="fauna-species-search">
+            Filtrage par espèce
+          </label>
+        )}
 
         <div className="fauna-species-picker__search-wrap">
           <input
             id="fauna-species-search"
             type="text"
             className="create-aoi-input"
-            placeholder={loading ? "Chargement des espèces…" : "Rechercher une espèce…"}
+            aria-label={compact ? "Rechercher une espèce" : undefined}
+            placeholder={loading ? "Chargement…" : compact ? "Rechercher…" : "Rechercher une espèce…"}
             value={search}
             onChange={(e) => {
               setSearch(e.target.value);
@@ -107,9 +116,11 @@ export function FaunaSpeciesPicker({ selectedSpecies, onChange, disabled = false
       </div>
 
       {selectedSpecies.length === 0 ? (
-        <p className="fauna-species-picker__hint">
-          Aucun taxon sélectionné : le fetch Faune ne sera pas filtré.
-        </p>
+        compact ? null : (
+          <p className="fauna-species-picker__hint">
+            Aucun taxon sélectionné : le fetch Faune ne sera pas filtré.
+          </p>
+        )
       ) : (
         <div className="fauna-species-picker__chips">
           {selectedSpecies.map((s) => (

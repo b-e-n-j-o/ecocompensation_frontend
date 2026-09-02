@@ -333,6 +333,38 @@
   gap: 0.12rem;
 }
 
+.di-etude-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.15rem 0 0.45rem 1.35rem;
+}
+
+.di-etude-picker__label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #4b4b4b;
+}
+
+.di-etude-picker__select {
+  width: 100%;
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #111;
+  padding: 0.32rem 0.4rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+}
+
 .di-cat-item {
   flex-direction: column;
   align-items: stretch;

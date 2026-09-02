@@ -300,11 +300,13 @@ export function compositeBadgeStyle(score: number | null | undefined): { bg: str
 export function dureteSkipReasonLabel(reason: string | null | undefined): string {
   switch (reason) {
     case "not_pm":
-      return "Hors personne morale";
+      return "Propriétaire privé — dureté non estimable pour le moment";
     case "missing_or_invalid_siren":
-      return "SIREN invalide";
+      return "SIREN INSEE manquant ou invalide";
+    case "public_entity_no_insee_siren":
+      return "PM publique sans SIREN INSEE — score déterministe";
     case "pipeline_exception":
-      return "Erreur pipeline";
+      return "Erreur pipeline (sources ou LLM)";
     default:
       return reason?.trim() ? reason : "Non éligible";
   }

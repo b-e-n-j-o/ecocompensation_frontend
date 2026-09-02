@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import maplibregl, { type Map as MapLibreMap } from "maplibre-gl";
 import type { Feature, FeatureCollection } from "geojson";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -19,6 +20,22 @@ import {
   type InternalLayerInfo,
   type LayerStyle,
 } from "./api";
+import {
+  emptyEtudeLayers,
+  ETUDE_FAMILY,
+  ETUDE_LAYER_DEFS,
+  isEtudeLayerKey,
+  loadEtudeOverlay,
+  raiseEtudeLayers,
+} from "./etudeOverlay";
+import {
+  fetchAllPoolRunsList,
+  fetchProjects,
+  type ProjectSummary,
+} from "../../api";
+import type { PoolRunListItem } from "../../types";
+import { getStudyProfile } from "../Etude/studyProfiles";
+import { normalizeStudyType } from "../../types/studyTypes";
 import "./DonneesInternesPage.css";
 
 const USER_SOURCE = "user-overlay";
@@ -26,6 +43,10 @@ const GIRONDE: [number, number] = [-0.58, 44.84];
 
 const PROP_LABELS: Record<string, string> = {
   idu: "IDU",
+  statut_pool: "Statut pool",
+  rank: "Rang",
+  surface_ha: "Surface (ha)",
+  distance_km: "Distance (km)",
   geo_parcel: "Parcelle",
   tex: "N°",
   nomcommune: "Commune",
@@ -541,6 +562,7 @@ function groupByFamily(layers: InternalLayerInfo[]): LayerFamily[] {
 }
 
 function layerMeta(layer: InternalLayerInfo): string {
+  if (isEtudeLayerKey(layer.key)) return layer.available ? `${layer.count.toLocaleString("fr-FR")} entités` : "—";
   if (layer.delivery === "mbtiles" && layerStyle(layer).cluster) {
     return `halos puis z ≥ ${layer.min_zoom ?? 12}`;
   }
@@ -557,7 +579,9 @@ export default function DonneesInternesPage() {
   const didFit = useRef(false);
   const [mapReady, setMapReady] = useState(false);
 
-  const [layers, setLayers] = useState<InternalLayerInfo[]>([]);
+  const [catalog, setCatalog] = useState<InternalLayerInfo[]>([]);
+  const [etudeLayers, setEtudeLayers] = useState<InternalLayerInfo[]>(() => emptyEtudeLayers());
+  const layers = useMemo(() => [...etudeLayers, ...catalog], [etudeLayers, catalog]);
   const [visible, setVisible] = useState<Record<string, boolean>>({});
   const [loaded, setLoaded] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(true);
@@ -573,12 +597,28 @@ export default function DonneesInternesPage() {
   const hiddenClassesRef = useRef<HiddenClasses>({});
   hiddenClassesRef.current = hiddenClasses;
   const centroidsRef = useRef<Record<string, FeatureCollection>>({});
+  const etudeFcRef = useRef<Record<string, FeatureCollection>>({});
+  const fittedEtudeRunRef = useRef<string | null>(null);
   const fauna = useFaunaQuery({ mapRef, mapReady, enableShapefile: false });
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [poolRuns, setPoolRuns] = useState<PoolRunListItem[]>([]);
+  const [etudeProjectId, setEtudeProjectId] = useState<string | null>(() => searchParams.get("etude"));
+  const [etudeRunId, setEtudeRunId] = useState<string | null>(() => searchParams.get("pool"));
+  const [etudeBusy, setEtudeBusy] = useState(false);
 
   const loadLayer = useCallback(async (layer: InternalLayerInfo) => {
     const map0 = mapRef.current;
     if (!map0?.isStyleLoaded() || !layer.available) return;
     const hidden = hiddenClassesRef.current;
+    if (isEtudeLayerKey(layer.key)) {
+      ensureLayerOnMap(map0, layer);
+      setSourceData(map0, sourceId(layer.key), etudeFcRef.current[layer.key] ?? emptyFC());
+      setLoaded((prev) => ({ ...prev, [layer.key]: true }));
+      raiseEtudeLayers(map0);
+      raiseFaunaLayers(map0);
+      return;
+    }
     if (isMvtLayer(layer)) {
       ensureLayerOnMap(map0, layer);
       applyClassFilter(map0, layer, hidden);
@@ -594,6 +634,7 @@ export default function DonneesInternesPage() {
         }
       }
       setLoaded((prev) => ({ ...prev, [layer.key]: true }));
+      raiseEtudeLayers(map0);
       raiseFaunaLayers(map0);
       return;
     }
@@ -610,6 +651,7 @@ export default function DonneesInternesPage() {
       setSourceData(map, ptsSourceId(layer.key), filterFcByClass(pts, layer, hidden));
     }
     setLoaded((prev) => ({ ...prev, [layer.key]: true }));
+    raiseEtudeLayers(map);
     raiseFaunaLayers(map);
   }, []);
 
@@ -705,17 +747,20 @@ export default function DonneesInternesPage() {
       try {
         const catalog = await fetchInternalLayers();
         if (cancelled) return;
-        setLayers(catalog);
+        setCatalog(catalog);
         const vis: Record<string, boolean> = {};
-        const fam: Record<string, boolean> = {};
+        const fam: Record<string, boolean> = { [ETUDE_FAMILY]: true };
+        for (const def of ETUDE_LAYER_DEFS) vis[def.key] = false;
         for (const l of catalog) {
           vis[l.key] = l.default_visible && l.available;
           const fid = l.family || "_";
           if (fam[fid] == null) fam[fid] = false;
           if (vis[l.key]) fam[fid] = true;
         }
-        setVisible(vis);
-        setOpenFam(fam);
+        setVisible((prev) => ({ ...vis, ...Object.fromEntries(
+          Object.entries(prev).filter(([k]) => isEtudeLayerKey(k)),
+        ) }));
+        setOpenFam((prev) => ({ ...fam, ...prev, [ETUDE_FAMILY]: true }));
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -726,6 +771,95 @@ export default function DonneesInternesPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchProjects()
+      .then((list) => {
+        if (!cancelled) setProjects(list);
+      })
+      .catch(() => {
+        if (!cancelled) setProjects([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchAllPoolRunsList(200)
+      .then((r) => {
+        if (cancelled) return;
+        setPoolRuns(r.runs ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setPoolRuns([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!etudeProjectId || !etudeRunId) {
+      etudeFcRef.current = {};
+      fittedEtudeRunRef.current = null;
+      setEtudeLayers(emptyEtudeLayers());
+      const map = mapRef.current;
+      if (map?.isStyleLoaded()) {
+        for (const placeholder of emptyEtudeLayers()) {
+          if (map.getSource(sourceId(placeholder.key))) removeLayerFromMap(map, placeholder);
+        }
+      }
+      setVisible((prev) => {
+        const next = { ...prev };
+        for (const def of ETUDE_LAYER_DEFS) next[def.key] = false;
+        return next;
+      });
+      setLoaded((prev) => {
+        const next = { ...prev };
+        for (const def of ETUDE_LAYER_DEFS) delete next[def.key];
+        return next;
+      });
+      return;
+    }
+    let cancelled = false;
+    setEtudeBusy(true);
+    void loadEtudeOverlay(etudeProjectId, etudeRunId)
+      .then((payload) => {
+        if (cancelled) return;
+        etudeFcRef.current = payload.fcByKey;
+        fittedEtudeRunRef.current = null;
+        const map = mapRef.current;
+        if (map?.isStyleLoaded()) {
+          for (const l of payload.layers) {
+            if (map.getSource(sourceId(l.key))) removeLayerFromMap(map, l);
+          }
+        }
+        setEtudeLayers(payload.layers);
+        setVisible((prev) => {
+          const next = { ...prev };
+          for (const l of payload.layers) next[l.key] = Boolean(l.default_visible && l.available);
+          return next;
+        });
+        setLoaded((prev) => {
+          const next = { ...prev };
+          for (const l of payload.layers) next[l.key] = false;
+          return next;
+        });
+        setOpenFam((prev) => ({ ...prev, [ETUDE_FAMILY]: true }));
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        if (!cancelled) setEtudeBusy(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [etudeProjectId, etudeRunId]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -786,6 +920,7 @@ export default function DonneesInternesPage() {
         }
         didFit.current = true;
       }
+      raiseEtudeLayers(live);
       raiseFaunaLayers(live);
     })();
 
@@ -793,6 +928,25 @@ export default function DonneesInternesPage() {
       cancelled = true;
     };
   }, [layers, visible, loaded, loadLayer, mapReady]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !etudeRunId) return;
+    if (fittedEtudeRunRef.current === etudeRunId) return;
+    const boxes = etudeLayers
+      .filter((l) => visible[l.key] && l.available && l.bounds)
+      .map((l) => l.bounds as [number, number, number, number]);
+    if (!boxes.length) return;
+    const someLoaded = etudeLayers.some((l) => visible[l.key] && loaded[l.key]);
+    if (!someLoaded) return;
+    fitBounds(map, [
+      Math.min(...boxes.map((b) => b[0])),
+      Math.min(...boxes.map((b) => b[1])),
+      Math.max(...boxes.map((b) => b[2])),
+      Math.max(...boxes.map((b) => b[3])),
+    ]);
+    fittedEtudeRunRef.current = etudeRunId;
+  }, [etudeRunId, etudeLayers, visible, loaded, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -938,6 +1092,20 @@ export default function DonneesInternesPage() {
 
   const toggleFamily = (id: string) => {
     setOpenFam((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const selectEtudePool = (runId: string) => {
+    if (!runId) {
+      setEtudeProjectId(null);
+      setEtudeRunId(null);
+      setSearchParams({}, { replace: true });
+      return;
+    }
+    const run = poolRuns.find((r) => r.id === runId);
+    if (!run) return;
+    setEtudeProjectId(run.project_id);
+    setEtudeRunId(run.id);
+    setSearchParams({ etude: run.project_id, pool: run.id }, { replace: true });
   };
 
   const toggleTool = (id: string) => {
@@ -1144,6 +1312,38 @@ export default function DonneesInternesPage() {
                       {nOn > 0 ? `${nOn}/${fam.layers.length}` : fam.layers.length}
                     </span>
                   </button>
+                  {open && fam.id === ETUDE_FAMILY && (
+                    <div className="di-etude-picker">
+                      <label className="di-etude-picker__label">
+                        Pool
+                        <select
+                          className="di-etude-picker__select"
+                          value={etudeRunId ?? ""}
+                          onChange={(e) => selectEtudePool(e.target.value)}
+                        >
+                          <option value="">Choisir un pool…</option>
+                          {poolRuns.map((run) => {
+                            const project = projects.find((p) => p.id === run.project_id);
+                            const profile = getStudyProfile(normalizeStudyType(project?.study_type));
+                            const when = new Date(run.created_at);
+                            const whenLabel = Number.isNaN(when.getTime())
+                              ? ""
+                              : when.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+                            const name = project?.name?.trim() || project?.id.slice(0, 8) || "Projet";
+                            return (
+                              <option key={run.id} value={run.id}>
+                                {name} · {profile.shortLabel} · {whenLabel} · {run.total_count} parc.
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </label>
+                      {etudeBusy && <p className="di-muted">Chargement du pool…</p>}
+                      {!etudeRunId && (
+                        <p className="di-hint">Zone projet, AOI et parcelles du pool — sans dupliquer les couches SIG.</p>
+                      )}
+                    </div>
+                  )}
                   {open && (
                     <ul className="di-fam-list">
                       {fam.layers.map((layer) => (

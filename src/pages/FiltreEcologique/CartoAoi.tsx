@@ -4,11 +4,18 @@ import type { Feature, FeatureCollection, GeoJsonProperties, MultiPolygon, Polyg
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 
+import { EMPTY_TILES_OVERLAY, tileRetention, type FilterTilesOverlay } from "./filterTilesOverlay";
 import "./CartoAoi.css";
 
 /** Centre approximatif du département de la Gironde (WGS84, [lon, lat]) */
 const GIRONDE_CENTER_LONLAT: [number, number] = [-0.75, 44.58];
 const DEFAULT_ZOOM = 8.4;
+
+const TILES_SOURCE = "filter-tiles-source";
+const TILES_FILL = "filter-tiles-fill";
+const TILES_LINE = "filter-tiles-line";
+const PULSE_PERIOD_MS = 2400;
+const FADE_MS = 2000;
 
 /**
  * Style raster satellite (Esri World Imagery, tuiles publiques).
@@ -45,6 +52,7 @@ export interface CartoAoiProps {
   /** Zone initiale uploadée — affichée en sous-couche discrète (ZH). */
   initialZoneFeature?: Feature<Polygon | MultiPolygon> | null;
   bufferKm?: number;
+  tilesOverlay?: FilterTilesOverlay;
 }
 
 /**
@@ -67,14 +75,103 @@ function extendBoundsFromCoords(
   for (const item of coords) extendBoundsFromCoords(bounds, item);
 }
 
+function tilesFillOpacity(fade: number): maplibregl.ExpressionSpecification {
+  return [
+    "*",
+    fade,
+    [
+      "case",
+      ["==", ["coalesce", ["feature-state", "status"], 0], 1],
+      ["coalesce", ["feature-state", "pulse"], 0.4],
+      ["==", ["coalesce", ["feature-state", "status"], 0], 2],
+      ["+", 0.05, ["*", 0.34, ["coalesce", ["feature-state", "retention"], 1]]],
+      0.38,
+    ],
+  ];
+}
+
+function tilesLineOpacity(fade: number): maplibregl.ExpressionSpecification {
+  return [
+    "*",
+    fade,
+    [
+      "case",
+      ["==", ["coalesce", ["feature-state", "status"], 0], 1],
+      0.95,
+      ["==", ["coalesce", ["feature-state", "status"], 0], 2],
+      ["+", 0.22, ["*", 0.55, ["coalesce", ["feature-state", "retention"], 1]]],
+      0.85,
+    ],
+  ];
+}
+
+function addTileLayers(map: maplibregl.Map) {
+  if (map.getSource(TILES_SOURCE)) return;
+
+  map.addSource(TILES_SOURCE, {
+    type: "geojson",
+    data: emptyFeatureCollection(),
+    promoteId: "id",
+  });
+  map.addLayer(
+    {
+      id: TILES_FILL,
+      type: "fill",
+      source: TILES_SOURCE,
+      paint: {
+        "fill-color": [
+          "case",
+          ["==", ["coalesce", ["feature-state", "status"], 0], 1],
+          "#f5c842",
+          ["==", ["coalesce", ["feature-state", "status"], 0], 2],
+          "#289f01",
+          "#8b939c",
+        ],
+        "fill-opacity": tilesFillOpacity(1),
+      },
+    },
+    "parcel-fill",
+  );
+  map.addLayer(
+    {
+      id: TILES_LINE,
+      type: "line",
+      source: TILES_SOURCE,
+      paint: {
+        "line-color": [
+          "case",
+          ["==", ["coalesce", ["feature-state", "status"], 0], 1],
+          "#e4b008",
+          ["==", ["coalesce", ["feature-state", "status"], 0], 2],
+          "#1a7a01",
+          "#6b7280",
+        ],
+        "line-width": [
+          "case",
+          ["==", ["coalesce", ["feature-state", "status"], 0], 1],
+          2.4,
+          1.3,
+        ],
+        "line-opacity": tilesLineOpacity(1),
+      },
+    },
+    "parcel-line",
+  );
+}
+
 export function CartoAoi({
   className,
   parcelFeature,
   initialZoneFeature,
   bufferKm = 0,
+  tilesOverlay = EMPTY_TILES_OVERLAY,
 }: CartoAoiProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const tilesGeomKeyRef = useRef("");
+  const pulseRafRef = useRef<number>(0);
+  const fadeRafRef = useRef<number>(0);
+  const fadeStartedRef = useRef(false);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -162,11 +259,14 @@ export function CartoAoi({
           "line-width": 2.5,
         },
       });
+      addTileLayers(map);
     });
 
     mapRef.current = map;
 
     return () => {
+      cancelAnimationFrame(pulseRafRef.current);
+      cancelAnimationFrame(fadeRafRef.current);
       map.remove();
       mapRef.current = null;
     };
@@ -223,6 +323,120 @@ export function CartoAoi({
       map.fitBounds(bounds, { padding: 56, duration: 700, maxZoom: 14 });
     }
   }, [parcelFeature, initialZoneFeature, bufferKm]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const apply = () => {
+      if (!map.getLayer("parcel-fill")) return;
+      addTileLayers(map);
+      const source = map.getSource(TILES_SOURCE) as maplibregl.GeoJSONSource | undefined;
+      if (!source) return;
+
+      const stopPulse = () => {
+        cancelAnimationFrame(pulseRafRef.current);
+        pulseRafRef.current = 0;
+      };
+      const stopFade = () => {
+        cancelAnimationFrame(fadeRafRef.current);
+        fadeRafRef.current = 0;
+      };
+
+      if (tilesOverlay.phase === "hidden" || tilesOverlay.tiles.length === 0) {
+        stopPulse();
+        stopFade();
+        fadeStartedRef.current = false;
+        tilesGeomKeyRef.current = "";
+        source.setData(emptyFeatureCollection());
+        if (map.getLayer(TILES_FILL)) {
+          map.setPaintProperty(TILES_FILL, "fill-opacity", tilesFillOpacity(1));
+          map.setPaintProperty(TILES_LINE, "line-opacity", tilesLineOpacity(1));
+        }
+        return;
+      }
+
+      const geomKey = tilesOverlay.tiles.map((t) => t.id).join(",");
+      if (geomKey !== tilesGeomKeyRef.current) {
+        source.setData({
+          type: "FeatureCollection",
+          features: tilesOverlay.tiles.map((tile) => ({
+            type: "Feature" as const,
+            id: tile.id,
+            properties: { id: tile.id },
+            geometry: tile.geometry,
+          })),
+        });
+        tilesGeomKeyRef.current = geomKey;
+      }
+
+      for (const tile of tilesOverlay.tiles) {
+        const status = tile.status === "pending" ? 0 : tile.status === "active" ? 1 : 2;
+        map.setFeatureState(
+          { source: TILES_SOURCE, id: tile.id },
+          { status, retention: tileRetention(tile) },
+        );
+      }
+
+      const activeTile = tilesOverlay.tiles.find((t) => t.status === "active");
+      stopPulse();
+      if (tilesOverlay.phase === "tiling" && activeTile) {
+        const tick = (now: number) => {
+          const wave = 0.5 + 0.5 * Math.sin((now / PULSE_PERIOD_MS) * Math.PI * 2);
+          const pulse = 0.2 + 0.32 * wave;
+          if (map.getSource(TILES_SOURCE)) {
+            map.setFeatureState(
+              { source: TILES_SOURCE, id: activeTile.id },
+              { pulse, status: 1, retention: tileRetention(activeTile) },
+            );
+          }
+          pulseRafRef.current = requestAnimationFrame(tick);
+        };
+        pulseRafRef.current = requestAnimationFrame(tick);
+      }
+
+      if (tilesOverlay.phase === "fade") {
+        if (!fadeStartedRef.current) {
+          fadeStartedRef.current = true;
+          stopPulse();
+          const t0 = performance.now();
+          const tick = (now: number) => {
+            const t = Math.min(1, (now - t0) / FADE_MS);
+            const fade = 1 - t;
+            if (map.getLayer(TILES_FILL)) {
+              map.setPaintProperty(TILES_FILL, "fill-opacity", tilesFillOpacity(fade));
+              map.setPaintProperty(TILES_LINE, "line-opacity", tilesLineOpacity(fade));
+            }
+            if (t < 1) {
+              fadeRafRef.current = requestAnimationFrame(tick);
+            } else {
+              source.setData(emptyFeatureCollection());
+              tilesGeomKeyRef.current = "";
+            }
+          };
+          fadeRafRef.current = requestAnimationFrame(tick);
+        }
+      } else {
+        fadeStartedRef.current = false;
+        stopFade();
+        if (map.getLayer(TILES_FILL)) {
+          map.setPaintProperty(TILES_FILL, "fill-opacity", tilesFillOpacity(1));
+          map.setPaintProperty(TILES_LINE, "line-opacity", tilesLineOpacity(1));
+        }
+      }
+    };
+
+    if (!map.isStyleLoaded() || !map.getLayer("parcel-fill")) {
+      map.once("load", apply);
+      return;
+    }
+    apply();
+
+    return () => {
+      cancelAnimationFrame(pulseRafRef.current);
+      pulseRafRef.current = 0;
+    };
+  }, [tilesOverlay]);
 
   return (
     <div

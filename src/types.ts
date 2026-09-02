@@ -58,6 +58,35 @@ export const CESBIO_LIBELLES = [
 
 export type CesbioLibelle = (typeof CESBIO_LIBELLES)[number];
 
+/** Couleurs alignées sur le catalogue Données internes (occupation du sol). */
+export const CESBIO_LIBELLE_COLORS: Record<string, string> = {
+  "Bâtis denses": "#6d4c41",
+  "Bâtis diffus": "#bcaaa4",
+  "Zones industrielles et commerciales": "#546e7a",
+  "Surfaces routes": "#90a4ae",
+  "Colza": "#ffee58",
+  "Céréales à pailles": "#ffcc80",
+  "Protéagineux": "#d4e157",
+  "Soja": "#dce775",
+  "Tournesol": "#fdd835",
+  "Maïs": "#f9a825",
+  "Riz": "#81d4fa",
+  "Tubercules/racines": "#ce93d8",
+  "Prairies": "#9ccc65",
+  "Vergers": "#ef6c00",
+  "Vignes": "#8e24aa",
+  "Forêts de feuillus": "#2e7d32",
+  "Forêts de conifères": "#1b5e20",
+  "Pelouses": "#c5e1a5",
+  "Landes ligneuses": "#827717",
+  "Surfaces minérales": "#b0bec5",
+  "Plages et dunes": "#ffe082",
+  "Glaciers ou neiges": "#eceff1",
+  "Eau": "#1565c0",
+  "Autres": "#9e9e9e",
+  "Inconnu": "#bdbdbd",
+};
+
 export type VegetationHybrideMode = "OR" | "AND";
 
 /**

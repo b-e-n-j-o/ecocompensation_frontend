@@ -19,6 +19,8 @@ interface UnitesFoncieresTableProps {
   scrollTableNonce?: number;
   onSubsetActivate?: (subsetId: string) => void;
   onUfActivate?: (ufId: string) => void;
+  onSubsetHover?: (subsetId: string | null) => void;
+  onUfHover?: (ufId: string | null) => void;
 }
 
 function scoreLabel(score: ParcelScorePayload | undefined): string {
@@ -63,12 +65,15 @@ export function UnitesFoncieresTable({
   scrollTableNonce = 0,
   onSubsetActivate,
   onUfActivate,
+  onSubsetHover,
+  onUfHover,
 }: UnitesFoncieresTableProps) {
   const [expandedUfId, setExpandedUfId] = useState<string | null>(null);
   const [expandedSubsetId, setExpandedSubsetId] = useState<string | null>(null);
+  const [hoveredSubsetId, setHoveredSubsetId] = useState<string | null>(null);
   const [visibleUfCount, setVisibleUfCount] = useState(UF_PAGE_SIZE);
-  const [exportChoice, setExportChoice] = useState<"" | "csv" | "shp">("");
   const [exporting, setExporting] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
   const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
 
   useEffect(() => {
@@ -106,44 +111,70 @@ export function UnitesFoncieresTable({
 
   return (
     <div className="ranking-wrap">
-      <div className="ranking-header">
-        <span className="ranking-title">Unités foncières</span>
-        <div className="ranking-header-actions">
-          <label className="ranking-sort-label">
-            Exporter
-            <select
-              value={exportChoice}
-              disabled={!projectId || exporting}
-              onChange={async (e) => {
-                const v = e.target.value as "" | "csv" | "shp";
-                if (!v || !projectId) return;
-                setExportChoice(v);
-                setExporting(true);
-                try {
-                  if (v === "csv") await exportCsv(projectId, "uf");
-                  else await exportShp(projectId, "uf");
-                } catch (err) {
-                  console.error("Export classement UF:", err);
-                  alert(
-                    err instanceof Error
-                      ? err.message
-                      : "Erreur lors de l'export. Voir la console.",
-                  );
-                } finally {
-                  setExporting(false);
-                  setExportChoice("");
-                }
-              }}
+      <div className={`ranking-chrome${toolsOpen ? " is-open" : ""}`}>
+        <div className="ranking-chrome__bar">
+          {projectId && (
+            <button
+              type="button"
+              className="ranking-chrome__toggle"
+              aria-expanded={toolsOpen}
+              onClick={() => setToolsOpen((v) => !v)}
             >
-              <option value="">—</option>
-              <option value="csv">CSV</option>
-              <option value="shp">Shapefile (ZIP)</option>
-            </select>
-          </label>
+              Outils
+              <span className="ranking-chrome__caret" aria-hidden>
+                {toolsOpen ? "▴" : "▾"}
+              </span>
+            </button>
+          )}
           <span className="ranking-count mono">
             {Math.min(visibleUfCount, ufs.length)} / {ufCount} UF · {totalSousEnsembles} sous-ensembles
           </span>
         </div>
+        {toolsOpen && projectId && (
+          <div className="ranking-tools" role="region" aria-label="Outils UF">
+            <div className="ranking-tools__block">
+              <div className="ranking-tools__label">Exporter</div>
+              <div className="ranking-tools__actions">
+                <button
+                  type="button"
+                  className="ranking-btn-export"
+                  disabled={exporting}
+                  onClick={async () => {
+                    setExporting(true);
+                    try {
+                      await exportCsv(projectId, "uf");
+                    } catch (err) {
+                      console.error("Export classement UF:", err);
+                      alert(err instanceof Error ? err.message : "Erreur lors de l'export.");
+                    } finally {
+                      setExporting(false);
+                    }
+                  }}
+                >
+                  CSV
+                </button>
+                <button
+                  type="button"
+                  className="ranking-btn-export"
+                  disabled={exporting}
+                  onClick={async () => {
+                    setExporting(true);
+                    try {
+                      await exportShp(projectId, "uf");
+                    } catch (err) {
+                      console.error("Export classement UF:", err);
+                      alert(err instanceof Error ? err.message : "Erreur lors de l'export.");
+                    } finally {
+                      setExporting(false);
+                    }
+                  }}
+                >
+                  Shapefile
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="ranking-table-scroll uf-foncieres-scroll" style={{ padding: 12 }}>
@@ -159,7 +190,15 @@ export function UnitesFoncieresTable({
             const isProspect = pmPayload?.compensation_deja_realisee === true;
 
             return (
-              <div key={uf.uf_id} style={{ marginBottom: 12 }}>
+              <div
+                key={uf.uf_id}
+                style={{ marginBottom: 12 }}
+                onMouseEnter={() => onUfHover?.(uf.uf_id)}
+                onMouseLeave={() => {
+                  onUfHover?.(null);
+                  onSubsetHover?.(null);
+                }}
+              >
                 <button
                   type="button"
                   onClick={() => {
@@ -232,6 +271,7 @@ export function UnitesFoncieresTable({
                         {uf.sous_ensembles.map((ss, idx) => {
                           const detailOpen = expandedSubsetId === ss.subset_id;
                           const isSelected = selectedSubsetId === ss.subset_id;
+                          const isHovered = hoveredSubsetId === ss.subset_id;
                           return (
                             <Fragment key={ss.subset_id}>
                               <tr
@@ -240,11 +280,19 @@ export function UnitesFoncieresTable({
                                   if (el) rowRefs.current.set(ss.subset_id, el);
                                   else rowRefs.current.delete(ss.subset_id);
                                 }}
-                                className={`ranking-row${detailOpen ? " ranking-row--expanded" : ""}${isSelected ? " selected" : ""}`}
+                                className={`ranking-row${detailOpen ? " ranking-row--expanded" : ""}${isSelected ? " selected" : ""}${isHovered ? " hovered" : ""}`}
                                 onClick={() => {
                                   const open = !detailOpen;
                                   setExpandedSubsetId(open ? ss.subset_id : null);
                                   onSubsetActivate?.(ss.subset_id);
+                                }}
+                                onMouseEnter={() => {
+                                  setHoveredSubsetId(ss.subset_id);
+                                  onSubsetHover?.(ss.subset_id);
+                                }}
+                                onMouseLeave={() => {
+                                  setHoveredSubsetId(null);
+                                  onSubsetHover?.(null);
                                 }}
                                 style={{ cursor: "pointer" }}
                               >
@@ -272,7 +320,18 @@ export function UnitesFoncieresTable({
                                 </td>
                               </tr>
                               {detailOpen && (
-                                <tr key={`${ss.subset_id}-detail`} className="ranking-row-detail">
+                                <tr
+                                  key={`${ss.subset_id}-detail`}
+                                  className="ranking-row-detail"
+                                  onMouseEnter={() => {
+                                    setHoveredSubsetId(ss.subset_id);
+                                    onSubsetHover?.(ss.subset_id);
+                                  }}
+                                  onMouseLeave={() => {
+                                    setHoveredSubsetId(null);
+                                    onSubsetHover?.(null);
+                                  }}
+                                >
                                   <td colSpan={8}>
                                     <SousEnsembleDetail ss={ss} />
                                   </td>

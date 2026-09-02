@@ -12,6 +12,10 @@ import type { FilterPhaseInfo, FromParcelleBody, ParcelleRef, ProjectSummary } f
 import type { CesbioLibelle } from "../../types";
 import type { Feature, MultiPolygon, Polygon } from "geojson";
 import { CartoAoi } from "./CartoAoi";
+import {
+  applyWsToTilesOverlay,
+  EMPTY_TILES_OVERLAY,
+} from "./filterTilesOverlay";
 import { SelectFilterCriteria } from "./SelectFilterCriteria";
 import { SelectFilterCriteriaZonesHumides } from "./SelectFilterCriteriaZonesHumides";
 import { PipelineProgressPanel } from "../../components/PipelineProgressPanel";
@@ -60,6 +64,7 @@ export function CreateAoiPage({
   const [error, setError] = useState<string | null>(null);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [pipelineProgress, setPipelineProgress] = useState<PipelineProgress>(INITIAL_PIPELINE_PROGRESS);
+  const [tilesOverlay, setTilesOverlay] = useState(EMPTY_TILES_OVERLAY);
   const [summary, setSummary] = useState<SummaryState>(null);
   const [parcelFeature, setParcelFeature] = useState<ParcelleFeature | null>(null);
   const [isSearchingParcel, setIsSearchingParcel] = useState(false);
@@ -76,6 +81,7 @@ export function CreateAoiPage({
   const [phasesLoadError, setPhasesLoadError] = useState<string | null>(null);
   const [minAreaHa, setMinAreaHa] = useState(7);
   const [millerThresh, setMillerThresh] = useState(0.39);
+  const [millerEnabled, setMillerEnabled] = useState(false);
   const [cesbioLibelles, setCesbioLibelles] = useState<CesbioLibelle[]>([
     "Forêts de conifères",
     "Forêts de feuillus",
@@ -168,6 +174,7 @@ export function CreateAoiPage({
   useEffect(() => {
     if (!projectId || filterSession === 0) return;
     setPipelineProgress(INITIAL_PIPELINE_PROGRESS);
+    setTilesOverlay(EMPTY_TILES_OVERLAY);
     setSummary(null);
     setUfInProgress(false);
     const WS = getWsBaseUrl();
@@ -204,6 +211,7 @@ export function CreateAoiPage({
         }
 
         setPipelineProgress((prev) => applyWsToPipelineProgress(prev, data));
+        setTilesOverlay((prev) => applyWsToTilesOverlay(prev, data));
 
         if (ev === "error") {
           setStep("error");
@@ -247,6 +255,12 @@ export function CreateAoiPage({
       wsRef.current = null;
     };
   }, [projectId, filterSession]);
+
+  useEffect(() => {
+    if (tilesOverlay.phase !== "fade") return;
+    const timer = window.setTimeout(() => setTilesOverlay(EMPTY_TILES_OVERLAY), 2200);
+    return () => window.clearTimeout(timer);
+  }, [tilesOverlay.phase]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -304,6 +318,7 @@ export function CreateAoiPage({
     }
 
     setPipelineProgress(INITIAL_PIPELINE_PROGRESS);
+    setTilesOverlay(EMPTY_TILES_OVERLAY);
     setSummary(null);
 
     setStep("creating");
@@ -349,7 +364,7 @@ export function CreateAoiPage({
       await startFilterPipeline(res.project_id, isZh
         ? {
             min_area_ha: minAreaHa,
-            miller_thresh: millerThresh,
+            miller_thresh: millerEnabled ? millerThresh : null,
             cesbio_libelles: [],
             fauna_criteria: faunaEnabled
               ? faunaSpecies.map((species) => ({ species, dist_m: faunaDistM }))
@@ -363,7 +378,7 @@ export function CreateAoiPage({
           }
         : {
             min_area_ha: minAreaHa,
-            miller_thresh: millerThresh,
+            miller_thresh: millerEnabled ? millerThresh : null,
             cesbio_libelles: cesbioLibelles,
             fauna_criteria: faunaEnabled
               ? faunaSpecies.map((species) => ({ species, dist_m: faunaDistM }))
@@ -459,6 +474,7 @@ export function CreateAoiPage({
           refs: refs.map((r) => `${r.code_insee}/${r.section}/${r.numero}`).join(", "),
         },
       } as ParcelleFeature);
+      setWizardStep(2);
     } catch (err) {
       setParcelFeature(null);
       setError(err instanceof Error ? err.message : "Erreur recherche parcellaire IGN");
@@ -512,6 +528,7 @@ export function CreateAoiPage({
       );
       setBvPreviewCount(isZh ? (preview.bv_count ?? null) : null);
       setBvPreviewNames(isZh ? (preview.bv_names ?? []) : []);
+      setWizardStep(2);
     } catch (err) {
       setUploadedFile(null);
       setUploadedFeature(null);
@@ -542,8 +559,7 @@ export function CreateAoiPage({
         <h2 className="eco-aoi-section-title">{isZh ? "Zone initiale" : "Source géométrique"}</h2>
         {isZh && (
           <p className="eco-aoi-intro">
-            Importez la zone initiale. Le périmètre de recherche sera l&apos;union des bassins versants
-            (masses d&apos;eau) qui l&apos;intersectent — entités BV complètes, pas seulement la zone de recouvrement.
+            Le périmètre de recherche sera l&apos;union des bassins versants intersectés.
           </p>
         )}
         {!isZh && (
@@ -632,18 +648,16 @@ export function CreateAoiPage({
                   <span className="eco-aoi-dropzone-hint">ou cliquez pour parcourir vos fichiers</span>
                 </>
               )}
-              <span className="eco-aoi-dropzone-formats">
-                Formats acceptés : GeoPackage (.gpkg) ou Shapefile zippé (.zip, avec .shp .dbf .shx .prj)
-              </span>
+              <span className="eco-aoi-dropzone-formats">GeoPackage (.gpkg) ou Shapefile zippé (.zip)</span>
             </div>
             <div className={`eco-aoi-status ${uploadedFeature ? "eco-aoi-status--ok" : "eco-aoi-status--muted"}`}>
               {isUploadingGeom
-                ? "Analyse du fichier et sélection des bassins versants…"
+                ? "Analyse du fichier…"
                 : uploadedFeature
                   ? isZh && bvPreviewCount != null
-                    ? `Zone de recherche : ${bvPreviewCount} bassin(s) versant(s) retenu(s)`
-                    : `Emprise chargée : ${uploadedFile?.name ?? "fichier"}`
-                  : "Aucun fichier analysé."}
+                    ? `${bvPreviewCount} bassin(s) versant(s)`
+                    : uploadedFile?.name ?? "Emprise chargée"
+                  : "Aucun fichier"}
             </div>
             {isZh && bvPreviewNames.length > 0 && (
               <ul className="eco-aoi-bv-names" aria-label="Bassins versants retenus">
@@ -716,8 +730,8 @@ export function CreateAoiPage({
             )}
             <div className={`eco-aoi-status ${parcelFeature ? "eco-aoi-status--ok" : "eco-aoi-status--muted"}`}>
               {parcelFeature
-                ? "Géométrie source trouvée et affichée sur la carte."
-                : "Parcelle ou UF non recherchée."}
+                ? "Parcelle affichée sur la carte."
+                : "Parcelle non recherchée."}
             </div>
           </>
         )}
@@ -728,11 +742,6 @@ export function CreateAoiPage({
   function renderZoneStep() {
     return (
       <>
-        <p className="eco-aoi-intro">
-          {isZh
-            ? "Nommez le projet. La recherche de parcelles se fera dans l'union des bassins versants retenus (pas de buffer)."
-            : "Nommez le projet et ajustez la zone de recherche. Le contour vert en pointillés sur la carte correspond au buffer autour de la parcelle."}
-        </p>
         <h2 className="eco-aoi-section-title">{isZh ? "Projet" : "Zone de recherche"}</h2>
         <div className="eco-aoi-row">
           <label className="create-aoi-label" htmlFor="aoi-name">Nom du projet</label>
@@ -768,15 +777,7 @@ export function CreateAoiPage({
               <span>0 km</span>
               <span>20 km</span>
             </div>
-            <p className="eco-aoi-slider-caption">
-              Distance ajoutée autour de l&apos;emprise du projet (zone d&apos;étude AOI).
-            </p>
           </div>
-        )}
-        {isZh && (
-          <p className="eco-aoi-slider-caption">
-            Périmètre de recherche = union des bassins versants intersectant la zone initiale.
-          </p>
         )}
       </>
     );
@@ -792,6 +793,8 @@ export function CreateAoiPage({
             onMinAreaHaChange={setMinAreaHa}
             minZoneHumideHa={minZoneHumideHa}
             onMinZoneHumideHaChange={setMinZoneHumideHa}
+            millerEnabled={millerEnabled}
+            onMillerEnabledChange={setMillerEnabled}
             millerThresh={millerThresh}
             onMillerThreshChange={setMillerThresh}
             zonesHumidesProbablesMode={zonesHumidesProbablesMode}
@@ -818,6 +821,8 @@ export function CreateAoiPage({
           <SelectFilterCriteria
             minAreaHa={minAreaHa}
             onMinAreaHaChange={setMinAreaHa}
+            millerEnabled={millerEnabled}
+            onMillerEnabledChange={setMillerEnabled}
             millerThresh={millerThresh}
             onMillerThreshChange={setMillerThresh}
             cesbioLibelles={cesbioLibelles}
@@ -1022,9 +1027,6 @@ export function CreateAoiPage({
               <div className="eco-aoi-body">
                 <div className="eco-aoi-existing-panel">
                   <h2>Projet existant</h2>
-                  <p className="eco-aoi-intro">
-                    Choisissez un projet déjà créé pour reprendre le filtrage écologique.
-                  </p>
                   {historyLoading ? (
                     <div className="eco-aoi-status eco-aoi-status--muted">Chargement des projets…</div>
                   ) : historyError ? (
@@ -1103,6 +1105,28 @@ export function CreateAoiPage({
                       : "Périmètre de recherche (bassins versants)"}
                 </div>
               )}
+              {tilesOverlay.phase !== "hidden" && tilesOverlay.tiles.length > 0 && (
+                <>
+                  {tilesOverlay.phase === "tiling" && (
+                    <>
+                      <div className="eco-aoi-legend-item">
+                        <span className="eco-aoi-legend-swatch eco-aoi-legend-swatch--tile-pending" />
+                        Tuile à traiter
+                      </div>
+                      <div className="eco-aoi-legend-item">
+                        <span className="eco-aoi-legend-swatch eco-aoi-legend-swatch--tile-active" />
+                        Tuile en cours
+                      </div>
+                    </>
+                  )}
+                  <div className="eco-aoi-legend-item">
+                    <span className="eco-aoi-legend-swatch eco-aoi-legend-swatch--tile-done" />
+                    {tilesOverlay.phase === "filter"
+                      ? "Rétention par tuile"
+                      : "Tuile traitée"}
+                  </div>
+                </>
+              )}
             </div>
           )}
 
@@ -1110,6 +1134,7 @@ export function CreateAoiPage({
             parcelFeature={sourceFeature}
             initialZoneFeature={isZh ? initialUploadFeature : null}
             bufferKm={isZh ? 0 : bufferKm}
+            tilesOverlay={tilesOverlay}
           />
         </div>
       </div>

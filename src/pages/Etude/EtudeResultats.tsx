@@ -2,13 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { FunnelDisplay } from "../../components/ResultPanel/FunnelDisplay";
-import { ResultsToolbar } from "../../components/ResultPanel/ResultsToolbar";
-import { RankingTable } from "../../components/ResultPanel/RankingTable";
-import { IndesirablesTable } from "../../components/ResultPanel/IndesirablesTable";
-import { UnitesFoncieresTable } from "../../components/ResultPanel/UnitesFoncieresTable";
-import { ParcellesMap } from "../../components/ResultPanel/MapResults/ParcellesMap";
-import { SousEnsemblesMap } from "../../components/ResultPanel/MapResults/SousEnsemblesMap";
+import { ResultsToolbar, type ResultsToolbarStatus } from "../../components/ResultPanel/ResultsToolbar";
 import { PipelineProgressPanel } from "../../components/PipelineProgressPanel";
+import {
+  EtudeResultatsCombinedTable,
+  EtudeResultatsParcellesTable,
+  EtudeResultatsUnitesTable,
+} from "./EtudeResultatsTable";
+import { EtudeResultatsParcellesMap, EtudeResultatsUnitesMap, SplitMapFrame } from "./EtudeResultatsMap";
 import "../../components/pipelineProgressPanel.css";
 import type { ParcellesGeoJSON } from "../../components/ResultPanel/MapResults/ParcellesMap";
 import {
@@ -24,10 +25,12 @@ import {
   addPoolIndesirables,
   removePoolIndesirable,
   fetchPoolRunSnapshot,
+  fetchAllPoolRunsList,
   fetchPoolRunsList,
   fetchProjectStoredResults,
   fetchProjects,
   computePoolRunDurete,
+  addParcellesToPoolRun,
 } from "../../api";
 import type { ProjectSummary } from "../../api";
 import type { ResultsThematicPreload } from "../../components/ResultPanel/MapResults/cartoCouchesRegistry";
@@ -52,15 +55,15 @@ import { useFetchProgress } from "../../hooks/useFetchProgress";
 import { ProjectContextMap } from "../../components/ProjectContextMap";
 import { getStudyProfile, getMapLayerKeys } from "./studyProfiles";
 import { parseStoredFilterResponse, parseStoredLastFilter } from "../../utils/storedFilterResults";
-import { normalizeStudyType, type StudyType } from "../../types/studyTypes";
+import { normalizeStudyType } from "../../types/studyTypes";
 import "../../components/ResultPanel/results.css";
 import "../../components/ResultPanel/results-page.css";
 import type { FeatureCollection, GeoJsonProperties, Geometry } from "geojson";
 
 /** Onglets principaux : Parcelles | Unités foncières */
 type MainResultsTab = "parcelles" | "unites";
-/** Sous-vues : entonnoir | tableau | carte */
-type ResultsSubView = "entonnoir" | "classement" | "classement_combine" | "carte";
+/** Sous-vues : tableau | carte */
+type ResultsSubView = "classement" | "classement_combine" | "carte";
 type FilterLoadingStage = "idle" | "filtering" | "profiling" | "metrics_loading";
 
 /** Présence de lignes dans ecocompensation_results.sous_ensembles pour le projet (filtre UF possible). */
@@ -161,15 +164,12 @@ function parseIduParts(raw: string): { codeInsee: string; section: string; numer
 export function EtudeResultats({
   fixedProjectId = null,
   initialRunId = null,
-  onProjectChangeNavigate,
   onNavigateToCreate,
 }: EtudeResultatsProps) {
   const navigate = useNavigate();
   const [projectId, setProjectId] = useState<string | null>(fixedProjectId);
   const [poolRuns, setPoolRuns] = useState<PoolRunListItem[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [studyTypeFilter, setStudyTypeFilter] = useState<"all" | StudyType>("all");
-  const [projectsLoading, setProjectsLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [filterLoadingStage, setFilterLoadingStage] = useState<FilterLoadingStage>("idle");
   const [ufResults, setUfResults] = useState<UfFilterResponse | null>(null);
@@ -189,9 +189,13 @@ export function EtudeResultats({
   const [scrollTableNonce, setScrollTableNonce] = useState(0);
   /** Parcelle sélectionnée — surbrillance carte + ligne tableau. */
   const [linkedIdu, setLinkedIdu] = useState<string | null>(null);
+  /** Survol tableau — highlight carte sans bouger la caméra. */
+  const [hoverIdu, setHoverIdu] = useState<string | null>(null);
   /** Sous-ensemble UF sélectionné — liaison table ↔ carte. */
   const [linkedSubsetId, setLinkedSubsetId] = useState<string | null>(null);
   const [linkedUfId, setLinkedUfId] = useState<string | null>(null);
+  const [hoverSubsetId, setHoverSubsetId] = useState<string | null>(null);
+  const [hoverUfId, setHoverUfId] = useState<string | null>(null);
   const [scrollToSubsetId, setScrollToSubsetId] = useState<string | null>(null);
   const [scrollUfTableNonce, setScrollUfTableNonce] = useState(0);
   const [distanceMaxKm, setDistanceMaxKm] = useState<number>(0);
@@ -217,17 +221,13 @@ export function EtudeResultats({
   const [indesirableParcellesStored, setIndesirableParcellesStored] = useState<FilterResponse["parcelles"]>([]);
   const [indesirableMetricsByIdu, setIndesirableMetricsByIdu] = useState<Record<string, ParcelPoolMetricRow[]>>({});
   const [dureteFonciereLoading, setDureteFonciereLoading] = useState(false);
+  const [addParcellesLoading, setAddParcellesLoading] = useState(false);
   const [metricsRefreshNonce, setMetricsRefreshNonce] = useState(0);
   const [ufPoolLoading, setUfPoolLoading] = useState(false);
   const [storedResultsLoading, setStoredResultsLoading] = useState(false);
   const [storedProjectStatus, setStoredProjectStatus] = useState<string | null>(null);
   const hasParcellesFunnel = (results?.funnel ?? []).some((s) => s.count >= 0);
   const hasUfFunnel = (ufResults?.funnel ?? []).some((s) => s.count >= 0);
-
-  const filteredProjects = useMemo(() => {
-    if (studyTypeFilter === "all") return projects;
-    return projects.filter((p) => normalizeStudyType(p.study_type) === studyTypeFilter);
-  }, [projects, studyTypeFilter]);
 
   const currentStudyProfile = useMemo(() => {
     const current = projects.find((p) => p.id === projectId);
@@ -343,16 +343,12 @@ export function EtudeResultats({
 
   useEffect(() => {
     let cancelled = false;
-    setProjectsLoading(true);
     fetchProjects()
       .then((list) => {
         if (!cancelled) setProjects(list);
       })
       .catch(() => {
         if (!cancelled) setProjects([]);
-      })
-      .finally(() => {
-        if (!cancelled) setProjectsLoading(false);
       });
     return () => {
       cancelled = true;
@@ -360,16 +356,11 @@ export function EtudeResultats({
   }, []);
 
   useEffect(() => {
-    if (!projectId) {
-      setPoolRuns([]);
-      return;
-    }
     let cancelled = false;
-    fetchPoolRunsList(projectId, 100)
+    void fetchAllPoolRunsList(200)
       .then((r) => {
-        if (!cancelled) {
-          setPoolRuns((r.runs ?? []).filter((x) => x.scope === "parcelles"));
-        }
+        if (cancelled) return;
+        setPoolRuns(r.runs ?? []);
       })
       .catch(() => {
         if (!cancelled) setPoolRuns([]);
@@ -377,7 +368,7 @@ export function EtudeResultats({
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+  }, []);
 
   useEffect(() => {
     if (!projectId || !initialRunId) return;
@@ -565,9 +556,6 @@ export function EtudeResultats({
 
         if (parsed && !cancelled) {
           setResults(parsed);
-          if (parsed.total === 0) {
-            setParcelSubView("entonnoir");
-          }
           if (!metricsFromSnapshot) {
             setPoolMetricsByIdu(null);
           }
@@ -626,7 +614,7 @@ export function EtudeResultats({
     return () => {
       cancelled = true;
     };
-  }, [projectId, initialRunId, results?.pool_run_id, results?.parcelles?.length, results?.total]);
+  }, [projectId, initialRunId, results?.pool_run_id, results?.parcelles?.length, results?.total, metricsRefreshNonce]);
 
   /** Précharge CESBIO / faune / buffers (couches nationales clippées AOI) pour la légende carte. */
   useEffect(() => {
@@ -671,25 +659,77 @@ export function EtudeResultats({
     };
   }, [projectId, initialRunId, results?.pool_run_id, results?.parcelles?.length, metricsRefreshNonce]);
 
-  async function handleRunDureteFonciere() {
+  async function handleRunDureteFonciere(idus?: string[]) {
     const runId = initialRunId ?? results?.pool_run_id ?? null;
     if (!projectId || !runId) return;
     setDureteFonciereLoading(true);
     try {
-      const resp = await computePoolRunDurete(projectId, runId);
+      const resp = await computePoolRunDurete(projectId, runId, idus);
       setMetricsRefreshNonce((n) => n + 1);
+      const scope = idus?.length
+        ? `${resp.active_idus} parcelle(s) sélectionnée(s)`
+        : `${resp.active_idus} parcelle(s) du pool`;
       const skipped =
-        resp.skipped_indesirables > 0
+        !idus?.length && resp.skipped_indesirables > 0
           ? ` (${resp.skipped_indesirables} indésirable(s) ignorée(s))`
           : "";
       alert(
-        `Dureté foncière calculée sur ${resp.active_idus} parcelle(s)${skipped}.\n`
+        `Dureté foncière calculée sur ${scope}${skipped}.\n`
         + `${resp.eligible_pm} parcelle(s) PM éligible(s) — durée ${resp.duration_s.toFixed(0)} s.`,
       );
     } catch (e) {
       alert(e instanceof Error ? e.message : "Échec du calcul de dureté foncière.");
     } finally {
       setDureteFonciereLoading(false);
+    }
+  }
+
+  async function handleAddParcelles(idus: string[]) {
+    const runId = initialRunId ?? results?.pool_run_id ?? null;
+    if (!projectId || !runId) return;
+    setAddParcellesLoading(true);
+    try {
+      const resp = await addParcellesToPoolRun(projectId, runId, idus);
+      const snap = await fetchPoolRunSnapshot(projectId, runId);
+      const { filter_options, run_created_at, ...rest } = snap;
+      setResults({
+        ...(rest as FilterResponse),
+        run_created_at: run_created_at ?? undefined,
+      });
+      if (filter_options) setLastFilterOptions(filter_options as FilterOptions);
+      const next = await fetchPoolIndesirables(projectId);
+      setIndesirableIdus(next.idus ?? []);
+      setIndesirableParcellesStored(next.parcelles ?? []);
+      setIndesirableMetricsByIdu(next.by_idu ?? {});
+      setPoolRuns((prev) =>
+        prev.map((r) => (r.id === runId ? { ...r, total_count: resp.total_count } : r)),
+      );
+      setMetricsRefreshNonce((n) => n + 1);
+      const lines: string[] = [];
+      if (resp.added.length) {
+        lines.push(`${resp.added.length} parcelle(s) ajoutée(s) au pool.`);
+      }
+      if (resp.unstuck_indesirables.length) {
+        lines.push(`${resp.unstuck_indesirables.length} retirée(s) des indésirables.`);
+      }
+      if (resp.already_in_pool.length) {
+        lines.push(`Déjà dans le pool : ${resp.already_in_pool.join(", ")}`);
+      }
+      if (resp.not_found.length) {
+        lines.push(`Introuvable : ${resp.not_found.join(", ")}`);
+      }
+      if (resp.invalid.length) {
+        lines.push(`IDU invalide : ${resp.invalid.join(", ")}`);
+      }
+      if (!lines.length) {
+        lines.push("Aucun ajout.");
+      }
+      alert(lines.join("\n"));
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Impossible d'ajouter la parcelle au pool.");
+      throw e;
+    } finally {
+      setAddParcellesLoading(false);
     }
   }
 
@@ -844,23 +884,9 @@ export function EtudeResultats({
     }
   }
 
-  function handleToolbarProjectChange(newProjectId: string) {
-    if (initialRunId && onProjectChangeNavigate) {
-      onProjectChangeNavigate(newProjectId);
-      return;
-    }
-    navigate(`/projects/${newProjectId}/filter`);
+  function handleToolbarPoolChange(poolProjectId: string, poolId: string) {
+    navigate(`/projects/${poolProjectId}/runs/${poolId}`);
   }
-
-  function handleToolbarRunChange(runId: string) {
-    if (!projectId) return;
-    navigate(`/projects/${projectId}/runs/${runId}`);
-  }
-
-  /** Scroll interne entonnoir (liste d’étapes longue) */
-  const isEntonnoirScroll =
-    (mainResultsTab === "parcelles" && parcelSubView === "entonnoir") ||
-    (mainResultsTab === "unites" && ufSubView === "entonnoir");
 
   const subsetScores = useMemo(() => {
     if (!ufResults) return null;
@@ -1061,9 +1087,12 @@ export function EtudeResultats({
 
   const isPoolMetricsPending =
     dureteFonciereLoading
+    || addParcellesLoading
     || (!!results?.pool_run_id && loading && (filterLoadingStage === "profiling" || filterLoadingStage === "metrics_loading"));
 
-  const poolMetricsOverlayText = dureteFonciereLoading
+  const poolMetricsOverlayText = addParcellesLoading
+    ? "Ajout au pool et enrichissement…"
+    : dureteFonciereLoading
     ? "Calcul de la dureté foncière en cours (peut prendre plusieurs minutes)…"
     : (loadingStatusText ?? "Calcul des métriques en cours…");
 
@@ -1076,120 +1105,97 @@ export function EtudeResultats({
   const resultsSplitClassName = `results-split${splitMapVisible ? "" : " results-split--map-hidden"}`;
 
   const resultsContentClass = `results-content${
-    isEntonnoirScroll
-      ? " results-content--entonnoir"
-      : isSplitParcelView || isSplitUfView
-        ? ""
-        : " results-content--full"
+    isSplitParcelView || isSplitUfView ? "" : " results-content--full"
   }`;
 
-  const parcellesMapPanel = geojson ? (
-    <ParcellesMap
-      geojson={parcellesMapGeojson ?? geojson}
-      foncierGeojson={foncierGeojson}
-      projectId={projectId}
+  const toolbarStatus: ResultsToolbarStatus = !connected
+    ? { kind: "offline", label: "Connexion au serveur…" }
+    : loadingStatusText
+      ? { kind: "busy", label: loadingStatusText }
+      : progress?.status === "fetching" || progress?.status === "filtering"
+        ? {
+            kind: "busy",
+            label: progress.status === "filtering" ? "Filtrage…" : "Récupération…",
+          }
+        : results
+          ? { kind: "ready" }
+          : { kind: "idle" };
+
+  const mapShared = {
+    projectId,
+    foncierGeojson,
+    thematicPreload,
+    thematicPreloadLoading,
+    mapLayerKeys,
+  };
+
+  const parcellesMapPanel = (
+    <EtudeResultatsParcellesMap
+      {...mapShared}
+      geojson={geojson}
+      parcellesMapGeojson={parcellesMapGeojson}
       poolRunId={activeRunId}
-      preloadedThematic={thematicPreload}
-      thematicPreloadLoading={thematicPreloadLoading}
-      thematicLayerKeys={mapLayerKeys}
       poolMetricsByIdu={poolMetricsByIdu}
       indesirableCount={indesirableIdus.length}
       loadingMessage={loadingStatusText}
       focusIdu={linkedIdu}
+      hoverIdu={hoverIdu}
       onParcelleClick={handleMapParcelleClick}
     />
-  ) : (
-    <div style={{ padding: 12, fontSize: 13, color: "#4b4b4b" }}>
-      GeoJSON parcelles indisponible ou aucune géométrie.
-    </div>
   );
 
-  const ufMapPanel = ufGeojson ? (
-    <SousEnsemblesMap
-      geojson={ufGeojson as FeatureCollection<Geometry, Record<string, unknown>>}
+  const ufMapPanel = (
+    <EtudeResultatsUnitesMap
+      {...mapShared}
+      ufGeojson={ufGeojson}
       subsetScores={subsetScores}
-      foncierGeojson={foncierGeojson}
-      projectId={projectId}
-      preloadedThematic={thematicPreload}
-      thematicPreloadLoading={thematicPreloadLoading}
-      thematicLayerKeys={mapLayerKeys}
       focusSubsetId={linkedSubsetId}
       focusUfId={linkedSubsetId ? null : linkedUfId}
+      hoverSubsetId={hoverSubsetId}
+      hoverUfId={hoverUfId}
       onSubsetClick={handleMapSubsetClick}
     />
-  ) : (
-    <div style={{ padding: 12, fontSize: 13, color: "#4b4b4b" }}>
-      GeoJSON des sous-ensembles indisponible ou vide.
-    </div>
   );
 
   return (
     <div className="results-page">
       <ResultsToolbar
         projectId={projectId}
-        projects={filteredProjects}
-        projectsLoading={projectsLoading}
+        projects={projects}
         poolRuns={poolRuns}
-        activeRunId={activeRunId}
-        studyTypeFilter={studyTypeFilter}
-        onStudyTypeFilterChange={setStudyTypeFilter}
-        onNewStudy={() => onNavigateToCreate?.()}
-        onProjectChange={handleToolbarProjectChange}
-        onRunChange={handleToolbarRunChange}
-      />
+        activePoolId={activeRunId}
+        poolCreatedAt={results?.run_created_at ?? null}
+        parcelCount={results ? displayedParcelles.length : null}
+        status={toolbarStatus}
+        onNewStudy={onNavigateToCreate}
+        onPoolChange={handleToolbarPoolChange}
+        preferOpen={!!results && results.total === 0}
+      >
+        {hasParcellesFunnel && results && (
+          <FunnelDisplay
+            compact
+            title="Entonnoir parcelles"
+            steps={results.funnel ?? []}
+            finalRadiusKm={results.final_radius_km}
+            total={results.total}
+          />
+        )}
+        {hasUfFunnel && ufResults && (
+          <FunnelDisplay
+            compact
+            title="Entonnoir UF"
+            steps={ufResults.funnel ?? []}
+            finalRadiusKm={0}
+            total={ufResults.total_sous_ensembles}
+            entityLabel="sous-ensembles"
+            extraSummary={`${ufResults.total_uf} UF`}
+          />
+        )}
+      </ResultsToolbar>
 
       <div className="results-page__body">
-        {!connected && (
-          <div className="results-status results-status--loading">Connexion au serveur…</div>
-        )}
-
-        {(progress?.status === "fetching" || progress?.status === "filtering") && (
-          <div className="results-status results-status--warn">
-            {progress?.status === "filtering"
-              ? "Filtrage écologique en cours…"
-              : "Récupération des données en cours…"}
-          </div>
-        )}
-
-        {progress?.status === "ready" && results && (
-          <div className="results-status results-status--ok">Données prêtes</div>
-        )}
-
-        {loadingStatusText && (
-          <div className="results-status results-status--loading loading-text-breathe">
-            {loadingStatusText}
-          </div>
-        )}
-
         {results ? (
           <>
-            <div className="results-header">
-              <h2 className="results-title">
-                <span className={currentStudyProfile.badgeClass} style={{ marginRight: 8, verticalAlign: "middle" }}>
-                  {currentStudyProfile.shortLabel}
-                </span>
-                {mainResultsTab === "parcelles" && parcelSubView === "entonnoir" &&
-                  `${currentStudyProfile.resultsTitlePrefix} — entonnoir de filtre`}
-                {mainResultsTab === "parcelles" && parcelSubView === "classement" &&
-                  `${currentStudyProfile.resultsTitlePrefix} — classement (${displayedParcelles.length})`}
-                {mainResultsTab === "parcelles" && parcelSubView === "classement_combine" &&
-                  `${currentStudyProfile.resultsTitlePrefix} — classement combiné (${displayedCombinedCandidates.length})`}
-                {mainResultsTab === "parcelles" && parcelSubView === "carte" &&
-                  `${currentStudyProfile.resultsTitlePrefix} — carte (${results.total})`}
-                {mainResultsTab === "unites" && ufSubView === "entonnoir" &&
-                  `${currentStudyProfile.resultsTitlePrefix} — entonnoir UF`}
-                {mainResultsTab === "unites" && ufSubView === "classement" &&
-                  `${currentStudyProfile.resultsTitlePrefix} — UF (${ufResults?.total_uf ?? 0})`}
-                {mainResultsTab === "unites" && ufSubView === "carte" &&
-                  `${currentStudyProfile.resultsTitlePrefix} — carte UF (${ufResults?.total_uf ?? 0})`}
-                {results.run_created_at && (
-                  <span style={{ fontSize: 12, fontWeight: 400, color: "#64748b", marginLeft: 8 }}>
-                    · run du {new Date(results.run_created_at).toLocaleString("fr-FR")}
-                  </span>
-                )}
-              </h2>
-            </div>
-
             {/* Onglets principaux : Parcelles | Unités foncières */}
             <div className="results-tabs results-tabs-main">
               <button
@@ -1223,18 +1229,9 @@ export function EtudeResultats({
               </button>
             </div>
 
-            {/* Sous-onglets : Entonnoir | Classement | Carte */}
+            {/* Sous-onglets : Classement | Carte */}
             {mainResultsTab === "parcelles" && (
               <div className="results-tabs results-tabs-sub results-tabs-sub--split-actions">
-                <button
-                  type="button"
-                  className={`results-tab ${parcelSubView === "entonnoir" ? "active" : ""}`}
-                  onClick={() => setParcelSubView("entonnoir")}
-                  disabled={!hasParcellesFunnel}
-                  title={!hasParcellesFunnel ? "Aucun entonnoir disponible" : ""}
-                >
-                  Entonnoir
-                </button>
                 <button
                   type="button"
                   className={`results-tab ${parcelSubView === "classement" ? "active" : ""}`}
@@ -1278,15 +1275,6 @@ export function EtudeResultats({
               <div className="results-tabs results-tabs-sub results-tabs-sub--split-actions">
                 <button
                   type="button"
-                  className={`results-tab ${ufSubView === "entonnoir" ? "active" : ""}`}
-                  onClick={() => setUfSubView("entonnoir")}
-                  disabled={!hasUfFunnel}
-                  title={!hasUfFunnel ? "Aucun entonnoir disponible" : ""}
-                >
-                  Entonnoir
-                </button>
-                <button
-                  type="button"
                   className={`results-tab ${ufSubView === "classement" ? "active" : ""}`}
                   onClick={() => setUfSubView("classement")}
                 >
@@ -1318,155 +1306,72 @@ export function EtudeResultats({
             )}
 
             <div className={resultsContentClass}>
-              {mainResultsTab === "parcelles" && parcelSubView === "entonnoir" && hasParcellesFunnel && (
-                <FunnelDisplay
-                  steps={results.funnel ?? []}
-                  finalRadiusKm={results.final_radius_km}
-                  total={results.total}
-                />
-              )}
-              {mainResultsTab === "parcelles" && parcelSubView === "entonnoir" && !hasParcellesFunnel && (
-                <div style={{ padding: 12, color: "#000000", fontSize: 13 }}>
-                  Aucune donnée d&apos;entonnoir pour ce filtre.
-                </div>
-              )}
-
-              {mainResultsTab === "unites" && ufResults && ufSubView === "entonnoir" && hasUfFunnel && (
-                <FunnelDisplay
-                  steps={ufResults.funnel ?? []}
-                  finalRadiusKm={0}
-                  total={ufResults.total_sous_ensembles}
-                  entityLabel="sous-ensembles candidats"
-                  extraSummary={`${ufResults.total_uf} UF`}
-                />
-              )}
-              {mainResultsTab === "unites" && ufResults && ufSubView === "entonnoir" && !hasUfFunnel && (
-                <div style={{ padding: 12, color: "#000000", fontSize: 13 }}>
-                  Aucune donnée d&apos;entonnoir pour ce filtre UF.
-                </div>
-              )}
-
               {mainResultsTab === "parcelles" && parcelSubView === "classement" && results.total === 0 && (
                 <div style={{ padding: 12, color: "#000000", fontSize: 13 }}>
-                  Aucune parcelle retenue après filtrage. Consultez l&apos;onglet{" "}
-                  <strong>Entonnoir</strong> pour voir à quelle étape les parcelles ont été éliminées.
+                  Aucune parcelle retenue après filtrage. Ouvrez{" "}
+                  <strong>Informations du pool</strong> pour voir à quelle étape elles ont été éliminées,
+                  ou ajoutez un IDU via <strong>Outils</strong>.
                 </div>
               )}
 
-              {mainResultsTab === "parcelles" && parcelSubView === "classement" && results.total > 0 && (
+              {mainResultsTab === "parcelles" && parcelSubView === "classement" && (
                 <div className={resultsSplitClassName}>
-                  <div className="results-split__table">
-                    <div className="results-split__table-inner">
-                      {!currentStudyProfile.hideDistanceFilter && distanceMaxKm > 0 && (
-                        <div style={{ padding: "0 0 8px", display: "flex", flexDirection: "column", gap: 6 }}>
-                          <div style={{ fontSize: 12, color: "#111" }}>
-                            Distance AOI :{" "}
-                            <strong>{distanceCursorKm.toFixed(1)} km</strong>
-                          </div>
-                          <input
-                            type="range"
-                            min={1}
-                            max={distanceMaxKm}
-                            step={0.1}
-                            value={Math.min(Math.max(distanceCursorKm, 1), distanceMaxKm)}
-                            onChange={(e) => setDistanceCursorKm(parseFloat(e.target.value))}
-                          />
-                          <div style={{ fontSize: 12, color: "#111" }}>
-                            Surface min. : <strong>{surfaceMinHa.toFixed(1)} ha</strong>
-                          </div>
-                          <input
-                            type="range"
-                            min={0}
-                            max={Math.max(1, surfaceMaxHa)}
-                            step={0.1}
-                            value={Math.min(Math.max(surfaceMinHa, 0), Math.max(1, surfaceMaxHa))}
-                            onChange={(e) => setSurfaceMinHa(parseFloat(e.target.value))}
-                          />
-                        </div>
-                      )}
-                      <div className={`ranking-table-shell${isPoolMetricsPending ? " ranking-table-shell--loading" : ""}`}>
-                        <RankingTable
-                          parcelles={displayedParcelles}
-                          projectId={projectId}
-                          exportPoolRunId={results.pool_run_id ?? null}
-                          poolRunId={results.pool_run_id ?? null}
-                          poolMetricsByIdu={poolMetricsByIdu}
-                          poolMetricsLoading={!!results.pool_run_id && poolMetricsByIdu === null}
-                          rankingSortKey={rankingSortKey}
-                          onRankingSortChange={setRankingSortKey}
-                          scrollToIdu={scrollToIdu}
-                          scrollTableNonce={scrollTableNonce}
-                          selectedIdu={linkedIdu}
-                          onRowActivate={handleTableRowActivate}
-                          onMarkIndesirable={handleMarkIndesirable}
-                          onBatchMarkIndesirable={handleBatchMarkIndesirable}
-                          onRunDureteFonciere={handleRunDureteFonciere}
-                          dureteFonciereLoading={dureteFonciereLoading}
-                          showZoneHumideColumn={isZhStudy}
-                          showDistHydroColumn={showDistHydroColumn}
-                          showSurfaceHydroColumn={showSurfaceHydroColumn}
-                        />
-                        {isPoolMetricsPending && (
-                          <div className="ranking-table-loading-overlay" aria-live="polite">
-                            <div className="ranking-table-loading-card">
-                              <span className="parcelles-map-spinner" />
-                              <span className="loading-text-breathe">
-                                {poolMetricsOverlayText}
-                              </span>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      {results.pool_run_id && (
-                        <IndesirablesTable
-                          projectId={projectId}
-                          parcelles={indesirableParcelles}
-                          poolRunId={results.pool_run_id}
-                          poolMetricsByIdu={indesirableMetricsByIdu}
-                          poolMetricsLoading={!!results.pool_run_id && poolMetricsByIdu === null}
-                          onRestore={handleRestoreIndesirable}
-                          onRowActivate={handleTableRowActivate}
-                        />
-                      )}
-                    </div>
-                  </div>
-                  <div className="results-split__map">
-                    <div className="results-split__map-label">Carte</div>
-                    <div className="results-split__map-inner">{parcellesMapPanel}</div>
-                  </div>
+                  <EtudeResultatsParcellesTable
+                    hideDistanceFilter={currentStudyProfile.hideDistanceFilter}
+                    distanceMaxKm={distanceMaxKm}
+                    distanceCursorKm={distanceCursorKm}
+                    onDistanceChange={setDistanceCursorKm}
+                    surfaceMinHa={surfaceMinHa}
+                    surfaceMaxHa={surfaceMaxHa}
+                    onSurfaceMinChange={setSurfaceMinHa}
+                    parcelles={displayedParcelles}
+                    projectId={projectId}
+                    poolRunId={results.pool_run_id ?? null}
+                    poolMetricsByIdu={poolMetricsByIdu}
+                    isPoolMetricsPending={isPoolMetricsPending}
+                    poolMetricsOverlayText={poolMetricsOverlayText}
+                    rankingSortKey={rankingSortKey}
+                    onRankingSortChange={setRankingSortKey}
+                    scrollToIdu={scrollToIdu}
+                    scrollTableNonce={scrollTableNonce}
+                    selectedIdu={linkedIdu}
+                    onRowActivate={handleTableRowActivate}
+                    onHover={setHoverIdu}
+                    onMarkIndesirable={handleMarkIndesirable}
+                    onBatchMarkIndesirable={handleBatchMarkIndesirable}
+                    onRunDureteFonciere={handleRunDureteFonciere}
+                    dureteFonciereLoading={dureteFonciereLoading}
+                    onAddParcelles={handleAddParcelles}
+                    addParcellesLoading={addParcellesLoading}
+                    showZoneHumideColumn={isZhStudy}
+                    showDistHydroColumn={showDistHydroColumn}
+                    showSurfaceHydroColumn={showSurfaceHydroColumn}
+                    indesirableParcelles={indesirableParcelles}
+                    indesirableMetricsByIdu={indesirableMetricsByIdu}
+                    onRestoreIndesirable={handleRestoreIndesirable}
+                  />
+                  <SplitMapFrame>{parcellesMapPanel}</SplitMapFrame>
                 </div>
               )}
 
               {mainResultsTab === "parcelles" && parcelSubView === "classement_combine" && (
                 <div className={resultsSplitClassName}>
-                  <div className="results-split__table">
-                    <div className="results-split__table-inner">
-                      <div className="ranking-table-shell">
-                        <RankingTable
-                          parcelles={displayedCombinedCandidates}
-                          projectId={null}
-                          exportPoolRunId={null}
-                          poolRunId={results.pool_run_id ?? null}
-                          poolMetricsByIdu={poolMetricsByIdu}
-                          poolMetricsLoading={!!results.pool_run_id && poolMetricsByIdu === null}
-                          rankingSortKey={rankingSortKey}
-                          onRankingSortChange={setRankingSortKey}
-                          scrollToIdu={scrollToIdu}
-                          scrollTableNonce={scrollTableNonce}
-                          selectedIdu={linkedIdu}
-                          onRowActivate={handleTableRowActivate}
-                          onMarkIndesirable={undefined}
-                          showZoneHumideColumn={isZhStudy}
-                          showDistHydroColumn={showDistHydroColumn}
-                          showSurfaceHydroColumn={showSurfaceHydroColumn}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                  <div className="results-split__map">
-                    <div className="results-split__map-label">Carte</div>
-                    <div className="results-split__map-inner">{parcellesMapPanel}</div>
-                  </div>
+                  <EtudeResultatsCombinedTable
+                    parcelles={displayedCombinedCandidates}
+                    poolRunId={results.pool_run_id ?? null}
+                    poolMetricsByIdu={poolMetricsByIdu}
+                    rankingSortKey={rankingSortKey}
+                    onRankingSortChange={setRankingSortKey}
+                    scrollToIdu={scrollToIdu}
+                    scrollTableNonce={scrollTableNonce}
+                    selectedIdu={linkedIdu}
+                    onRowActivate={handleTableRowActivate}
+                    onHover={setHoverIdu}
+                    showZoneHumideColumn={isZhStudy}
+                    showDistHydroColumn={showDistHydroColumn}
+                    showSurfaceHydroColumn={showSurfaceHydroColumn}
+                  />
+                  <SplitMapFrame>{parcellesMapPanel}</SplitMapFrame>
                 </div>
               )}
 
@@ -1474,23 +1379,18 @@ export function EtudeResultats({
 
               {mainResultsTab === "unites" && ufResults && ufSubView === "classement" && (
                 <div className={resultsSplitClassName}>
-                  <div className="results-split__table">
-                    <div className="results-split__table-inner">
-                      <UnitesFoncieresTable
-                        ufResults={ufResults}
-                        projectId={projectId}
-                        selectedSubsetId={linkedSubsetId}
-                        scrollToSubsetId={scrollToSubsetId}
-                        scrollTableNonce={scrollUfTableNonce}
-                        onSubsetActivate={handleTableSubsetActivate}
-                        onUfActivate={handleTableUfActivate}
-                      />
-                    </div>
-                  </div>
-                  <div className="results-split__map">
-                    <div className="results-split__map-label">Carte</div>
-                    <div className="results-split__map-inner">{ufMapPanel}</div>
-                  </div>
+                  <EtudeResultatsUnitesTable
+                    ufResults={ufResults}
+                    projectId={projectId}
+                    selectedSubsetId={linkedSubsetId}
+                    scrollToSubsetId={scrollToSubsetId}
+                    scrollTableNonce={scrollUfTableNonce}
+                    onSubsetActivate={handleTableSubsetActivate}
+                    onUfActivate={handleTableUfActivate}
+                    onSubsetHover={setHoverSubsetId}
+                    onUfHover={setHoverUfId}
+                  />
+                  <SplitMapFrame>{ufMapPanel}</SplitMapFrame>
                 </div>
               )}
               {mainResultsTab === "unites" && !ufResults && (ufPoolLoading || (!ufReady && parcellesReady && sousEnsemblesStatus !== "no")) && (
@@ -1538,8 +1438,8 @@ export function EtudeResultats({
                   : storedProjectStatus === "error"
                     ? "Le dernier filtrage a échoué côté serveur (aucun pool enregistré). Relancez une étude depuis le wizard zones humides."
                     : poolRuns.length > 0
-                    ? "Impossible de charger les résultats. Sélectionnez un run dans la barre d’outils."
-                    : "Aucun pool de parcelles pour ce projet. Lancez une nouvelle étude ou sélectionnez un run."}
+                    ? "Impossible de charger les résultats. Ouvrez les informations du pool pour en sélectionner un."
+                    : "Aucun pool de parcelles pour ce projet. Lancez une nouvelle étude ou sélectionnez un pool."}
               </span>
             </div>
           </div>

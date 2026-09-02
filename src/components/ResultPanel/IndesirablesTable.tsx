@@ -32,6 +32,7 @@ interface IndesirablesTableProps {
   poolMetricsLoading: boolean;
   onRestore: (idu: string) => void;
   onRowActivate?: (idu: string) => void;
+  onHover?: (idu: string | null) => void;
 }
 
 export function IndesirablesTable({
@@ -42,11 +43,12 @@ export function IndesirablesTable({
   poolMetricsLoading,
   onRestore,
   onRowActivate,
+  onHover,
 }: IndesirablesTableProps) {
   const [hoveredIdu, setHoveredIdu] = useState<string | null>(null);
   const [expandedIdus, setExpandedIdus] = useState<Set<string>>(() => new Set());
-  const [exportChoice, setExportChoice] = useState<"" | "csv" | "shp">("");
   const [exporting, setExporting] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
 
   const identity = useMemo(
     () => [...parcelles].map((p) => p.idu).sort().join("|"),
@@ -71,54 +73,71 @@ export function IndesirablesTable({
 
   return (
     <div className="ranking-wrap indesirables-wrap">
-      <div className="ranking-header">
-        <span className="ranking-title ranking-title--indesirable">Pool indésirables</span>
-        <div className="ranking-header-actions">
-          <label className="ranking-sort-label">
-            Exporter
-            <select
-              value={exportChoice}
-              disabled={!projectId || exporting}
-              onChange={async (e) => {
-                const v = e.target.value as "" | "csv" | "shp";
-                if (!v || !projectId) return;
-                setExportChoice(v);
-                setExporting(true);
-                try {
-                  if (v === "csv") await exportCsv(projectId, "indesirables");
-                  else await exportShp(projectId, "indesirables");
-                } catch (err) {
-                  console.error("Export indésirables:", err);
-                  alert(
-                    err instanceof Error
-                      ? err.message
-                      : "Erreur lors de l'export. Voir la console.",
-                  );
-                } finally {
-                  setExporting(false);
-                  setExportChoice("");
-                }
-              }}
-              onClick={(ev) => ev.stopPropagation()}
+      <div className={`ranking-chrome${toolsOpen ? " is-open" : ""}`}>
+        <div className="ranking-chrome__bar">
+          <span className="ranking-title ranking-title--indesirable">Pool indésirables</span>
+          {projectId && (
+            <button
+              type="button"
+              className="ranking-chrome__toggle"
+              aria-expanded={toolsOpen}
+              onClick={() => setToolsOpen((v) => !v)}
             >
-              <option value="">—</option>
-              <option value="csv">CSV</option>
-              <option value="shp">Shapefile (ZIP)</option>
-            </select>
-          </label>
+              Exporter
+              <span className="ranking-chrome__caret" aria-hidden>
+                {toolsOpen ? "▴" : "▾"}
+              </span>
+            </button>
+          )}
           {poolMetricsLoading && (
-            <span className="ranking-pool-loading" title="Chargement des métriques du pool">
-              Métriques…
-            </span>
+            <span className="ranking-chrome__status">Métriques…</span>
           )}
           <span className="ranking-count mono">
-            {parcelles.length} parcelle{parcelles.length > 1 ? "s" : ""}
-            <span className="ranking-pool-hint" title="Exclues du classement ; carte en rouge">
-              {" "}
-              · exclues du classement
-            </span>
+            {parcelles.length} exclue{parcelles.length > 1 ? "s" : ""}
           </span>
         </div>
+        {toolsOpen && projectId && (
+          <div className="ranking-tools" role="region" aria-label="Export indésirables">
+            <div className="ranking-tools__actions">
+              <button
+                type="button"
+                className="ranking-btn-export"
+                disabled={exporting}
+                onClick={async () => {
+                  setExporting(true);
+                  try {
+                    await exportCsv(projectId, "indesirables");
+                  } catch (err) {
+                    console.error("Export indésirables:", err);
+                    alert(err instanceof Error ? err.message : "Erreur lors de l'export.");
+                  } finally {
+                    setExporting(false);
+                  }
+                }}
+              >
+                CSV
+              </button>
+              <button
+                type="button"
+                className="ranking-btn-export"
+                disabled={exporting}
+                onClick={async () => {
+                  setExporting(true);
+                  try {
+                    await exportShp(projectId, "indesirables");
+                  } catch (err) {
+                    console.error("Export indésirables:", err);
+                    alert(err instanceof Error ? err.message : "Erreur lors de l'export.");
+                  } finally {
+                    setExporting(false);
+                  }
+                }}
+              >
+                Shapefile
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="ranking-table-scroll">
@@ -149,8 +168,14 @@ export function IndesirablesTable({
                   <tr
                     id={`row-parcelle-indesirable-${p.idu}`}
                     className={`ranking-row ranking-row--indesirable ${isHovered ? "hovered" : ""} ${isSelected ? "selected" : ""}`}
-                    onMouseEnter={() => setHoveredIdu(p.idu)}
-                    onMouseLeave={() => setHoveredIdu(null)}
+                    onMouseEnter={() => {
+                      setHoveredIdu(p.idu);
+                      onHover?.(p.idu);
+                    }}
+                    onMouseLeave={() => {
+                      setHoveredIdu(null);
+                      onHover?.(null);
+                    }}
                     onClick={() => handleClick(p.idu)}
                   >
                     <td className="col-rank">
@@ -192,7 +217,17 @@ export function IndesirablesTable({
                     </td>
                   </tr>
                   {expandedIdus.has(p.idu) && (
-                    <tr className="ranking-row-detail">
+                    <tr
+                      className="ranking-row-detail"
+                      onMouseEnter={() => {
+                        setHoveredIdu(p.idu);
+                        onHover?.(p.idu);
+                      }}
+                      onMouseLeave={() => {
+                        setHoveredIdu(null);
+                        onHover?.(null);
+                      }}
+                    >
                       <td colSpan={COL_SPAN_DETAIL} className="ranking-cell-detail">
                         <RankingLine
                           idu={p.idu}

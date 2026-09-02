@@ -88,7 +88,32 @@ function focusFilterForSubsetId(subsetId: string | null | undefined): maplibregl
   return ["==", ["get", "subset_id"], subsetId];
 }
 
+function highlightFilterForUf(opts: {
+  hoverSubsetId?: string | null;
+  hoverUfId?: string | null;
+  focusSubsetId?: string | null;
+  focusUfId?: string | null;
+}): maplibregl.FilterSpecification {
+  if (opts.hoverSubsetId) return ["==", ["get", "subset_id"], opts.hoverSubsetId];
+  if (opts.hoverUfId) return ["==", ["get", "uf_id"], opts.hoverUfId];
+  if (opts.focusSubsetId) return ["==", ["get", "subset_id"], opts.focusSubsetId];
+  if (opts.focusUfId) return ["==", ["get", "uf_id"], opts.focusUfId];
+  return ["==", ["get", "subset_id"], "___none___"];
+}
+
 function ensureHighlightOutlineLayer(m: maplibregl.Map) {
+  if (!m.getLayer("uf-subsets-highlight-fill")) {
+    m.addLayer({
+      id: "uf-subsets-highlight-fill",
+      type: "fill",
+      source: "uf-subsets",
+      filter: focusFilterForSubsetId(null),
+      paint: {
+        "fill-color": "#fbbf24",
+        "fill-opacity": 0.38,
+      },
+    });
+  }
   if (m.getLayer("uf-subsets-highlight-outline")) return;
   m.addLayer({
     id: "uf-subsets-highlight-outline",
@@ -96,8 +121,8 @@ function ensureHighlightOutlineLayer(m: maplibregl.Map) {
     source: "uf-subsets",
     filter: focusFilterForSubsetId(null),
     paint: {
-      "line-color": "#fbbf24",
-      "line-width": 4,
+      "line-color": "#fde68a",
+      "line-width": 3.5,
       "line-opacity": 1,
     },
   });
@@ -136,6 +161,9 @@ interface SousEnsemblesMapProps {
   thematicLayerKeys?: string[];
   focusSubsetId?: string | null;
   focusUfId?: string | null;
+  /** Survol tableau — surbrillance instantanée, sans déplacer la caméra. */
+  hoverSubsetId?: string | null;
+  hoverUfId?: string | null;
   onSubsetClick?: (subsetId: string) => void;
 }
 type BaseMapMode = "satellite" | "plan";
@@ -152,6 +180,8 @@ export function SousEnsemblesMap({
   thematicLayerKeys,
   focusSubsetId = null,
   focusUfId = null,
+  hoverSubsetId = null,
+  hoverUfId = null,
   onSubsetClick,
 }: SousEnsemblesMapProps) {
   const activeLayers = useMemo(
@@ -425,22 +455,37 @@ export function SousEnsemblesMap({
     if (map.current.isStyleLoaded()) apply(); else map.current.once("load", apply);
   }, [geojsonWithScores, foncierGeojson, focusUfId]);
 
-  // ── Opacité UF focus (sans recréer les layers) ────────────────────────────
+  // ── Opacité UF focus / hover (sans recréer les layers) ─────────────────────
   useEffect(() => {
     if (!map.current || !map.current.isStyleLoaded()) return;
     try {
-      map.current.setPaintProperty("uf-subsets-fill", "fill-opacity", subsetFillOpacityExpr(focusUfId));
+      map.current.setPaintProperty(
+        "uf-subsets-fill",
+        "fill-opacity",
+        subsetFillOpacityExpr(hoverUfId ?? focusUfId),
+      );
     } catch { /* layer pas monté */ }
-  }, [focusUfId]);
+  }, [focusUfId, hoverUfId]);
 
-  // ── Surbrillance sous-ensemble sélectionné ──────────────────────────────────
+  // ── Surbrillance (hover tableau prioritaire, sinon sélection — sans bouger la caméra) ─
   useEffect(() => {
     if (!map.current || !map.current.isStyleLoaded()) return;
+    const filter = highlightFilterForUf({
+      hoverSubsetId,
+      hoverUfId,
+      focusSubsetId,
+      focusUfId,
+    });
     try {
       ensureHighlightOutlineLayer(map.current);
-      map.current.setFilter("uf-subsets-highlight-outline", focusFilterForSubsetId(focusSubsetId));
+      if (map.current.getLayer("uf-subsets-highlight-fill")) {
+        map.current.setFilter("uf-subsets-highlight-fill", filter);
+      }
+      if (map.current.getLayer("uf-subsets-highlight-outline")) {
+        map.current.setFilter("uf-subsets-highlight-outline", filter);
+      }
     } catch { /* layers pas encore montées */ }
-  }, [focusSubsetId]);
+  }, [hoverSubsetId, hoverUfId, focusSubsetId, focusUfId, geojsonWithScores]);
 
   useEffect(() => {
     if (!map.current || !geojsonWithScores?.features?.length) return;
@@ -487,6 +532,9 @@ export function SousEnsemblesMap({
     try {
       map.current.setLayoutProperty("uf-subsets-fill", "visibility", vis);
       map.current.setLayoutProperty("uf-subsets-outline", "visibility", vis);
+      if (map.current.getLayer("uf-subsets-highlight-fill")) {
+        map.current.setLayoutProperty("uf-subsets-highlight-fill", "visibility", vis);
+      }
       if (map.current.getLayer("uf-subsets-highlight-outline")) {
         map.current.setLayoutProperty("uf-subsets-highlight-outline", "visibility", vis);
       }

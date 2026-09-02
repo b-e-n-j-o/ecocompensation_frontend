@@ -27,6 +27,13 @@ export function applyWsLayerEvent(
   }
 
   if (ev === "progress" && layerKey) {
+    if (
+      msg.startsWith("TILE_GRID")
+      || msg.startsWith("TILE_START:")
+      || msg.startsWith("FILTER_TILES")
+    ) {
+      return { ...prev, [layerKey]: { ...prev[layerKey], status: "running" } };
+    }
     const tileMatch = msg.match(/^TILE_PROGRESS:(\d+)\/(\d+):(\d+)/);
     if (tileMatch) {
       const tile = parseInt(tileMatch[1], 10);

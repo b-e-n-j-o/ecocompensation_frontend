@@ -10,6 +10,9 @@ interface FunnelDisplayProps {
   entityLabel?: string;
   /** Texte optionnel après « dans l’AOI » (ex. « 12 UF »). */
   extraSummary?: string | null;
+  /** Titre court (ex. « Parcelles », « Unités foncières »). */
+  title?: string;
+  compact?: boolean;
 }
 
 export function FunnelDisplay({
@@ -18,6 +21,8 @@ export function FunnelDisplay({
   total,
   entityLabel = "parcelles",
   extraSummary = null,
+  title = "Entonnoir de filtre",
+  compact = false,
 }: FunnelDisplayProps) {
   const validSteps = useMemo(() => steps.filter((s) => s.count >= 0), [steps]);
   const [visible, setVisible] = useState(0);
@@ -31,18 +36,18 @@ export function FunnelDisplay({
       i++;
       setVisible(i);
       if (i >= validSteps.length) clearInterval(timer);
-    }, 80);
+    }, compact ? 40 : 80);
     return () => clearInterval(timer);
-  }, [steps]);
+  }, [steps, compact, validSteps.length]);
 
   if (!validSteps.length) return null;
 
   const maxCount = validSteps[0]?.count ?? 1;
 
   return (
-    <div className="funnel-wrap">
+    <div className={`funnel-wrap${compact ? " funnel-wrap--compact" : ""}`}>
       <div className="funnel-header">
-        <span className="funnel-title">Entonnoir de filtre</span>
+        <span className="funnel-title">{title}</span>
         <span className="funnel-result">
           <span className="funnel-count">{total}</span>
           <span className="funnel-sub">

@@ -436,7 +436,7 @@ export type FilterPhaseInfo = { key: string; label: string };
 
 export type FilterPipelineBody = {
   min_area_ha: number;
-  miller_thresh: number;
+  miller_thresh?: number | null;
   cesbio_libelles: string[];
   fauna_criteria: { species: string; dist_m: number }[];
   zone_humide_mode?: "ignore" | "intersect" | "exclude";
@@ -639,6 +639,7 @@ export type PoolDureteRecomputeResponse = {
   metric_key: string;
   updated_count: number;
   active_idus: number;
+  requested_idus?: number;
   skipped_indesirables: number;
   eligible_pm: number;
   pm_upserts: number;
@@ -646,14 +647,51 @@ export type PoolDureteRecomputeResponse = {
   duration_s: number;
 };
 
-/** Dureté foncière (attractivité) sur le pool actif — hors parcelles indésirables. */
+/** Dureté foncière (attractivité) — tout le pool actif, ou une sélection d'IDU. */
 export async function computePoolRunDurete(
   projectId: string,
   runId: string,
+  idus?: string[] | null,
 ): Promise<PoolDureteRecomputeResponse> {
   const res = await fetch(
     `${API}/api/projects/${projectId}/pool/runs/${runId}/recompute-durete`,
-    { method: "POST" },
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(idus?.length ? { idus } : {}),
+    },
+  );
+  if (!res.ok) await throwHttpError(res);
+  return res.json();
+}
+
+export type PoolAddParcellesResponse = {
+  status: string;
+  project_id: string;
+  run_id: string;
+  added: string[];
+  already_in_pool: string[];
+  not_found: string[];
+  invalid: string[];
+  unstuck_indesirables: string[];
+  sources?: Record<string, string>;
+  total_count: number;
+  duration_s: number;
+};
+
+/** Ajoute des IDU au pool d'un run déjà calculé (sans rejouer le filtrage). */
+export async function addParcellesToPoolRun(
+  projectId: string,
+  runId: string,
+  idus: string[],
+): Promise<PoolAddParcellesResponse> {
+  const res = await fetch(
+    `${API}/api/projects/${projectId}/pool/runs/${runId}/parcelles`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idus }),
+    },
   );
   if (!res.ok) await throwHttpError(res);
   return res.json();
@@ -718,6 +756,17 @@ export async function fetchPoolRunsList(
 ): Promise<{ runs: PoolRunListItem[] }> {
   const q = new URLSearchParams({ limit: String(limit) });
   const res = await fetch(`${API}/api/projects/${projectId}/pool/runs?${q}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+/** Tous les pools de tous les projets — un seul GET. */
+export async function fetchAllPoolRunsList(
+  limit = 200,
+  scope = "parcelles",
+): Promise<{ runs: PoolRunListItem[] }> {
+  const q = new URLSearchParams({ limit: String(limit), scope });
+  const res = await fetch(`${API}/api/pool/runs?${q}`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }

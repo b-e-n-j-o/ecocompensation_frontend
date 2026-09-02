@@ -53,6 +53,8 @@ interface ParcellesMapProps {
   onParcelleClick?: (idu: string) => void;
   /** Parcelle sélectionnée — surbrillance + centrage carte. */
   focusIdu?: string | null;
+  /** Survol tableau — surbrillance instantanée, sans déplacer la caméra. */
+  hoverIdu?: string | null;
   loadingMessage?: string | null;
   /** Préchargement après filtrage — affichage carte instantané au toggle (couches restent masquées). */
   preloadedThematic?: ResultsThematicPreload | null;
@@ -162,8 +164,17 @@ function pickParcelAtPoint(
 }
 
 function ensureHighlightOutlineLayer(m: maplibregl.Map) {
-  if (m.getLayer("parcelles-highlight-fill")) {
-    m.removeLayer("parcelles-highlight-fill");
+  if (!m.getLayer("parcelles-highlight-fill")) {
+    m.addLayer({
+      id: "parcelles-highlight-fill",
+      type: "fill",
+      source: "parcelles",
+      filter: focusFilterForIdu(null),
+      paint: {
+        "fill-color": "#fbbf24",
+        "fill-opacity": 0.38,
+      },
+    });
   }
   if (m.getLayer("parcelles-highlight-outline")) return;
   m.addLayer({
@@ -172,8 +183,8 @@ function ensureHighlightOutlineLayer(m: maplibregl.Map) {
     source: "parcelles",
     filter: focusFilterForIdu(null),
     paint: {
-      "line-color": "#fbbf24",
-      "line-width": 4,
+      "line-color": "#fde68a",
+      "line-width": 3.5,
       "line-opacity": 1,
     },
   });
@@ -193,6 +204,7 @@ export function ParcellesMap({
   poolRunId = null,
   onParcelleClick,
   focusIdu = null,
+  hoverIdu = null,
   loadingMessage = null,
   preloadedThematic,
   thematicPreloadLoading = false,
@@ -523,18 +535,22 @@ export function ParcellesMap({
     }
   }, [scoreColorMode, geojsonWithScoreRatio]);
 
-  // ── Surbrillance parcelle sélectionnée (contour uniquement — fill score conservé) ─
+  // ── Surbrillance (hover tableau prioritaire, sinon sélection — sans bouger la caméra) ─
   useEffect(() => {
     if (!map.current || !map.current.isStyleLoaded()) return;
-    const filter = focusFilterForIdu(focusIdu);
+    const filter = focusFilterForIdu(hoverIdu ?? focusIdu);
     try {
+      ensureHighlightOutlineLayer(map.current);
+      if (map.current.getLayer("parcelles-highlight-fill")) {
+        map.current.setFilter("parcelles-highlight-fill", filter);
+      }
       if (map.current.getLayer("parcelles-highlight-outline")) {
         map.current.setFilter("parcelles-highlight-outline", filter);
       }
     } catch {
       /* layers pas encore montées */
     }
-  }, [focusIdu]);
+  }, [focusIdu, hoverIdu, geojsonWithScoreRatio]);
 
   useEffect(() => {
     if (!map.current || !focusIdu || !geojsonWithScoreRatio?.features?.length) return;
@@ -568,6 +584,9 @@ export function ParcellesMap({
     try {
       map.current.setLayoutProperty("parcelles-fill", "visibility", vis);
       map.current.setLayoutProperty("parcelles-outline", "visibility", vis);
+      if (map.current.getLayer("parcelles-highlight-fill")) {
+        map.current.setLayoutProperty("parcelles-highlight-fill", "visibility", vis);
+      }
       if (map.current.getLayer("parcelles-highlight-outline")) {
         map.current.setLayoutProperty("parcelles-highlight-outline", "visibility", vis);
       }
