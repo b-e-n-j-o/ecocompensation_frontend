@@ -75,6 +75,14 @@ const PROP_LABELS: Record<string, string> = {
   codecommun: "Code com.",
   code_commune: "Code com.",
   code_insee: "INSEE",
+  codeinsee: "INSEE",
+  surface_cadastrale: "Surf. cadastrale (m²)",
+  surface_sig: "Surf. SIG (m²)",
+  source_type: "Source",
+  statut_prospection: "Statut",
+  contact_nom: "Contact",
+  contact_email: "E-mail",
+  description_site: "Description",
   adresse: "Adresse",
   proprietai: "Propriétaire",
   propriet_1: "Adr. propriétaire",
@@ -116,6 +124,13 @@ const PROP_LABELS: Record<string, string> = {
 const PROP_VALUE_LABELS: Record<string, string> = {
   zhe: "Zones humides effectives",
   zh_total: "Inventaire total",
+  PARCELLE_SYNDICALE: "Parcelle syndicale",
+  PROPRIETAIRE_PRIVE: "Propriétaire privé",
+  COMMUNE: "Commune",
+  A_ETUDIER: "À étudier",
+  CONTACTE: "Contacté",
+  VALIDE: "Validé",
+  REJETE: "Rejeté",
 };
 
 function emptyFC(): FeatureCollection {
