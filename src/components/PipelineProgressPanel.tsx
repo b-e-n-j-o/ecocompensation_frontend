@@ -13,6 +13,8 @@ import "./pipelineProgressPanel.css";
 interface PipelineProgressPanelProps {
   progress: PipelineProgress;
   compact?: boolean;
+  /** Masque le second volet quand le filtrage ne porte que sur les parcelles. */
+  showUf?: boolean;
 }
 
 function SubstepIcon({ status }: { status: StageProgress["substeps"][SubStepKey] }) {
@@ -54,11 +56,15 @@ function StageBlock({ stageKey, stage }: { stageKey: MainStageKey; stage: StageP
   );
 }
 
-export function PipelineProgressPanel({ progress, compact = false }: PipelineProgressPanelProps) {
+export function PipelineProgressPanel({
+  progress,
+  compact = false,
+  showUf = true,
+}: PipelineProgressPanelProps) {
   return (
     <div className={`pipeline-progress${compact ? " pipeline-progress--compact" : ""}`}>
       <StageBlock stageKey="parcelles" stage={progress.parcelles} />
-      <StageBlock stageKey="uf" stage={progress.uf} />
+      {showUf && <StageBlock stageKey="uf" stage={progress.uf} />}
     </div>
   );
 }

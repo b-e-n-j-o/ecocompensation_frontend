@@ -135,28 +135,38 @@
 
 .eco-aoi-steps {
   display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  padding: 0.75rem 0.75rem 0;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 0.35rem;
+  padding: 0.55rem 0.65rem 0.45rem;
   flex-shrink: 0;
+  overflow-x: auto;
 }
 
 .eco-aoi-step {
   display: flex;
   align-items: center;
-  gap: 0.55rem;
-  width: 100%;
-  padding: 0.55rem 0.65rem;
+  gap: 0.4rem;
+  flex: 1 1 0;
+  min-width: 0;
+  width: auto;
+  padding: 0.4rem 0.5rem;
   border: 1px solid transparent;
-  border-radius: 0.65rem;
+  border-radius: 0.55rem;
   background: transparent;
   font-family: inherit;
-  font-size: 0.8rem;
+  font-size: 0.72rem;
   font-weight: 500;
   color: var(--eco-text-muted);
   text-align: left;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.eco-aoi-step-label {
+  min-width: 0;
+  line-height: 1.25;
 }
 
 .eco-aoi-step:hover:not(:disabled) {
@@ -493,6 +503,15 @@
   width: 100%;
   accent-color: var(--eco-accent-hover);
   cursor: pointer;
+}
+
+.eco-aoi-slider.is-muted {
+  opacity: 0.42;
+}
+
+.eco-aoi-slider.is-muted input[type="range"] {
+  cursor: not-allowed;
+  accent-color: #94a3b8;
 }
 
 .eco-aoi-slider-hints {
@@ -834,24 +853,24 @@
 }
 
 .eco-filter-block {
-  margin-top: 1.1rem;
-  padding-top: 0.9rem;
-  border-top: 1px solid var(--eco-border);
+  margin-top: 0.75rem;
+  padding: 0.75rem 0.8rem 0.85rem;
+  border: 1px solid var(--eco-border);
+  border-radius: 0.7rem;
+  background: #fff;
 }
 
 .eco-filter-block--first {
   margin-top: 0;
-  padding-top: 0;
-  border-top: 0;
 }
 
 .eco-filter-block-title {
-  margin: 0;
+  margin: 0 0 0.55rem;
   font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-weight: 700;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: var(--eco-text-muted);
+  color: #334155;
 }
 
 .eco-filter-block-toggle {

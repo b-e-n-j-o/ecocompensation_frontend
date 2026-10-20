@@ -6,6 +6,7 @@ export type InspectRow = {
   key: string;
   label: string;
   value: string;
+  group?: string;
 };
 
 export type InspectPayload = {
@@ -33,6 +34,17 @@ function InspectValue({ value }: { value: string }) {
       </button>
     </div>
   );
+}
+
+function chunkInspectRows(rows: InspectRow[]): { group: string; rows: InspectRow[] }[] {
+  const out: { group: string; rows: InspectRow[] }[] = [];
+  for (const row of rows) {
+    const group = row.group ?? "";
+    const last = out[out.length - 1];
+    if (!last || last.group !== group) out.push({ group, rows: [row] });
+    else last.rows.push(row);
+  }
+  return out;
 }
 
 type Props = {
@@ -87,16 +99,23 @@ export function FeatureInspectSidebar({ inspect, onClose }: Props) {
             {shown.rows.length === 0 ? (
               <p className="di-inspect__empty">Aucun attribut sur cette entité.</p>
             ) : (
-              <dl className="di-inspect__list">
-                {shown.rows.map((row) => (
-                  <div key={row.key} className="di-inspect__row">
-                    <dt>{row.label}</dt>
-                    <dd>
-                      <InspectValue value={row.value} />
-                    </dd>
-                  </div>
+              <div className="di-inspect__sections">
+                {chunkInspectRows(shown.rows).map((section) => (
+                  <section key={section.group} className="di-inspect__section">
+                    {section.group ? <h3 className="di-inspect__group">{section.group}</h3> : null}
+                    <dl className="di-inspect__list">
+                      {section.rows.map((row) => (
+                        <div key={row.key} className="di-inspect__row">
+                          <dt>{row.label}</dt>
+                          <dd>
+                            <InspectValue value={row.value} />
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </section>
                 ))}
-              </dl>
+              </div>
             )}
           </div>
         </>

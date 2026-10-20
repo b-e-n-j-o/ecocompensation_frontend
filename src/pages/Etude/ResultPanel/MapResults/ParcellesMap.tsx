@@ -12,8 +12,8 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { FeatureCollection, Geometry } from "geojson";
 import type * as GeoJSON from "geojson";
-import { fetchResultsLayerGeojson } from "../../../api";
-import type { ParcelPoolMetricRow } from "../../../types";
+import { fetchResultsLayerGeojson, fetchUrbaEntitesGeojson } from "../../../../api";
+import type { ParcelPoolMetricRow } from "../../../../types";
 import {
   RESULTS_LAYERS,
   buildInitialThematic,
@@ -25,7 +25,17 @@ import {
   type ThematicLayerState,
 } from "./cartoCouchesRegistry";
 import { LegendeMapResultats } from "./LegendeMapResultats";
-import { buildParcelHoverHtml } from "./ParcelHoverData";
+import { MapLegendTabs } from "./MapLegendTabs";
+import { UrbaInspectDrawer } from "./UrbaInspectDrawer";
+import { UrbaMapLegend } from "./UrbaMapLegend";
+import {
+  applyUrbaHighlight,
+  bindUrbaClick,
+  type UrbaInspectPayload,
+  syncUrbaLayers,
+  urbaFeatureAt,
+  type UrbaFeatureCollection,
+} from "./urbaMapLayer";
 import {
   createMapHoverPopup,
   hideMapHoverPopup,
@@ -51,22 +61,30 @@ interface ParcellesMapProps {
   poolRunId?: string | null;
   /** Clic simple sur une parcelle — liaison tableau. */
   onParcelleClick?: (idu: string) => void;
+  /** Survol d'une parcelle — surbrillance de la ligne dans le tableau. */
+  onParcelleHover?: (idu: string | null) => void;
   /** Parcelle sélectionnée — surbrillance + centrage carte. */
   focusIdu?: string | null;
-  /** Survol tableau — surbrillance instantanée, sans déplacer la caméra. */
+  /** Incrémenté à chaque clic carte pour rejouer le zoom, même IDU. */
+  focusZoomNonce?: number;
+  /** Survol tableau ou carte — surbrillance dorée, sans déplacer la caméra. */
   hoverIdu?: string | null;
   loadingMessage?: string | null;
   /** Préchargement après filtrage — affichage carte instantané au toggle (couches restent masquées). */
   preloadedThematic?: ResultsThematicPreload | null;
   /** Tant que le prefetch global des couches thématiques est en cours (légende). */
   thematicPreloadLoading?: boolean;
-  /** Métriques pool préchargées, utilisées pour le détail score au hover. */
+  /** Métriques pool préchargées, utilisées pour la couleur de score. */
   poolMetricsByIdu?: Record<string, ParcelPoolMetricRow[]> | null;
   /** Clés des couches thématiques à afficher (selon type d'étude). */
   thematicLayerKeys?: string[];
   /** Nombre de parcelles indésirables (légende carte). */
   indesirableCount?: number;
+  /** Incrémenté après un profil urbanisme pour recharger les entités. */
+  urbaRevision?: number;
 }
+
+const EMPTY_URBA: UrbaFeatureCollection = { type: "FeatureCollection", features: [] };
 type BaseMapMode = "satellite" | "plan";
 type ScoreColorMode = "ecologique" | "foncier";
 
@@ -203,7 +221,9 @@ export function ParcellesMap({
   projectId,
   poolRunId = null,
   onParcelleClick,
+  onParcelleHover,
   focusIdu = null,
+  focusZoomNonce = 0,
   hoverIdu = null,
   loadingMessage = null,
   preloadedThematic,
@@ -211,6 +231,7 @@ export function ParcellesMap({
   poolMetricsByIdu = null,
   thematicLayerKeys,
   indesirableCount = 0,
+  urbaRevision = 0,
 }: ParcellesMapProps) {
   const activeLayers = useMemo(
     () =>
@@ -224,9 +245,12 @@ export function ParcellesMap({
   const map                = useRef<maplibregl.Map | null>(null);
   const onParcelleClickRef = useRef(onParcelleClick);
   onParcelleClickRef.current = onParcelleClick;
-  const poolMetricsRef = useRef(poolMetricsByIdu);
-  poolMetricsRef.current = poolMetricsByIdu;
-  const parcellePopupRef = useRef<maplibregl.Popup | null>(null);
+  const onParcelleHoverRef = useRef(onParcelleHover);
+  onParcelleHoverRef.current = onParcelleHover;
+  const hoveredParcelRef = useRef<string | null>(null);
+  const focusIduRef = useRef(focusIdu);
+  focusIduRef.current = focusIdu;
+  const zoomTokenRef = useRef("");
   const parcelHandlersBoundRef = useRef(false);
   const didInitialFitRef = useRef(false);
   const fetchedRef         = useRef<Set<string>>(new Set());
@@ -237,6 +261,16 @@ export function ParcellesMap({
   const [parcellesVisible, setParcellesVisible] = useState(true);
   const [baseMapMode, setBaseMapMode] = useState<BaseMapMode>("satellite");
   const [scoreColorMode, setScoreColorMode] = useState<ScoreColorMode>("ecologique");
+  const [mapReady, setMapReady] = useState(false);
+  const [urbaData, setUrbaData] = useState<UrbaFeatureCollection>(EMPTY_URBA);
+  const [urbaHidden, setUrbaHidden] = useState<Set<string>>(() => new Set());
+  const [urbaLoading, setUrbaLoading] = useState(false);
+  const [urbaError, setUrbaError] = useState<string | null>(null);
+  const [urbaInspect, setUrbaInspect] = useState<UrbaInspectPayload | null>(null);
+  const urbaInspectRef = useRef(setUrbaInspect);
+  urbaInspectRef.current = setUrbaInspect;
+  const urbaHighlightRef = useRef<string[]>([]);
+  const urbaHiddenList = useMemo(() => [...urbaHidden], [urbaHidden]);
 
   const geojsonWithScoreRatio = useMemo(() => {
     if (!geojson?.features?.length) return geojson;
@@ -338,8 +372,10 @@ export function ParcellesMap({
     });
     return () => {
       parcelHandlersBoundRef.current = false;
-      parcellePopupRef.current?.remove();
-      parcellePopupRef.current = null;
+      if (hoveredParcelRef.current) {
+        hoveredParcelRef.current = null;
+        onParcelleHoverRef.current?.(null);
+      }
       map.current?.remove();
       map.current = null;
     };
@@ -465,37 +501,33 @@ export function ParcellesMap({
       }
 
       if (!parcelHandlersBoundRef.current && map.current.getLayer("parcelles-fill")) {
+        const setHoveredParcel = (idu: string | null) => {
+          if (hoveredParcelRef.current === idu) return;
+          hoveredParcelRef.current = idu;
+          onParcelleHoverRef.current?.(idu);
+        };
+
         const onParcelMove = (e: maplibregl.MapMouseEvent) => {
           if (!map.current) return;
           const props = pickParcelAtPoint(map.current, e.point);
-          if (!props) {
-            parcellePopupRef.current?.remove();
+          const idu = props?.idu ? String(props.idu) : null;
+          if (!idu) {
+            setHoveredParcel(null);
             map.current.getCanvas().style.cursor = "";
             return;
           }
-          const idu = props.idu ? String(props.idu) : "—";
-          const scoreRatio =
-            typeof (props as Record<string, unknown>).score_ratio === "number"
-              ? Number((props as Record<string, unknown>).score_ratio)
-              : Number(props.score_norm ?? 0);
-          if (!parcellePopupRef.current) {
-            parcellePopupRef.current = createMapHoverPopup("560px");
-          }
-          showMapHoverPopup(
-            parcellePopupRef.current,
-            map.current,
-            buildParcelHoverHtml(idu, poolMetricsRef.current?.[idu] ?? null, scoreRatio),
-          );
+          setHoveredParcel(idu);
           map.current.getCanvas().style.cursor = "pointer";
         };
 
         const onParcelLeave = () => {
-          parcellePopupRef.current?.remove();
+          setHoveredParcel(null);
           map.current?.getCanvas().style.removeProperty("cursor");
         };
 
         const onParcelClick = (e: maplibregl.MapMouseEvent) => {
           if (!map.current) return;
+          if (urbaFeatureAt(map.current, e.point)) return;
           const props = pickParcelAtPoint(map.current, e.point);
           if (props?.idu && typeof props.idu === "string") {
             onParcelleClickRef.current?.(props.idu);
@@ -508,21 +540,78 @@ export function ParcellesMap({
         parcelHandlersBoundRef.current = true;
       }
 
-      // Fit bounds (une seule fois par jeu de données / projet)
+      // Vue d'ensemble une seule fois. Un clic parcelle a priorité : le zoom ciblé
+      // est joué par l'effet focus, sans être écrasé par ce cadrage global.
       if (!didInitialFitRef.current) {
-        const bounds = new maplibregl.LngLatBounds();
-        geojsonWithScoreRatio.features.forEach((f: GeoJSON.Feature) => {
-          extendBoundsFromFeature(bounds, f);
-        });
-        if (!bounds.isEmpty()) {
-          map.current.fitBounds(bounds, { padding: 50 });
-          didInitialFitRef.current = true;
+        didInitialFitRef.current = true;
+        if (!focusIduRef.current) {
+          const bounds = new maplibregl.LngLatBounds();
+          geojsonWithScoreRatio.features.forEach((f: GeoJSON.Feature) => {
+            extendBoundsFromFeature(bounds, f);
+          });
+          if (!bounds.isEmpty()) {
+            map.current.fitBounds(bounds, { padding: 50 });
+          }
         }
       }
+      setMapReady(true);
     };
 
     if (map.current.isStyleLoaded()) apply(); else map.current.once("load", apply);
   }, [geojsonWithScoreRatio, foncierGeojson, scoreColorMode]);
+
+  useEffect(() => {
+    if (!projectId || !poolRunId) {
+      setUrbaData(EMPTY_URBA);
+      setUrbaError(null);
+      return;
+    }
+    let cancelled = false;
+    setUrbaLoading(true);
+    setUrbaError(null);
+    fetchUrbaEntitesGeojson(projectId, poolRunId)
+      .then((fc) => {
+        if (!cancelled) setUrbaData(fc as UrbaFeatureCollection);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setUrbaData(EMPTY_URBA);
+          setUrbaError(err instanceof Error ? err.message : String(err));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setUrbaLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, poolRunId, urbaRevision]);
+
+  useEffect(() => {
+    const current = map.current;
+    if (!current || !mapReady) return;
+    const paint = () => {
+      try {
+        syncUrbaLayers(current, urbaData, urbaHiddenList);
+        urbaHighlightRef.current = applyUrbaHighlight(
+          current,
+          urbaData,
+          focusIdu ?? null,
+          urbaHighlightRef.current,
+        );
+      } catch (err) {
+        console.warn("Couche urbanisme non affichée", err);
+      }
+    };
+    if (current.isStyleLoaded()) paint();
+    else current.once("load", paint);
+  }, [mapReady, urbaData, urbaHiddenList, focusIdu]);
+
+  useEffect(() => {
+    const current = map.current;
+    if (!current || !mapReady) return;
+    return bindUrbaClick(current, (payload) => urbaInspectRef.current(payload));
+  }, [mapReady]);
 
   useEffect(() => {
     if (!map.current || !map.current.isStyleLoaded()) return;
@@ -553,7 +642,10 @@ export function ParcellesMap({
   }, [focusIdu, hoverIdu, geojsonWithScoreRatio]);
 
   useEffect(() => {
-    if (!map.current || !focusIdu || !geojsonWithScoreRatio?.features?.length) return;
+    const current = map.current;
+    if (!mapReady || !current || !focusIdu || !geojsonWithScoreRatio?.features?.length) return;
+    const token = `${focusIdu}:${focusZoomNonce}`;
+    if (zoomTokenRef.current === token) return;
     const feature = geojsonWithScoreRatio.features.find(
       (f) => String(f.properties?.idu ?? "") === focusIdu,
     );
@@ -561,8 +653,13 @@ export function ParcellesMap({
     const bounds = new maplibregl.LngLatBounds();
     extendBoundsFromFeature(bounds, feature);
     if (bounds.isEmpty()) return;
-    map.current.fitBounds(bounds, { padding: 72, maxZoom: 17, duration: 650 });
-  }, [focusIdu, geojsonWithScoreRatio]);
+    const zoom = () => {
+      zoomTokenRef.current = token;
+      current.fitBounds(bounds, { padding: 56, maxZoom: 18, duration: 480 });
+    };
+    if (current.isStyleLoaded()) zoom();
+    else current.once("load", zoom);
+  }, [mapReady, focusIdu, focusZoomNonce, geojsonWithScoreRatio]);
 
   // ── Fond de carte (satellite/plan) ────────────────────────────────────────
   useEffect(() => {
@@ -807,33 +904,71 @@ export function ParcellesMap({
           </div>
         </div>
       )}
-      <LegendeMapResultats
-        layers={activeLayers}
-        layersState={thematicState}
-        onToggle={toggleLayer}
-        primaryLayer={{
-          label: "Parcelles",
-          visible: parcellesVisible,
-          onToggle: () => setParcellesVisible((v) => !v),
-          footnote:
-            indesirableCount > 0 ? (
-              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span
-                  style={{
-                    width: 10,
-                    height: 10,
-                    background: "#dc2626",
-                    borderRadius: 2,
-                    flexShrink: 0,
-                  }}
-                />
-                Indésirable ({indesirableCount}) — exclu du classement
-              </span>
-            ) : undefined,
-        }}
-        bulkLoading={thematicPreloadLoading}
-        onToggleValue={toggleDiscriminantValue}
+      <div className={`map-side-stack${urbaInspect ? " has-inspect" : ""}`}>
+      <UrbaInspectDrawer inspect={urbaInspect} onClose={() => setUrbaInspect(null)} />
+      <MapLegendTabs
+        defaultTabId="environnement"
+        tabs={[
+          {
+            id: "environnement",
+            label: "Environnement",
+            content: (
+              <LegendeMapResultats
+                embedded
+                layers={activeLayers}
+                layersState={thematicState}
+                onToggle={toggleLayer}
+                primaryLayer={{
+                  label: "Parcelles",
+                  visible: parcellesVisible,
+                  onToggle: () => setParcellesVisible((v) => !v),
+                  footnote:
+                    indesirableCount > 0 ? (
+                      <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span
+                          style={{
+                            width: 10,
+                            height: 10,
+                            background: "#dc2626",
+                            borderRadius: 2,
+                            flexShrink: 0,
+                          }}
+                        />
+                        Indésirable ({indesirableCount}) — exclu du classement
+                      </span>
+                    ) : undefined,
+                }}
+                bulkLoading={thematicPreloadLoading}
+                onToggleValue={toggleDiscriminantValue}
+              />
+            ),
+          },
+          {
+            id: "urbanisme",
+            label: "Urbanisme",
+            content: (
+              <UrbaMapLegend
+                embedded
+                data={urbaData}
+                hidden={urbaHidden}
+                loading={urbaLoading}
+                error={urbaError}
+                onToggleKeys={(keys, visible) => {
+                  setUrbaHidden((prev) => {
+                    const next = new Set(prev);
+                    for (const key of keys) {
+                      if (visible) next.delete(key);
+                      else next.add(key);
+                    }
+                    return next;
+                  });
+                }}
+              />
+            ),
+          },
+        ]}
       />
+      </div>
     </div>
   );
 }

@@ -29,61 +29,80 @@ export type ZdvNature = (typeof ZDV_NATURES)[number];
 
 /** Nomenclature CESBIO (OCS-GE), alignée sur le backend / migration SQL. */
 export const CESBIO_LIBELLES = [
+  "Autres",
   "Bâtis denses",
   "Bâtis diffus",
-  "Zones industrielles et commerciales",
-  "Surfaces routes",
-  "Colza",
+  "Bois",
   "Céréales à pailles",
+  "Colza",
+  "Eau",
+  "Forêt fermée de conifères",
+  "Forêt fermée de feuillus",
+  "Forêt fermée mixte",
+  "Forêt ouverte",
+  "Forêts de conifères",
+  "Forêts de feuillus",
+  "Haie",
+  "Lande herbacée",
+  "Lande ligneuse",
+  "Landes ligneuses",
+  "Maïs",
+  "Pelouses",
+  "Peupleraie",
+  "Plages et dunes",
+  "Prairies",
   "Protéagineux",
   "Soja",
-  "Tournesol",
-  "Maïs",
-  "Riz",
-  "Tubercules/racines",
-  "Prairies",
-  "Vergers",
-  "Vignes",
-  "Forêts de feuillus",
-  "Forêts de conifères",
-  "Pelouses",
-  "Landes ligneuses",
   "Surfaces minérales",
-  "Plages et dunes",
-  "Glaciers ou neiges",
-  "Eau",
-  "Autres",
-  "Inconnu",
+  "Surfaces routes",
+  "Tournesol",
+  "Tubercules/racines",
+  "Verger",
+  "Vergers",
+  "Vigne",
+  "Vignes",
+  "Zones industrielles et commerciales",
 ] as const;
 
 export type CesbioLibelle = (typeof CESBIO_LIBELLES)[number];
 
 /** Couleurs alignées sur le catalogue Données internes (occupation du sol). */
 export const CESBIO_LIBELLE_COLORS: Record<string, string> = {
+  "Autres": "#9e9e9e",
   "Bâtis denses": "#6d4c41",
   "Bâtis diffus": "#bcaaa4",
-  "Zones industrielles et commerciales": "#546e7a",
-  "Surfaces routes": "#90a4ae",
-  "Colza": "#ffee58",
+  "Bois": "#388e3c",
   "Céréales à pailles": "#ffcc80",
+  "Colza": "#ffee58",
+  "Eau": "#1565c0",
+  "Forêt fermée de conifères": "#1b5e20",
+  "Forêt fermée de feuillus": "#2e7d32",
+  "Forêt fermée mixte": "#33691e",
+  "Forêt ouverte": "#66bb6a",
+  "Forêts de conifères": "#1b5e20",
+  "Forêts de feuillus": "#2e7d32",
+  "Haie": "#558b2f",
+  "Lande herbacée": "#aed581",
+  "Lande ligneuse": "#827717",
+  "Landes ligneuses": "#827717",
+  "Maïs": "#f9a825",
+  "Pelouses": "#c5e1a5",
+  "Peupleraie": "#7cb342",
+  "Plages et dunes": "#ffe082",
+  "Prairies": "#9ccc65",
   "Protéagineux": "#d4e157",
   "Soja": "#dce775",
-  "Tournesol": "#fdd835",
-  "Maïs": "#f9a825",
-  "Riz": "#81d4fa",
-  "Tubercules/racines": "#ce93d8",
-  "Prairies": "#9ccc65",
-  "Vergers": "#ef6c00",
-  "Vignes": "#8e24aa",
-  "Forêts de feuillus": "#2e7d32",
-  "Forêts de conifères": "#1b5e20",
-  "Pelouses": "#c5e1a5",
-  "Landes ligneuses": "#827717",
   "Surfaces minérales": "#b0bec5",
-  "Plages et dunes": "#ffe082",
+  "Surfaces routes": "#90a4ae",
+  "Tournesol": "#fdd835",
+  "Tubercules/racines": "#ce93d8",
+  "Verger": "#ef6c00",
+  "Vergers": "#ef6c00",
+  "Vigne": "#8e24aa",
+  "Vignes": "#8e24aa",
+  "Zones industrielles et commerciales": "#546e7a",
+  "Riz": "#81d4fa",
   "Glaciers ou neiges": "#eceff1",
-  "Eau": "#1565c0",
-  "Autres": "#9e9e9e",
   "Inconnu": "#bdbdbd",
 };
 
@@ -183,12 +202,16 @@ export interface FilterOptions {
   arrachage_vignes_mode: ArrachageVignesMode;
   /** Zones humides (`ecocompensation_results.zone_humide`) : intersecter, exclure, ou ignorer. */
   zone_humide_mode: ZoneHumideMode;
+  /** Zones humides probables : intersecter, exclure, ou ignorer. */
+  zones_humides_probables_mode?: ZoneHumideMode;
   /** Surface min. (ha) de ZH établie intersectant la parcelle (mode intersect). 0 = toute intersection. */
   min_zone_humide_ha?: number;
   /** Distance max (m) au tronçon hydro (filter_v2 zones humides). */
   troncons_hydros_max_dist_m?: number | null;
   /** Distance max (m) à une surface hydro (filter_v2 zones humides). */
   surfaces_hydros_max_dist_m?: number | null;
+  /** Ne garder que les bassins versants qui touchent le foncier du projet. */
+  same_bassin_versant?: boolean;
 
   /**
    * Remontées de nappes — `classefiab` dans `ecocompensation_results.remontee_de_nappes` ;
@@ -364,6 +387,7 @@ export type RankingSortKey =
   | "rank"
   | "composite_score"
   | "durete_score"
+  | "urba_score"
   | "distance"
   | "surface"
   | "miller"

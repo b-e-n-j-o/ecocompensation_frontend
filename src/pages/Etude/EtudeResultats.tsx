@@ -1,17 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { FunnelDisplay } from "../../components/ResultPanel/FunnelDisplay";
-import { ResultsToolbar, type ResultsToolbarStatus } from "../../components/ResultPanel/ResultsToolbar";
+import { AppDialog } from "./ResultPanel/AppDialog";
+import { FunnelDisplay } from "./ResultPanel/FunnelDisplay";
+import { ResultsToolbar, type ResultsToolbarStatus } from "./ResultPanel/ResultsToolbar";
 import { PipelineProgressPanel } from "../../components/PipelineProgressPanel";
 import {
   EtudeResultatsCombinedTable,
   EtudeResultatsParcellesTable,
   EtudeResultatsUnitesTable,
 } from "./EtudeResultatsTable";
-import { EtudeResultatsParcellesMap, EtudeResultatsUnitesMap, SplitMapFrame } from "./EtudeResultatsMap";
+import { EtudeResultatsParcellesMap, EtudeResultatsUnitesMap, ResultsSplit, SplitMapFrame } from "./EtudeResultatsMap";
 import "../../components/pipelineProgressPanel.css";
-import type { ParcellesGeoJSON } from "../../components/ResultPanel/MapResults/ParcellesMap";
+import type { ParcellesGeoJSON } from "./ResultPanel/MapResults/ParcellesMap";
 import {
   fetchParcellesGeojson,
   fetchPoolRunMetricsBulk,
@@ -29,11 +30,14 @@ import {
   fetchPoolRunsList,
   fetchProjectStoredResults,
   fetchProjects,
+  deleteProject,
   computePoolRunDurete,
+  computePoolRunUrbanisme,
   addParcellesToPoolRun,
+  startUfSearch,
 } from "../../api";
 import type { ProjectSummary } from "../../api";
-import type { ResultsThematicPreload } from "../../components/ResultPanel/MapResults/cartoCouchesRegistry";
+import type { ResultsThematicPreload } from "./ResultPanel/MapResults/cartoCouchesRegistry";
 import {
   type FilterOptions,
   type FilterResponse,
@@ -56,12 +60,12 @@ import { ProjectContextMap } from "../../components/ProjectContextMap";
 import { getStudyProfile, getMapLayerKeys } from "./studyProfiles";
 import { parseStoredFilterResponse, parseStoredLastFilter } from "../../utils/storedFilterResults";
 import { normalizeStudyType } from "../../types/studyTypes";
-import "../../components/ResultPanel/results.css";
-import "../../components/ResultPanel/results-page.css";
+import "./ResultPanel/results.css";
+import "./ResultPanel/results-page.css";
 import type { FeatureCollection, GeoJsonProperties, Geometry } from "geojson";
 
 /** Onglets principaux : Parcelles | Unités foncières */
-type MainResultsTab = "parcelles" | "unites";
+type MainResultsTab = "parcelles" | "unites" | "combine";
 /** Sous-vues : tableau | carte */
 type ResultsSubView = "classement" | "classement_combine" | "carte";
 type FilterLoadingStage = "idle" | "filtering" | "profiling" | "metrics_loading";
@@ -152,6 +156,200 @@ function applyPoolIndesirableToParcellesGeojson(
   };
 }
 
+function formatStudyWhen(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+}
+
+const OPEN_STUDY_MIN_MS = 450;
+
+function PoolOpenLoading({ label = "Chargement du pool…" }: { label?: string }) {
+  return (
+    <div className="etude-open-loading" role="status" aria-live="polite">
+      <span className="etude-open-loading__spinner" aria-hidden />
+      <span className="etude-open-loading__label">{label}</span>
+    </div>
+  );
+}
+
+function EtudesHomeTable({
+  poolRuns,
+  projects,
+  onOpen,
+  onNewStudy,
+  onDeleted,
+  projectsLoaded = true,
+}: {
+  poolRuns: PoolRunListItem[];
+  projects: ProjectSummary[];
+  onOpen: (projectId: string, poolId: string) => void;
+  onNewStudy?: () => void;
+  onDeleted: (projectId: string) => void;
+  projectsLoaded?: boolean;
+}) {
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [openingId, setOpeningId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{ projectId: string; name: string } | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const knownProjectIds = useMemo(() => new Set(projects.map((p) => p.id)), [projects]);
+  const rows = useMemo(
+    () =>
+      [...poolRuns]
+        .filter((run) => knownProjectIds.has(run.project_id))
+        .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))),
+    [poolRuns, knownProjectIds],
+  );
+
+  function askDelete(e: MouseEvent, projectId: string, name: string) {
+    e.stopPropagation();
+    if (deletingId) return;
+    setDeleteError(null);
+    setPendingDelete({ projectId, name });
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete || deletingId) return;
+    const { projectId } = pendingDelete;
+    setDeletingId(projectId);
+    setDeleteError(null);
+    try {
+      await deleteProject(projectId);
+      onDeleted(projectId);
+      setPendingDelete(null);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Erreur lors de la suppression");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  if (!projectsLoaded) {
+    return <PoolOpenLoading label="Chargement des études…" />;
+  }
+
+  if (rows.length === 0) {
+    return (
+      <div className="empty-state">
+        <span className="empty-icon">⬡</span>
+        <span className="empty-text">Aucune étude enregistrée</span>
+        {onNewStudy && (
+          <button
+            type="button"
+            className="results-toolbar__btn results-toolbar__btn--primary"
+            onClick={onNewStudy}
+          >
+            Nouvelle étude
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  function openStudy(projectId: string, poolId: string) {
+    if (openingId) return;
+    setOpeningId(poolId);
+    onOpen(projectId, poolId);
+  }
+
+  return (
+    <div className={`etudes-home${openingId ? " etudes-home--opening" : ""}`}>
+      {openingId && <PoolOpenLoading />}
+      <table className="etudes-home__table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Nom</th>
+            <th>Parcelles dans le pool</th>
+            <th className="etudes-home__col-actions">
+              <span className="sr-only">Actions</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((run) => {
+            const project = projects.find((p) => p.id === run.project_id);
+            const name = project?.name?.trim() || project?.id.slice(0, 8) || "Étude";
+            const isDeleting = deletingId === run.project_id;
+            return (
+              <tr
+                key={run.id}
+                tabIndex={0}
+                onClick={() => openStudy(run.project_id, run.id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    openStudy(run.project_id, run.id);
+                  }
+                }}
+              >
+                <td>{formatStudyWhen(run.created_at)}</td>
+                <td>{name}</td>
+                <td>{run.total_count.toLocaleString("fr-FR")}</td>
+                <td className="etudes-home__col-actions">
+                  <button
+                    type="button"
+                    className="etudes-home__delete"
+                    title={`Supprimer « ${name} »`}
+                    aria-label={`Supprimer l’étude ${name}`}
+                    disabled={isDeleting}
+                    onClick={(e) => askDelete(e, run.project_id, name)}
+                  >
+                    ×
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {pendingDelete && (
+        <div
+          className="etudes-home-modal-backdrop"
+          role="presentation"
+          onClick={() => {
+            if (!deletingId) setPendingDelete(null);
+          }}
+        >
+          <div
+            className="etudes-home-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="etude-delete-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="etude-delete-title">Supprimer cette étude ?</h2>
+            <p>
+              L’étude « {pendingDelete.name} » et toutes les données associées (résultats, AOI,
+              foncier, pools) seront définitivement supprimées.
+            </p>
+            {deleteError && <p className="etudes-home-modal__error">{deleteError}</p>}
+            <div className="etudes-home-modal__actions">
+              <button
+                type="button"
+                className="results-toolbar__btn"
+                disabled={!!deletingId}
+                onClick={() => setPendingDelete(null)}
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                className="etudes-home-modal__confirm"
+                disabled={!!deletingId}
+                onClick={() => void confirmDelete()}
+              >
+                {deletingId ? "Suppression…" : "Supprimer"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function parseIduParts(raw: string): { codeInsee: string; section: string; numero: string } {
   const idu = String(raw ?? "").trim();
   return {
@@ -170,7 +368,10 @@ export function EtudeResultats({
   const [projectId, setProjectId] = useState<string | null>(fixedProjectId);
   const [poolRuns, setPoolRuns] = useState<PoolRunListItem[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
+  const [loading, setLoading] = useState(() => Boolean(initialRunId));
+  const [openStudyLoading, setOpenStudyLoading] = useState(() => Boolean(initialRunId));
+  const [openStudyError, setOpenStudyError] = useState(false);
   const [filterLoadingStage, setFilterLoadingStage] = useState<FilterLoadingStage>("idle");
   const [ufResults, setUfResults] = useState<UfFilterResponse | null>(null);
   const [ufGeojson, setUfGeojson] = useState<FeatureCollection<Geometry, GeoJsonProperties> | null>(null);
@@ -182,13 +383,21 @@ export function EtudeResultats({
   const [parcelSubView, setParcelSubView] = useState<ResultsSubView>("classement");
   /** Carte visible dans la vue split Classement (60/40) — masquable pour tableau pleine largeur. */
   const [splitMapVisible, setSplitMapVisible] = useState(true);
+  const [tableShare, setTableShare] = useState(0.6);
   /** Sous-onglets Entonnoir / Classement / Carte pour Unités foncières */
   const [ufSubView, setUfSubView] = useState<ResultsSubView>("classement");
   const [scrollToIdu, setScrollToIdu] = useState<string | null>(null);
+  const [detailFocus, setDetailFocus] = useState<{
+    idu: string;
+    tab: "durete" | "urbanisme";
+    nonce: number;
+  } | null>(null);
+  const displayedIdusRef = useRef<string[]>([]);
   /** Incrémenté à chaque demande de scroll tableau (même IDU rejoué depuis la carte). */
   const [scrollTableNonce, setScrollTableNonce] = useState(0);
   /** Parcelle sélectionnée — surbrillance carte + ligne tableau. */
   const [linkedIdu, setLinkedIdu] = useState<string | null>(null);
+  const [mapFocusNonce, setMapFocusNonce] = useState(0);
   /** Survol tableau — highlight carte sans bouger la caméra. */
   const [hoverIdu, setHoverIdu] = useState<string | null>(null);
   /** Sous-ensemble UF sélectionné — liaison table ↔ carte. */
@@ -205,7 +414,7 @@ export function EtudeResultats({
   const [sousEnsemblesStatus, setSousEnsemblesStatus] = useState<SousEnsemblesStatus>("idle");
   const [contextGeom, setContextGeom] = useState<Awaited<ReturnType<typeof fetchProjectContextGeometry>> | null>(null);
   const { connected, progress, parcellesReady, ufReady, pipelineProgress } =
-    useFetchProgress(projectId ?? "");
+    useFetchProgress(projectId);
   const projectIdRef = useRef<string | null>(null);
   const thematicPrefetchSeqRef = useRef(0);
   const [thematicPreload, setThematicPreload] = useState<ResultsThematicPreload | null>(null);
@@ -215,13 +424,17 @@ export function EtudeResultats({
   const [poolMetricsByIdu, setPoolMetricsByIdu] = useState<Record<string, ParcelPoolMetricRow[]> | null>(null);
   /** Options du dernier filtre réussi (pour tri priorité végétation = même ordre que `last_filter` en base). */
   const [lastFilterOptions, setLastFilterOptions] = useState<FilterOptions | null>(null);
-  const [rankingSortKey, setRankingSortKey] = useState<RankingSortKey>("composite_score");
+  const [rankingSortKey, setRankingSortKey] = useState<RankingSortKey>("rank");
+  const [rankingSortDir, setRankingSortDir] = useState<"asc" | "desc">("desc");
   /** IDU exclus du classement (pool indésirables), aligné sur `results.pool_run_id`. */
   const [indesirableIdus, setIndesirableIdus] = useState<string[]>([]);
   const [indesirableParcellesStored, setIndesirableParcellesStored] = useState<FilterResponse["parcelles"]>([]);
   const [indesirableMetricsByIdu, setIndesirableMetricsByIdu] = useState<Record<string, ParcelPoolMetricRow[]>>({});
   const [dureteFonciereLoading, setDureteFonciereLoading] = useState(false);
+  const [urbanismeLoading, setUrbanismeLoading] = useState(false);
+  const [toolNotice, setToolNotice] = useState<{ title: string; body: string; error?: boolean } | null>(null);
   const [addParcellesLoading, setAddParcellesLoading] = useState(false);
+  const [ufSearchLoading, setUfSearchLoading] = useState(false);
   const [metricsRefreshNonce, setMetricsRefreshNonce] = useState(0);
   const [ufPoolLoading, setUfPoolLoading] = useState(false);
   const [storedResultsLoading, setStoredResultsLoading] = useState(false);
@@ -238,18 +451,28 @@ export function EtudeResultats({
     const hasFauna = (lastFilterOptions?.faune_criteria?.length ?? 0) > 0;
     const keys = getMapLayerKeys(currentStudyProfile.id, hasFauna);
     if (
-      currentStudyProfile.id === "zones_humides_intra"
-      && typeof lastFilterOptions?.troncons_hydros_max_dist_m === "number"
+      typeof lastFilterOptions?.troncons_hydros_max_dist_m === "number"
       && !keys.includes("troncons_hydros")
     ) {
       keys.push("troncons_hydros");
     }
     if (
-      currentStudyProfile.id === "zones_humides_intra"
-      && typeof lastFilterOptions?.surfaces_hydros_max_dist_m === "number"
+      typeof lastFilterOptions?.surfaces_hydros_max_dist_m === "number"
       && !keys.includes("surfaces_hydros")
     ) {
       keys.push("surfaces_hydros");
+    }
+    if (
+      lastFilterOptions?.zone_humide_mode === "intersect"
+      || lastFilterOptions?.zone_humide_mode === "exclude"
+    ) {
+      if (!keys.includes("zone_humide")) keys.push("zone_humide");
+    }
+    if (
+      lastFilterOptions?.zones_humides_probables_mode === "intersect"
+      || lastFilterOptions?.zones_humides_probables_mode === "exclude"
+    ) {
+      if (!keys.includes("zones_humides_probables")) keys.push("zones_humides_probables");
     }
     return keys;
   }, [
@@ -257,13 +480,19 @@ export function EtudeResultats({
     lastFilterOptions?.faune_criteria,
     lastFilterOptions?.troncons_hydros_max_dist_m,
     lastFilterOptions?.surfaces_hydros_max_dist_m,
+    lastFilterOptions?.zone_humide_mode,
+    lastFilterOptions?.zones_humides_probables_mode,
   ]);
 
   const isZhStudy = currentStudyProfile.id === "zones_humides_intra";
+  const showZoneHumideColumn =
+    isZhStudy
+    || lastFilterOptions?.zone_humide_mode === "intersect"
+    || lastFilterOptions?.zone_humide_mode === "exclude";
   const showDistHydroColumn =
-    isZhStudy && typeof lastFilterOptions?.troncons_hydros_max_dist_m === "number";
+    typeof lastFilterOptions?.troncons_hydros_max_dist_m === "number";
   const showSurfaceHydroColumn =
-    isZhStudy && typeof lastFilterOptions?.surfaces_hydros_max_dist_m === "number";
+    typeof lastFilterOptions?.surfaces_hydros_max_dist_m === "number";
 
   useEffect(() => {
     projectIdRef.current = projectId;
@@ -292,6 +521,10 @@ export function EtudeResultats({
       cancelled = true;
     };
   }, [projectId]);
+
+  useEffect(() => {
+    if (ufReady) setUfSearchLoading(false);
+  }, [ufReady]);
 
   useEffect(() => {
     if (!projectId || !ufReady) return;
@@ -349,6 +582,9 @@ export function EtudeResultats({
       })
       .catch(() => {
         if (!cancelled) setProjects([]);
+      })
+      .finally(() => {
+        if (!cancelled) setProjectsLoaded(true);
       });
     return () => {
       cancelled = true;
@@ -376,11 +612,20 @@ export function EtudeResultats({
     // StrictMode : le 1er effet est démonté avant le 2e ; ne pas court-circuiter avec une ref
     // posée trop tôt (sinon aucun fetch métriques / geo, loading bloqué à l’infini).
     let active = true;
+    const openedAt = Date.now();
+    setOpenStudyError(false);
+    setOpenStudyLoading(true);
     setLoading(true);
     setFilterLoadingStage("metrics_loading");
     thematicPrefetchSeqRef.current += 1;
     setThematicPreloadLoading(false);
     setThematicPreload(null);
+
+    const releaseOpenLoader = async () => {
+      const wait = Math.max(0, OPEN_STUDY_MIN_MS - (Date.now() - openedAt));
+      if (wait > 0) await new Promise((r) => window.setTimeout(r, wait));
+      if (active) setOpenStudyLoading(false);
+    };
 
     void (async () => {
       try {
@@ -478,11 +723,14 @@ export function EtudeResultats({
         // Indésirables : useEffect sur [projectId, results.pool_run_id] après setResults.
         // Métriques d’abord (tableau + RankingLine) ; géométries / UF stockées sans bloquer.
         await loadMetrics();
+        await releaseOpenLoader();
 
         void loadStored();
       } catch (err) {
         console.error("Chargement run:", err);
+        if (active) setOpenStudyError(true);
         alert(err instanceof Error ? err.message : "Impossible de charger ce run.");
+        await releaseOpenLoader();
       } finally {
         if (active) {
           setFilterLoadingStage("idle");
@@ -659,28 +907,52 @@ export function EtudeResultats({
     };
   }, [projectId, initialRunId, results?.pool_run_id, results?.parcelles?.length, metricsRefreshNonce]);
 
+  function openComputedRankingLine(tab: "durete" | "urbanisme", idus?: string[]) {
+    const order = displayedIdusRef.current;
+    const target =
+      (idus ?? []).find((id) => order.includes(id)) ?? idus?.[0] ?? order[0] ?? null;
+    if (!target) return;
+    setMainResultsTab("parcelles");
+    setScrollToIdu(target);
+    setScrollTableNonce((n) => n + 1);
+    setDetailFocus((prev) => ({ idu: target, tab, nonce: (prev?.nonce ?? 0) + 1 }));
+  }
+
   async function handleRunDureteFonciere(idus?: string[]) {
     const runId = initialRunId ?? results?.pool_run_id ?? null;
     if (!projectId || !runId) return;
     setDureteFonciereLoading(true);
     try {
-      const resp = await computePoolRunDurete(projectId, runId, idus);
+      await computePoolRunDurete(projectId, runId, idus);
       setMetricsRefreshNonce((n) => n + 1);
-      const scope = idus?.length
-        ? `${resp.active_idus} parcelle(s) sélectionnée(s)`
-        : `${resp.active_idus} parcelle(s) du pool`;
-      const skipped =
-        !idus?.length && resp.skipped_indesirables > 0
-          ? ` (${resp.skipped_indesirables} indésirable(s) ignorée(s))`
-          : "";
-      alert(
-        `Dureté foncière calculée sur ${scope}${skipped}.\n`
-        + `${resp.eligible_pm} parcelle(s) PM éligible(s) — durée ${resp.duration_s.toFixed(0)} s.`,
-      );
+      openComputedRankingLine("durete", idus);
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Échec du calcul de dureté foncière.");
+      setToolNotice({
+        title: "Dureté foncière",
+        body: e instanceof Error ? e.message : "Échec du calcul de dureté foncière.",
+        error: true,
+      });
     } finally {
       setDureteFonciereLoading(false);
+    }
+  }
+
+  async function handleRunUrbanisme(idus?: string[]) {
+    const runId = initialRunId ?? results?.pool_run_id ?? null;
+    if (!projectId || !runId) return;
+    setUrbanismeLoading(true);
+    try {
+      await computePoolRunUrbanisme(projectId, runId, idus);
+      setMetricsRefreshNonce((n) => n + 1);
+      openComputedRankingLine("urbanisme", idus);
+    } catch (e) {
+      setToolNotice({
+        title: "Urbanisme",
+        body: e instanceof Error ? e.message : "Échec du profil urbanisme.",
+        error: true,
+      });
+    } finally {
+      setUrbanismeLoading(false);
     }
   }
 
@@ -836,10 +1108,12 @@ export function EtudeResultats({
     setLinkedIdu(idu);
     setScrollToIdu(idu);
     setScrollTableNonce((n) => n + 1);
+    setMapFocusNonce((n) => n + 1);
   }
 
   function handleTableRowActivate(idu: string) {
     setLinkedIdu(idu);
+    setMapFocusNonce((n) => n + 1);
     if (!splitMapVisible) {
       setSplitMapVisible(true);
     }
@@ -980,6 +1254,14 @@ export function EtudeResultats({
         if (da !== db) return da - db; // plus petit score de dureté = meilleur
         return a.rank - b.rank;
       });
+    } else if (rankingSortKey === "urba_score") {
+      const getUrba = (idu: string): number => {
+        const rows = poolMetricsByIdu?.[idu] ?? [];
+        const raw = rows.find((r) => r.metric_key === "urbanisme_gpu")?.metric_value_jsonb?.score;
+        const score = raw && typeof raw === "object" ? (raw as { score_global?: unknown }).score_global : null;
+        return typeof score === "number" && Number.isFinite(score) ? score : Number.NEGATIVE_INFINITY;
+      };
+      list = [...list].sort((a, b) => getUrba(b.idu) - getUrba(a.idu) || a.rank - b.rank);
     } else if (rankingSortKey === "composite_score") {
       list = [...list].sort((a, b) => {
         const ca = getCompositeScore(a.idu);
@@ -1039,16 +1321,19 @@ export function EtudeResultats({
         compareByPmProspectDetail(a.idu, b.idu, poolMetricsByIdu, a.rank, b.rank),
       );
     }
+    if (rankingSortDir === "asc") list = [...list].reverse();
     return list;
   }, [
     results?.parcelles,
     distanceCursorKm,
     surfaceMinHa,
     rankingSortKey,
+    rankingSortDir,
     poolMetricsByIdu,
     lastFilterOptions,
     indesirableIdus,
   ]);
+  displayedIdusRef.current = displayedParcelles.map((p) => p.idu);
 
   const displayedCombinedCandidates = useMemo(() => {
     const parcelles = displayedParcelles;
@@ -1087,22 +1372,24 @@ export function EtudeResultats({
 
   const isPoolMetricsPending =
     dureteFonciereLoading
+    || urbanismeLoading
     || addParcellesLoading
     || (!!results?.pool_run_id && loading && (filterLoadingStage === "profiling" || filterLoadingStage === "metrics_loading"));
 
   const poolMetricsOverlayText = addParcellesLoading
     ? "Ajout au pool et enrichissement…"
+    : urbanismeLoading
+    ? "Profil urbanisme en cours (Géoportail)…"
     : dureteFonciereLoading
-    ? "Calcul de la dureté foncière en cours (peut prendre plusieurs minutes)…"
+    ? "Calcul de la dureté foncière en cours…"
     : (loadingStatusText ?? "Calcul des métriques en cours…");
 
   const activeRunId = initialRunId ?? results?.pool_run_id ?? null;
-  const isSplitParcelView =
-    mainResultsTab === "parcelles" &&
-    (parcelSubView === "classement" || parcelSubView === "classement_combine");
-  const isSplitUfView = mainResultsTab === "unites" && ufSubView === "classement";
-
-  const resultsSplitClassName = `results-split${splitMapVisible ? "" : " results-split--map-hidden"}`;
+  const hasCombinedRanking = (ufResults?.unites_foncieres ?? []).some(
+    (u) => (u.sous_ensembles ?? []).length > 0,
+  );
+  const isSplitParcelView = mainResultsTab === "parcelles" || mainResultsTab === "combine";
+  const isSplitUfView = mainResultsTab === "unites" && !!ufResults;
 
   const resultsContentClass = `results-content${
     isSplitParcelView || isSplitUfView ? "" : " results-content--full"
@@ -1120,6 +1407,9 @@ export function EtudeResultats({
         : results
           ? { kind: "ready" }
           : { kind: "idle" };
+
+  const showStudyLoader =
+    Boolean(initialRunId) && !openStudyError && (openStudyLoading || !results);
 
   const mapShared = {
     projectId,
@@ -1139,8 +1429,11 @@ export function EtudeResultats({
       indesirableCount={indesirableIdus.length}
       loadingMessage={loadingStatusText}
       focusIdu={linkedIdu}
+      focusZoomNonce={mapFocusNonce}
       hoverIdu={hoverIdu}
       onParcelleClick={handleMapParcelleClick}
+      onParcelleHover={setHoverIdu}
+      urbaRevision={metricsRefreshNonce}
     />
   );
 
@@ -1159,6 +1452,11 @@ export function EtudeResultats({
 
   return (
     <div className="results-page">
+      {toolNotice && (
+        <AppDialog title={toolNotice.title} onClose={() => setToolNotice(null)}>
+          <p className={toolNotice.error ? "etudes-home-modal__error" : undefined}>{toolNotice.body}</p>
+        </AppDialog>
+      )}
       <ResultsToolbar
         projectId={projectId}
         projects={projects}
@@ -1168,8 +1466,14 @@ export function EtudeResultats({
         parcelCount={results ? displayedParcelles.length : null}
         status={toolbarStatus}
         onNewStudy={onNavigateToCreate}
+        onEditFilter={
+          projectId
+            ? () => navigate(`/ecocompensation`, { state: { editProjectId: projectId } })
+            : undefined
+        }
         onPoolChange={handleToolbarPoolChange}
         preferOpen={!!results && results.total === 0}
+        hidePoolPicker={!projectId}
       >
         {hasParcellesFunnel && results && (
           <FunnelDisplay
@@ -1194,7 +1498,9 @@ export function EtudeResultats({
       </ResultsToolbar>
 
       <div className="results-page__body">
-        {results ? (
+        {showStudyLoader ? (
+          <PoolOpenLoading />
+        ) : results ? (
           <>
             {/* Onglets principaux : Parcelles | Unités foncières */}
             <div className="results-tabs results-tabs-main">
@@ -1222,91 +1528,34 @@ export function EtudeResultats({
                           : ""
                 }
               >
-                Unités foncières
-                {!ufReady && parcellesReady && (
+                Groupement de parcelles de personnes morales
+                {!ufReady && parcellesReady && sousEnsemblesStatus !== "no" && (
                   <span className="results-tab-spinner" aria-hidden="true" />
                 )}
               </button>
-            </div>
-
-            {/* Sous-onglets : Classement | Carte */}
-            {mainResultsTab === "parcelles" && (
-              <div className="results-tabs results-tabs-sub results-tabs-sub--split-actions">
+              {hasCombinedRanking && (
                 <button
                   type="button"
-                  className={`results-tab ${parcelSubView === "classement" ? "active" : ""}`}
-                  onClick={() => setParcelSubView("classement")}
-                >
-                  Classement
-                </button>
-                <button
-                  type="button"
-                  className={`results-tab ${parcelSubView === "classement_combine" ? "active" : ""}`}
-                  onClick={() => setParcelSubView("classement_combine")}
-                  title="Candidats combinés : parcelles seules + sous-ensembles UF"
+                  className={`results-tab ${mainResultsTab === "combine" ? "active" : ""}`}
+                  onClick={() => setMainResultsTab("combine")}
                 >
                   Classement combiné
                 </button>
+              )}
+              {(isSplitParcelView || isSplitUfView) && (
                 <button
                   type="button"
-                  className={`results-tab ${parcelSubView === "carte" ? "active" : ""}`}
-                  onClick={() => setParcelSubView("carte")}
+                  className="results-split-map-toggle"
+                  onClick={() => setSplitMapVisible((v) => !v)}
+                  aria-pressed={splitMapVisible}
                 >
-                  Carte
+                  {splitMapVisible ? "Masquer la carte" : "Afficher la carte"}
                 </button>
-                {isSplitParcelView && (
-                  <button
-                    type="button"
-                    className="results-split-map-toggle"
-                    onClick={() => setSplitMapVisible((v) => !v)}
-                    aria-pressed={splitMapVisible}
-                    title={
-                      splitMapVisible
-                        ? "Masquer la carte pour afficher le tableau sur toute la largeur"
-                        : "Réafficher la carte à côté du tableau"
-                    }
-                  >
-                    {splitMapVisible ? "Masquer la carte" : "Afficher la carte"}
-                  </button>
-                )}
-              </div>
-            )}
-            {mainResultsTab === "unites" && sousEnsemblesStatus === "yes" && ufResults && (
-              <div className="results-tabs results-tabs-sub results-tabs-sub--split-actions">
-                <button
-                  type="button"
-                  className={`results-tab ${ufSubView === "classement" ? "active" : ""}`}
-                  onClick={() => setUfSubView("classement")}
-                >
-                  Classement
-                </button>
-                <button
-                  type="button"
-                  className={`results-tab ${ufSubView === "carte" ? "active" : ""}`}
-                  onClick={() => setUfSubView("carte")}
-                >
-                  Carte
-                </button>
-                {isSplitUfView && (
-                  <button
-                    type="button"
-                    className="results-split-map-toggle"
-                    onClick={() => setSplitMapVisible((v) => !v)}
-                    aria-pressed={splitMapVisible}
-                    title={
-                      splitMapVisible
-                        ? "Masquer la carte pour afficher le tableau sur toute la largeur"
-                        : "Réafficher la carte à côté du tableau"
-                    }
-                  >
-                    {splitMapVisible ? "Masquer la carte" : "Afficher la carte"}
-                  </button>
-                )}
-              </div>
-            )}
+              )}
+            </div>
 
             <div className={resultsContentClass}>
-              {mainResultsTab === "parcelles" && parcelSubView === "classement" && results.total === 0 && (
+              {mainResultsTab === "parcelles" && results.total === 0 && (
                 <div style={{ padding: 12, color: "#000000", fontSize: 13 }}>
                   Aucune parcelle retenue après filtrage. Ouvrez{" "}
                   <strong>Informations du pool</strong> pour voir à quelle étape elles ont été éliminées,
@@ -1314,8 +1563,12 @@ export function EtudeResultats({
                 </div>
               )}
 
-              {mainResultsTab === "parcelles" && parcelSubView === "classement" && (
-                <div className={resultsSplitClassName}>
+              {mainResultsTab === "parcelles" && (
+                <ResultsSplit
+                  mapVisible={splitMapVisible}
+                  tableShare={tableShare}
+                  onTableShareChange={setTableShare}
+                  table={
                   <EtudeResultatsParcellesTable
                     hideDistanceFilter={currentStudyProfile.hideDistanceFilter}
                     distanceMaxKm={distanceMaxKm}
@@ -1331,31 +1584,47 @@ export function EtudeResultats({
                     isPoolMetricsPending={isPoolMetricsPending}
                     poolMetricsOverlayText={poolMetricsOverlayText}
                     rankingSortKey={rankingSortKey}
-                    onRankingSortChange={setRankingSortKey}
+                    rankingSortDir={rankingSortDir}
+                    onRankingSortChange={(key) => {
+                      if (key === rankingSortKey) setRankingSortDir((d) => (d === "desc" ? "asc" : "desc"));
+                      else {
+                        setRankingSortKey(key);
+                        setRankingSortDir("desc");
+                      }
+                    }}
                     scrollToIdu={scrollToIdu}
                     scrollTableNonce={scrollTableNonce}
+                    detailFocus={detailFocus}
                     selectedIdu={linkedIdu}
+                    hoverIdu={hoverIdu}
                     onRowActivate={handleTableRowActivate}
                     onHover={setHoverIdu}
                     onMarkIndesirable={handleMarkIndesirable}
                     onBatchMarkIndesirable={handleBatchMarkIndesirable}
                     onRunDureteFonciere={handleRunDureteFonciere}
                     dureteFonciereLoading={dureteFonciereLoading}
+                    onRunUrbanisme={handleRunUrbanisme}
+                    urbanismeLoading={urbanismeLoading}
                     onAddParcelles={handleAddParcelles}
                     addParcellesLoading={addParcellesLoading}
-                    showZoneHumideColumn={isZhStudy}
+                    showZoneHumideColumn={showZoneHumideColumn}
                     showDistHydroColumn={showDistHydroColumn}
                     showSurfaceHydroColumn={showSurfaceHydroColumn}
                     indesirableParcelles={indesirableParcelles}
                     indesirableMetricsByIdu={indesirableMetricsByIdu}
                     onRestoreIndesirable={handleRestoreIndesirable}
                   />
-                  <SplitMapFrame>{parcellesMapPanel}</SplitMapFrame>
-                </div>
+                  }
+                  map={<SplitMapFrame>{parcellesMapPanel}</SplitMapFrame>}
+                />
               )}
 
-              {mainResultsTab === "parcelles" && parcelSubView === "classement_combine" && (
-                <div className={resultsSplitClassName}>
+              {mainResultsTab === "combine" && hasCombinedRanking && (
+                <ResultsSplit
+                  mapVisible={splitMapVisible}
+                  tableShare={tableShare}
+                  onTableShareChange={setTableShare}
+                  table={
                   <EtudeResultatsCombinedTable
                     parcelles={displayedCombinedCandidates}
                     poolRunId={results.pool_run_id ?? null}
@@ -1365,20 +1634,24 @@ export function EtudeResultats({
                     scrollToIdu={scrollToIdu}
                     scrollTableNonce={scrollTableNonce}
                     selectedIdu={linkedIdu}
+                    hoverIdu={hoverIdu}
                     onRowActivate={handleTableRowActivate}
                     onHover={setHoverIdu}
-                    showZoneHumideColumn={isZhStudy}
+                    showZoneHumideColumn={showZoneHumideColumn}
                     showDistHydroColumn={showDistHydroColumn}
                     showSurfaceHydroColumn={showSurfaceHydroColumn}
                   />
-                  <SplitMapFrame>{parcellesMapPanel}</SplitMapFrame>
-                </div>
+                  }
+                  map={<SplitMapFrame>{parcellesMapPanel}</SplitMapFrame>}
+                />
               )}
 
-              {mainResultsTab === "parcelles" && parcelSubView === "carte" && parcellesMapPanel}
-
-              {mainResultsTab === "unites" && ufResults && ufSubView === "classement" && (
-                <div className={resultsSplitClassName}>
+              {mainResultsTab === "unites" && ufResults && (
+                <ResultsSplit
+                  mapVisible={splitMapVisible}
+                  tableShare={tableShare}
+                  onTableShareChange={setTableShare}
+                  table={
                   <EtudeResultatsUnitesTable
                     ufResults={ufResults}
                     projectId={projectId}
@@ -1390,8 +1663,9 @@ export function EtudeResultats({
                     onSubsetHover={setHoverSubsetId}
                     onUfHover={setHoverUfId}
                   />
-                  <SplitMapFrame>{ufMapPanel}</SplitMapFrame>
-                </div>
+                  }
+                  map={<SplitMapFrame>{ufMapPanel}</SplitMapFrame>}
+                />
               )}
               {mainResultsTab === "unites" && !ufResults && (ufPoolLoading || (!ufReady && parcellesReady && sousEnsemblesStatus !== "no")) && (
                 <div className="uf-loading">
@@ -1408,12 +1682,29 @@ export function EtudeResultats({
                   Aucune unité foncière ne correspond aux critères (végétation / faune / Miller).
                 </div>
               )}
-              {mainResultsTab === "unites" && !ufResults && !ufPoolLoading && !ufReady && sousEnsemblesStatus === "no" && (
-                <div style={{ padding: 12, color: "#000000", fontSize: 13 }}>
-                  Aucun sous-ensemble en base pour ce projet. Générez la couche « sous-ensembles » (unités
-                  foncières) en amont, puis relancez le filtre — seul le classement parcelles sera disponible
-                  tant qu’il n’y a pas de lignes dans{" "}
-                  <code style={{ fontSize: 12 }}>ecocompensation_results.sous_ensembles</code>.
+              {mainResultsTab === "unites" && !ufResults && !ufPoolLoading && !ufReady && sousEnsemblesStatus === "no" && !ufSearchLoading && (
+                <div style={{ padding: 12, color: "#000000", fontSize: 13, display: "grid", gap: 10, justifyItems: "start" }}>
+                  <p style={{ margin: 0 }}>
+                    Ce filtrage a été lancé sur les parcelles seules. La recherche des groupements
+                    reprend les mêmes critères, sans relancer le filtre parcelles.
+                  </p>
+                  <button
+                    type="button"
+                    className="ranking-line-run"
+                    disabled={!projectId || ufSearchLoading}
+                    onClick={() => {
+                      if (!projectId) return;
+                      setUfSearchLoading(true);
+                      setSousEnsemblesStatus("loading");
+                      void startUfSearch(projectId).catch((err) => {
+                        setUfSearchLoading(false);
+                        setSousEnsemblesStatus("no");
+                        alert(err instanceof Error ? err.message : "Impossible de lancer la recherche.");
+                      });
+                    }}
+                  >
+                    Lancer la recherche parmi les groupements de personnes morales
+                  </button>
                 </div>
               )}
               {mainResultsTab === "unites" && !ufResults && !ufPoolLoading && !ufReady && sousEnsemblesStatus === "yes" && (
@@ -1421,7 +1712,6 @@ export function EtudeResultats({
                   Lancez le filtre pour calculer et afficher les résultats unités foncières.
                 </div>
               )}
-              {mainResultsTab === "unites" && ufResults && ufSubView === "carte" && ufMapPanel}
             </div>
           </>
         ) : projectId ? (
@@ -1444,19 +1734,17 @@ export function EtudeResultats({
             </div>
           </div>
         ) : (
-          <div className="empty-state">
-            <span className="empty-icon">⬡</span>
-            <span className="empty-text">Sélectionnez un projet ou créez une nouvelle étude</span>
-            {onNavigateToCreate && (
-              <button
-                type="button"
-                className="results-toolbar__btn results-toolbar__btn--primary"
-                onClick={onNavigateToCreate}
-              >
-                Nouvelle étude
-              </button>
-            )}
-          </div>
+          <EtudesHomeTable
+            poolRuns={poolRuns}
+            projects={projects}
+            projectsLoaded={projectsLoaded}
+            onOpen={handleToolbarPoolChange}
+            onNewStudy={onNavigateToCreate}
+            onDeleted={(pid) => {
+              setPoolRuns((prev) => prev.filter((r) => r.project_id !== pid));
+              setProjects((prev) => prev.filter((p) => p.id !== pid));
+            }}
+          />
         )}
       </div>
     </div>

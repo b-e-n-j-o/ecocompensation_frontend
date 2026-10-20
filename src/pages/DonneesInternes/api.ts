@@ -69,3 +69,27 @@ export async function fetchInternalLayerCentroids(key: string): Promise<FeatureC
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return (await r.json()) as FeatureCollection;
 }
+
+export type LayerNote = {
+  layer_key: string;
+  note: string;
+  updated_at: string | null;
+  updated_by: string | null;
+};
+
+export async function fetchLayerNotes(): Promise<Record<string, LayerNote>> {
+  const r = await fetch(`${API}/api/data-interne/layers/notes`);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const data = (await r.json()) as { notes: Record<string, LayerNote> };
+  return data.notes ?? {};
+}
+
+export async function saveLayerNote(key: string, note: string): Promise<LayerNote> {
+  const r = await fetch(`${API}/api/data-interne/layers/${encodeURIComponent(key)}/note`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ note }),
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return (await r.json()) as LayerNote;
+}

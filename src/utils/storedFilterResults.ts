@@ -49,6 +49,12 @@ export function parseStoredLastFilter(raw: unknown): FilterOptions | null {
       lf.miller_thresh ?? lf.miller_threshold ?? DEFAULT_FILTER.miller_threshold,
     ),
     zone_humide_mode: zhMode,
+    zones_humides_probables_mode:
+      lf.zones_humides_probables_mode === "intersect"
+      || lf.zones_humides_probables_mode === "exclude"
+      || lf.zones_humides_probables_mode === "ignore"
+        ? lf.zones_humides_probables_mode
+        : "ignore",
     min_zone_humide_ha:
       typeof lf.min_zone_humide_ha === "number" ? lf.min_zone_humide_ha : undefined,
     troncons_hydros_max_dist_m:

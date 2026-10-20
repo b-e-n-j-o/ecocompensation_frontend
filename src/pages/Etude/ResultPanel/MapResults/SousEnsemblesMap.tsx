@@ -13,7 +13,7 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { FeatureCollection, Geometry } from "geojson";
 import type * as GeoJSON from "geojson";
-import { fetchResultsLayerGeojson } from "../../../api";
+import { fetchResultsLayerGeojson } from "../../../../api";
 import {
   RESULTS_LAYERS,
   buildInitialThematic,

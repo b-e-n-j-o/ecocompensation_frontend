@@ -4,6 +4,9 @@ export type FilterEnrichPayload = {
   veg_libelles?: string[];
   fauna_distances?: Record<string, number>;
   zone_humide_ha?: number;
+  zone_humide_m2?: number;
+  zone_humide_pct?: number;
+  zone_humide_intersects?: boolean;
   dist_hydro_m?: number;
   troncons_hydro_info?: Array<{
     cleabs?: string | null;
@@ -221,6 +224,332 @@ export type CompositeScoreMetric = {
   message: string | null;
 };
 
+export type EspacesBoisesClassesMetric = {
+  parcelAreaHa: number;
+  classes: Record<string, number>;
+  classAreaHa: Record<string, number>;
+  contrainteHa: number;
+  contrainteRatio: number;
+  mobilisableHa: number;
+  mobilisableRatio: number;
+  hasEbcACreer: boolean;
+  ebcACreerHa: number;
+  ebcACreerRatio: number;
+};
+
+function _num(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function _ratioMap(raw: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const [k, val] of Object.entries(raw)) {
+    const n = _num(val);
+    if (k.trim() && n > 0) out[k.trim()] = n;
+  }
+  return out;
+}
+
+export type Znieff2Site = {
+  cle: string | null;
+  nomSite: string | null;
+  idMnhn: string | null;
+  areaHa: number;
+  ratio: number;
+};
+
+export type Znieff2Metric = {
+  parcelAreaHa: number;
+  znieff2Ha: number;
+  znieff2Ratio: number;
+  sites: Znieff2Site[];
+};
+
+export type UrbanismeGpuElement = {
+  id: string;
+  code: string | null;
+  libelleCnig: string | null;
+  libelle: string | null;
+  pct: number | null;
+  surfaceM2: number | null;
+  longueurM: number | null;
+  nbPoints: number | null;
+  position: string | null;
+  url: string | null;
+};
+
+export type UrbanismeScore = {
+  profil: string | null;
+  scoreGlobal: number | null;
+  classe: string | null;
+  libelleClasse: string | null;
+  sousScores: { key: string; valeur: number }[];
+  confiance: string | null;
+  confianceValeur: number | null;
+  vetos: { niveau: string; motif: string }[];
+  resume: string[];
+  pointsAVerifier: string[];
+  contributions: { label: string; points: string }[];
+};
+
+export type UrbanismeGpuMetric = {
+  surfaceM2: number | null;
+  flags: string[];
+  score: UrbanismeScore | null;
+  zonages: { libelle: string | null; type: string | null; pct: number | null; surfaceM2: number | null }[];
+  documents: { idurba: string | null; typedoc: string | null; date: string | null }[];
+  couches: {
+    layerKey: string;
+    displayName: string;
+    famille: string;
+    geomKind: string | null;
+    status: string;
+    error: string | null;
+    elements: UrbanismeGpuElement[];
+  }[];
+  runErrors: string[];
+};
+
+function _optNum(value: unknown): number | null {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function _optStr(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+const SOUS_SCORE_ORDER = ["perennite", "compatibilite", "synergie", "maitrise"];
+
+function parseUrbanismeScore(raw: unknown): UrbanismeScore | null {
+  if (!raw || typeof raw !== "object") return null;
+  const score = raw as Record<string, unknown>;
+  if (typeof score.score_global !== "number") return null;
+  const sous = score.sous_scores && typeof score.sous_scores === "object"
+    ? score.sous_scores as Record<string, unknown>
+    : {};
+  const keys = [
+    ...SOUS_SCORE_ORDER.filter((k) => sous[k]),
+    ...Object.keys(sous).filter((k) => !SOUS_SCORE_ORDER.includes(k)),
+  ];
+  const confiance = score.confiance && typeof score.confiance === "object"
+    ? score.confiance as Record<string, unknown>
+    : null;
+  return {
+    profil: _optStr(score.profil),
+    scoreGlobal: score.score_global,
+    classe: _optStr(score.classe),
+    libelleClasse: _optStr(score.libelle_classe),
+    sousScores: keys.flatMap((key) => {
+      const item = sous[key];
+      if (!item || typeof item !== "object") return [];
+      const valeur = _optNum((item as Record<string, unknown>).valeur);
+      return valeur == null ? [] : [{ key, valeur }];
+    }),
+    confiance: confiance ? _optStr(confiance.niveau) : null,
+    confianceValeur: confiance ? _optNum(confiance.valeur) : null,
+    vetos: Array.isArray(score.vetos)
+      ? score.vetos.flatMap((item) => {
+          if (!item || typeof item !== "object") return [];
+          const v = item as Record<string, unknown>;
+          const motif = _optStr(v.motif);
+          return motif ? [{ niveau: _optStr(v.niveau) ?? "majeur", motif }] : [];
+        })
+      : [],
+    resume: Array.isArray(score.resume) ? score.resume.filter((x): x is string => typeof x === "string") : [],
+    pointsAVerifier: Array.isArray(score.points_a_verifier)
+      ? score.points_a_verifier.filter((x): x is string => typeof x === "string")
+      : [],
+    contributions: Array.isArray(score.contributions)
+      ? score.contributions.flatMap((item) => {
+          if (!item || typeof item !== "object") return [];
+          const c = item as Record<string, unknown>;
+          const label = _optStr(c.label);
+          if (!label) return [];
+          const points = c.points && typeof c.points === "object" ? c.points as Record<string, unknown> : {};
+          const total = Object.values(points).reduce<number>((acc, n) => acc + (typeof n === "number" ? n : 0), 0);
+          const text = total === 0 ? "0" : `${total > 0 ? "+" : ""}${total.toLocaleString("fr-FR", { maximumFractionDigits: 1 })}`;
+          return [{ label, points: text }];
+        })
+      : [],
+  };
+}
+
+/** Null tant que l'analyse urbanisme n'a pas été lancée sur cette parcelle. */
+export function getUrbanismeGpuMetric(
+  metrics: ParcelPoolMetricRow[] | undefined,
+): UrbanismeGpuMetric | null {
+  const row = metrics?.find((m) => m.metric_key === "urbanisme_gpu");
+  const v = row?.metric_value_jsonb;
+  if (!v || typeof v !== "object") return null;
+  const rec = v as Record<string, unknown>;
+  const zonages = Array.isArray(rec.zonages)
+    ? rec.zonages.flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const z = item as Record<string, unknown>;
+        return [{
+          libelle: _optStr(z.libelle),
+          type: _optStr(z.type),
+          pct: _optNum(z.pct_cible),
+          surfaceM2: _optNum(z.surface_m2),
+        }];
+      })
+    : [];
+  const documents = Array.isArray(rec.documents)
+    ? rec.documents.flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const d = item as Record<string, unknown>;
+        return [{
+          idurba: _optStr(d.idurba),
+          typedoc: _optStr(d.typedoc),
+          date: _optStr(d.date),
+        }];
+      })
+    : [];
+  const couches = Array.isArray(rec.couches)
+    ? rec.couches.flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const c = item as Record<string, unknown>;
+        const elements = Array.isArray(c.elements)
+          ? c.elements.flatMap((el) => {
+              if (!el || typeof el !== "object") return [];
+              const e = el as Record<string, unknown>;
+              return [{
+                id: _optStr(e.element_id) ?? "el",
+                code: _optStr(e.code),
+                libelleCnig: _optStr(e.libelle_cnig),
+                libelle: _optStr(e.libelle),
+                pct: _optNum(e.pct_cible),
+                surfaceM2: _optNum(e.surface_m2),
+                longueurM: _optNum(e.longueur_m),
+                nbPoints: _optNum(e.nb_points),
+                position: _optStr(e.position),
+                url: _optStr(e.url),
+              }];
+            })
+          : [];
+        return [{
+          layerKey: _optStr(c.layer_key) ?? "couche",
+          displayName: _optStr(c.display_name) ?? "Couche",
+          famille: _optStr(c.famille) ?? "",
+          geomKind: _optStr(c.geom_kind),
+          status: _optStr(c.status) ?? "not_intersected",
+          error: _optStr(c.error),
+          elements,
+        }];
+      })
+    : [];
+  return {
+    surfaceM2: _optNum(rec.surface_m2),
+    flags: Array.isArray(rec.flags) ? rec.flags.filter((f): f is string => typeof f === "string") : [],
+    score: parseUrbanismeScore(rec.score),
+    zonages,
+    documents,
+    couches,
+    runErrors: Array.isArray(rec.run_errors)
+      ? rec.run_errors.filter((f): f is string => typeof f === "string")
+      : [],
+  };
+}
+
+/** Null si la parcelle n'intersecte pas de ZNIEFF de type 2. */
+export function getZnieff2Metric(
+  metrics: ParcelPoolMetricRow[] | undefined,
+): Znieff2Metric | null {
+  const row = metrics?.find((m) => m.metric_key === "znieff_2");
+  const v = row?.metric_value_jsonb;
+  if (!v || typeof v !== "object") return null;
+  const rec = v as Record<string, unknown>;
+  const znieff2Ha = _num(rec.znieff2_ha);
+  if (znieff2Ha <= 0) return null;
+  const sites: Znieff2Site[] = [];
+  if (Array.isArray(rec.sites)) {
+    for (const item of rec.sites) {
+      if (!item || typeof item !== "object") continue;
+      const site = item as Record<string, unknown>;
+      const areaHa = _num(site.area_ha);
+      if (areaHa <= 0) continue;
+      sites.push({
+        cle: typeof site.cle === "string" ? site.cle : null,
+        nomSite: typeof site.nom_site === "string" && site.nom_site.trim() ? site.nom_site : null,
+        idMnhn: typeof site.id_mnhn === "string" && site.id_mnhn.trim() ? site.id_mnhn : null,
+        areaHa,
+        ratio: _num(site.ratio),
+      });
+    }
+  }
+  return {
+    parcelAreaHa: _num(rec.parcel_area_ha),
+    znieff2Ha,
+    znieff2Ratio: _num(rec.znieff2_ratio),
+    sites,
+  };
+}
+
+/** Null si la parcelle n'intersecte pas v_ebc. */
+export function getEspacesBoisesClassesMetric(
+  metrics: ParcelPoolMetricRow[] | undefined,
+): EspacesBoisesClassesMetric | null {
+  const row = metrics?.find((m) => m.metric_key === "espaces_boises_classes");
+  const v = row?.metric_value_jsonb;
+  if (!v || typeof v !== "object") return null;
+  const rec = v as Record<string, unknown>;
+  const classes = _ratioMap(rec.classes);
+  const classAreaHa = _ratioMap(rec.class_area_ha);
+  const mobilisableHa = _num(rec.mobilisable_ha);
+  const contrainteHa = _num(rec.contrainte_ha);
+  const ebcACreerHa = _num(rec.ebc_a_creer_ha);
+  if (Object.keys(classes).length === 0 && contrainteHa <= 0 && ebcACreerHa <= 0) return null;
+  return {
+    parcelAreaHa: _num(rec.parcel_area_ha),
+    classes,
+    classAreaHa,
+    contrainteHa,
+    contrainteRatio: _num(rec.contrainte_ratio),
+    mobilisableHa,
+    mobilisableRatio: _num(rec.mobilisable_ratio),
+    hasEbcACreer: rec.has_ebc_a_creer === true || ebcACreerHa > 0,
+    ebcACreerHa,
+    ebcACreerRatio: _num(rec.ebc_a_creer_ratio),
+  };
+}
+
+export type ArrachageVignesMetric = {
+  ratios: Record<string, number>;
+  impactedAreaM2: number;
+  impactedRatio: number;
+};
+
+/** Null si la parcelle n'intersecte pas la couche. */
+export function getArrachageVignesMetric(
+  metrics: ParcelPoolMetricRow[] | undefined,
+): ArrachageVignesMetric | null {
+  const row = metrics?.find((m) => m.metric_key === "arrachage_vignes_ratio");
+  const v = row?.metric_value_jsonb;
+  if (!v || typeof v !== "object") return null;
+  const rec = v as Record<string, unknown>;
+  const raw = rec.ratios;
+  const ratios: Record<string, number> = {};
+  if (raw && typeof raw === "object") {
+    for (const [k, val] of Object.entries(raw)) {
+      const n = typeof val === "number" ? val : Number(val);
+      if (k.trim() && Number.isFinite(n) && n > 0) ratios[k.trim()] = n;
+    }
+  }
+  const impactedAreaM2 =
+    typeof rec.impacted_area_m2 === "number" && Number.isFinite(rec.impacted_area_m2)
+      ? rec.impacted_area_m2
+      : 0;
+  const impactedRatio =
+    typeof rec.impacted_ratio === "number" && Number.isFinite(rec.impacted_ratio)
+      ? rec.impacted_ratio
+      : 0;
+  if (impactedAreaM2 <= 0 && Object.keys(ratios).length === 0) return null;
+  return { ratios, impactedAreaM2, impactedRatio };
+}
+
 /** Score dureté 0–100 (plus élevé = plus difficile à acquérir). */
 export function getDureteFonciereMetric(
   metrics: ParcelPoolMetricRow[] | undefined,
@@ -413,15 +742,13 @@ export function normalizePoolMetricsByIdu(
   return out;
 }
 
-/** Plus grande part relative dans le zonage hybride (0–1), pour tri. */
+/** Plus grande part relative dans le zonage (0–1), pour tri. */
 export function getDominantVegetationRatio(metrics: ParcelPoolMetricRow[] | undefined): number {
-  if (!metrics?.length) return 0;
-  const row = metrics.find((m) => m.metric_key === "vegetation_hybride_ratio");
-  const raw = row?.metric_value_jsonb?.ratios;
-  if (!raw || typeof raw !== "object") return 0;
+  const metric = getOccupationSolMetric(metrics);
+  if (!metric) return 0;
   let max = 0;
-  for (const v of Object.values(raw)) {
-    if (typeof v === "number" && Number.isFinite(v)) max = Math.max(max, v);
+  for (const v of Object.values(metric.ratios)) {
+    if (Number.isFinite(v)) max = Math.max(max, v);
   }
   return max;
 }
@@ -432,8 +759,23 @@ export function buildVegetationPriorityChain(veg: VegetationHybrideValue | null 
   return [...veg.zdv_natures, ...veg.cesbio_libelles];
 }
 
-/** Ratios + surface totale d’intersection (m²) — pour passer des parts relatives aux surfaces par classe. */
-function getVegetationHybridMetric(
+export type OccupationSolSource = "vegetation_hybride_ratio" | "cesbio_profile";
+
+export type OccupationSolShare = {
+  label: string;
+  /** Part 0–1 (parcelle pour CESBIO, intersection pour zonage hybride). */
+  ratio: number;
+  areaM2: number | null;
+};
+
+export type OccupationSolMetric = {
+  source: OccupationSolSource;
+  ratios: Record<string, number>;
+  totalM2: number;
+  shares: OccupationSolShare[];
+};
+
+function parseHybridRatioMetric(
   metrics: ParcelPoolMetricRow[] | undefined,
 ): { ratios: Record<string, number>; totalM2: number } | null {
   const row = metrics?.find((m) => m.metric_key === "vegetation_hybride_ratio");
@@ -446,10 +788,83 @@ function getVegetationHybridMetric(
     typeof totalRaw === "number" && Number.isFinite(totalRaw) && totalRaw >= 0 ? totalRaw : 0;
   const out: Record<string, number> = {};
   for (const [k, v] of Object.entries(raw)) {
-    if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
+    if (typeof v === "number" && Number.isFinite(v) && v > 0) out[k] = v;
   }
   if (!Object.keys(out).length) return null;
   return { ratios: out, totalM2 };
+}
+
+function parseCesbioProfileMetric(
+  metrics: ParcelPoolMetricRow[] | undefined,
+): { ratios: Record<string, number>; totalM2: number } | null {
+  const row = metrics?.find((m) => m.metric_key === "cesbio_profile");
+  const payload = row?.metric_value_jsonb;
+  if (!payload || typeof payload !== "object") return null;
+  const ratios: Record<string, number> = {};
+  const areas: Record<string, number> = {};
+  let areaSum = 0;
+  let parcelM2 = 0;
+  for (const [label, raw] of Object.entries(payload)) {
+    if (!label.trim() || !raw || typeof raw !== "object") continue;
+    const rec = raw as Record<string, unknown>;
+    const area =
+      typeof rec.area_m2 === "number" && Number.isFinite(rec.area_m2) && rec.area_m2 > 0
+        ? rec.area_m2
+        : null;
+    const pct = typeof rec.pct === "number" && Number.isFinite(rec.pct) && rec.pct > 0 ? rec.pct : null;
+    if (area != null) {
+      areas[label] = area;
+      areaSum += area;
+    }
+    if (pct != null) {
+      const ratio = pct > 1 ? pct / 100 : pct;
+      if (ratio > 0) {
+        ratios[label] = ratio;
+        if (area != null && ratio > 0) {
+          parcelM2 = Math.max(parcelM2, area / ratio);
+        }
+      }
+    }
+  }
+  if (!Object.keys(ratios).length && areaSum > 0) {
+    for (const [k, a] of Object.entries(areas)) {
+      ratios[k] = a / areaSum;
+    }
+    return { ratios, totalM2: areaSum };
+  }
+  if (!Object.keys(ratios).length) return null;
+  return { ratios, totalM2: parcelM2 > 0 ? parcelM2 : areaSum };
+}
+
+/** Ratios + surface de référence (m²) — hybride ZH, sinon CESBIO faune. */
+function getVegetationHybridMetric(
+  metrics: ParcelPoolMetricRow[] | undefined,
+): { ratios: Record<string, number>; totalM2: number } | null {
+  return parseHybridRatioMetric(metrics) ?? parseCesbioProfileMetric(metrics);
+}
+
+/** Occupation du sol pour le détail de ligne (parts + source). */
+export function getOccupationSolMetric(
+  metrics: ParcelPoolMetricRow[] | undefined,
+): OccupationSolMetric | null {
+  const hybrid = parseHybridRatioMetric(metrics);
+  const parsed = hybrid ?? parseCesbioProfileMetric(metrics);
+  if (!parsed) return null;
+  const shares: OccupationSolShare[] = Object.entries(parsed.ratios)
+    .filter(([, ratio]) => Number.isFinite(ratio) && ratio > 0)
+    .map(([label, ratio]) => ({
+      label,
+      ratio,
+      areaM2: parsed.totalM2 > 0 ? ratio * parsed.totalM2 : null,
+    }))
+    .sort((a, b) => b.ratio - a.ratio);
+  if (!shares.length) return null;
+  return {
+    source: hybrid ? "vegetation_hybride_ratio" : "cesbio_profile",
+    ratios: parsed.ratios,
+    totalM2: parsed.totalM2,
+    shares,
+  };
 }
 
 /** Ratio pour un libellé filtre vs clés `libelle_prio` des métriques (exact puis insensible à la casse). */

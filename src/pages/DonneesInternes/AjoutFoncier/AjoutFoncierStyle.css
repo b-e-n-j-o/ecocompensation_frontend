@@ -1,0 +1,222 @@
+.af-root {
+    --af-bg: #ffffff;
+    --af-surface: #f7f7f5;
+    --af-border: #e4e4df;
+    --af-text: #1c1c1a;
+    --af-muted: #6b6b66;
+    --af-accent: #0f766e;
+    --af-accent-ink: #ffffff;
+    --af-warn: #b45309;
+    --af-warn-bg: #fff7ed;
+    --af-err: #b91c1c;
+    --af-err-bg: #fef2f2;
+    --af-ok: #15803d;
+  
+    display: grid;
+    grid-template-columns: minmax(360px, 440px) 1fr;
+    height: 100%;
+    min-height: 0;
+    color: var(--af-text);
+    background: var(--af-bg);
+    font-size: 13px;
+  }
+  .af-root.is-wide { grid-template-columns: minmax(520px, 62%) 1fr; }
+  
+  /* ------------------------------ panneau ------------------------------ */
+  .af-panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    border-right: 1px solid var(--af-border);
+  }
+  .af-head { padding: 16px 18px 10px; border-bottom: 1px solid var(--af-border); }
+  .af-head h1 { margin: 0 0 10px; font-size: 16px; font-weight: 600; }
+  .af-steps { display: flex; gap: 14px; margin: 0; padding: 0; list-style: none; color: var(--af-muted); }
+  .af-steps li { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .af-steps li span {
+    display: inline-grid; place-items: center;
+    width: 18px; height: 18px; border-radius: 50%;
+    border: 1px solid var(--af-border); font-size: 11px;
+  }
+  .af-steps li.is-current { color: var(--af-text); font-weight: 600; }
+  .af-steps li.is-current span { background: var(--af-accent); border-color: var(--af-accent); color: var(--af-accent-ink); }
+  .af-steps li.is-done span { border-color: var(--af-accent); color: var(--af-accent); }
+  
+  .af-body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 14px 18px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .af-h2 { margin: 6px 0 0; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--af-muted); }
+  
+  /* ------------------------------ onglets ------------------------------ */
+  .af-tabs, .af-seg { display: flex; gap: 2px; padding: 2px; background: var(--af-surface); border-radius: 8px; }
+  .af-tabs button, .af-seg button {
+    flex: 1; padding: 7px 10px; border: 0; border-radius: 6px;
+    background: transparent; color: var(--af-muted); cursor: pointer; font: inherit;
+  }
+  .af-tabs button.is-on, .af-seg button.is-on { background: var(--af-bg); color: var(--af-text); box-shadow: 0 1px 2px rgb(0 0 0 / 8%); }
+  
+  /* ------------------------------ formulaires ------------------------------ */
+  .af-form { display: flex; flex-direction: column; gap: 10px; }
+  .af-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .af-span2 { grid-column: span 2; }
+  .af-row { display: flex; align-items: flex-end; gap: 10px; }
+  .af-row .af-btn { margin-left: auto; }
+  .af-field { display: flex; flex-direction: column; gap: 4px; position: relative; }
+  .af-field > span { font-size: 12px; color: var(--af-muted); }
+  .af-field--sm { width: 90px; }
+  .af-field input, .af-field select, .af-field textarea, .af-input {
+    width: 100%; box-sizing: border-box;
+    padding: 7px 9px; border: 1px solid var(--af-border); border-radius: 6px;
+    background: var(--af-bg); color: var(--af-text); font: inherit;
+  }
+  .af-field textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .af-field input:focus, .af-field select:focus, .af-field textarea:focus, .af-input:focus {
+    outline: 2px solid color-mix(in srgb, var(--af-accent) 35%, transparent); border-color: var(--af-accent);
+  }
+  
+  .af-suggest {
+    position: absolute; top: 100%; left: 0; right: 0; z-index: 5;
+    margin: 2px 0 0; padding: 4px; list-style: none;
+    background: var(--af-bg); border: 1px solid var(--af-border); border-radius: 6px;
+    box-shadow: 0 6px 18px rgb(0 0 0 / 10%);
+  }
+  .af-suggest button {
+    width: 100%; display: flex; justify-content: space-between;
+    padding: 6px 8px; border: 0; border-radius: 4px; background: transparent; cursor: pointer; font: inherit; text-align: left;
+  }
+  .af-suggest button:hover { background: var(--af-surface); }
+  .af-suggest small { color: var(--af-muted); }
+  
+  /* ------------------------------ boutons ------------------------------ */
+  .af-btn {
+    padding: 8px 14px; border: 1px solid var(--af-border); border-radius: 6px;
+    background: var(--af-bg); color: var(--af-text); cursor: pointer; font: inherit; font-weight: 500;
+  }
+  .af-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .af-btn--primary { background: var(--af-accent); border-color: var(--af-accent); color: var(--af-accent-ink); }
+  .af-actions { display: flex; justify-content: space-between; gap: 8px; margin-top: auto; padding-top: 6px; }
+  .af-link { border: 0; background: none; color: var(--af-accent); cursor: pointer; font: inherit; padding: 0; }
+  .af-icon {
+    width: 22px; height: 22px; border: 0; border-radius: 4px;
+    background: transparent; color: var(--af-muted); cursor: pointer; font-size: 15px; line-height: 1;
+  }
+  .af-icon:hover { background: var(--af-err-bg); color: var(--af-err); }
+  
+  /* ------------------------------ messages ------------------------------ */
+  .af-error, .af-warn, .af-ok, .af-muted { margin: 0; font-size: 12px; line-height: 1.45; }
+  .af-error { color: var(--af-err); background: var(--af-err-bg); padding: 7px 9px; border-radius: 6px; }
+  .af-warn { color: var(--af-warn); background: var(--af-warn-bg); padding: 7px 9px; border-radius: 6px; }
+  .af-ok { color: var(--af-ok); }
+  .af-muted { color: var(--af-muted); }
+  .af-report { display: flex; flex-direction: column; gap: 6px; }
+  .af-report p:first-child { margin: 0; font-size: 12px; color: var(--af-muted); }
+  .af-empty { padding: 12px 0; text-align: center; }
+  
+  /* ------------------------------ dépôt fichier ------------------------------ */
+  .af-drop {
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    padding: 26px 14px; border: 1.5px dashed var(--af-border); border-radius: 8px;
+    text-align: center; cursor: pointer; color: var(--af-muted);
+  }
+  .af-drop strong { color: var(--af-text); font-weight: 500; }
+  .af-drop.is-over { border-color: var(--af-accent); background: color-mix(in srgb, var(--af-accent) 6%, transparent); }
+  .af-drop.is-busy { opacity: 0.6; cursor: progress; }
+  
+  /* ------------------------------ panier ------------------------------ */
+  .af-cart { border: 1px solid var(--af-border); border-radius: 8px; overflow: hidden; }
+  .af-cart__head {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 10px; background: var(--af-surface); border-bottom: 1px solid var(--af-border);
+  }
+  .af-cart ul { margin: 0; padding: 0; list-style: none; max-height: 280px; overflow: auto; }
+  .af-cart li {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; border-bottom: 1px solid var(--af-border);
+  }
+  .af-cart li:last-child { border-bottom: 0; }
+  .af-cart li.is-hover { background: var(--af-surface); }
+  .af-cart li.is-deja { background: var(--af-err-bg); }
+  .af-cart__label { flex: 1; display: flex; flex-direction: column; min-width: 0; font-weight: 500; }
+  .af-cart__label small { font-weight: 400; color: var(--af-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .af-cart__surf { color: var(--af-muted); font-variant-numeric: tabular-nums; }
+  .af-dot { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+  .af-dot--ign { background: #0f766e; }
+  .af-dot--import { background: #7c3aed; }
+  .af-dot--deja { background: #dc2626; }
+  
+  /* ------------------------------ contacts ------------------------------ */
+  .af-contacts { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow: auto; }
+  .af-contacts button {
+    width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+    padding: 8px 10px; border: 1px solid var(--af-border); border-radius: 6px;
+    background: var(--af-bg); cursor: pointer; font: inherit; text-align: left;
+  }
+  .af-contacts button span { color: var(--af-muted); font-size: 12px; }
+  .af-contacts button.is-on { border-color: var(--af-accent); background: color-mix(in srgb, var(--af-accent) 6%, transparent); }
+
+  .af-pick { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+  .af-pick button {
+    width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+    padding: 8px 10px; border: 1px solid var(--af-border); border-radius: 8px;
+    background: var(--af-bg); cursor: pointer; font: inherit; text-align: left;
+  }
+  .af-pick button span { color: var(--af-muted); font-size: 12px; }
+  .af-pick button.is-on { border: 2px solid #15803d; background: #f0fdf4; }
+  
+  /* ------------------------------ résumé + table ------------------------------ */
+  .af-summary { display: flex; flex-wrap: wrap; gap: 18px; padding: 10px 12px; background: var(--af-surface); border-radius: 8px; }
+  .af-summary div { display: flex; flex-direction: column; }
+  .af-summary small { color: var(--af-muted); font-size: 11px; }
+  .af-summary strong { font-variant-numeric: tabular-nums; }
+  
+  .af-table-wrap { overflow: auto; border: 1px solid var(--af-border); border-radius: 8px; max-height: 52vh; }
+  .af-table { border-collapse: collapse; width: max-content; min-width: 100%; }
+  .af-table th, .af-table td { padding: 5px 8px; border-bottom: 1px solid var(--af-border); text-align: left; white-space: nowrap; }
+  .af-table th { position: sticky; top: 0; z-index: 1; background: var(--af-surface); font-weight: 500; font-size: 12px; color: var(--af-muted); }
+  .af-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .af-table td input {
+    width: 130px; padding: 4px 6px; border: 1px solid transparent; border-radius: 4px;
+    background: transparent; color: var(--af-text); font: inherit;
+  }
+  .af-table td input:hover { border-color: var(--af-border); }
+  .af-table td input:focus { border-color: var(--af-accent); background: var(--af-bg); outline: none; }
+  .af-table tr.is-hover td { background: var(--af-surface); }
+  .af-table tr.is-deja td { background: var(--af-err-bg); }
+  .af-col span { margin-right: 4px; color: var(--af-text); }
+  .af-col button { border: 0; background: none; color: var(--af-muted); cursor: pointer; padding: 0 2px; font: inherit; }
+  .af-col button:hover { color: var(--af-accent); }
+  .af-col-add input { width: 100px; padding: 3px 6px; border: 1px dashed var(--af-border); border-radius: 4px; background: var(--af-bg); font: inherit; }
+  
+  .af-success { justify-content: center; align-items: flex-start; }
+  .af-success h2 { margin: 0; font-size: 16px; }
+  .af-success p { margin: 0; color: var(--af-muted); }
+  .af-success .af-actions { margin-top: 8px; justify-content: flex-start; }
+  
+  /* ------------------------------ carte ------------------------------ */
+  .af-map-wrap { position: relative; min-height: 0; }
+  .af-map { position: absolute; inset: 0; }
+  .af-map-tools { position: absolute; top: 10px; left: 10px; display: flex; gap: 4px; }
+  .af-map-tools button {
+    padding: 6px 10px; border: 1px solid var(--af-border); border-radius: 6px;
+    background: var(--af-bg); cursor: pointer; font: inherit; font-size: 12px;
+    box-shadow: 0 1px 3px rgb(0 0 0 / 10%);
+  }
+  .af-map-tools button.is-on { border-color: var(--af-accent); color: var(--af-accent); }
+  .af-legend {
+    position: absolute; bottom: 30px; left: 10px; display: flex; gap: 10px;
+    padding: 6px 10px; background: var(--af-bg); border-radius: 6px; font-size: 11px;
+    box-shadow: 0 1px 3px rgb(0 0 0 / 10%);
+  }
+  .af-legend span { display: flex; align-items: center; gap: 5px; }
+  .af-legend i { width: 9px; height: 9px; border-radius: 2px; }
+  
+  @media (max-width: 900px) {
+    .af-root, .af-root.is-wide { grid-template-columns: 1fr; grid-template-rows: auto 45vh; }
+    .af-panel { border-right: 0; border-bottom: 1px solid var(--af-border); }
+  }

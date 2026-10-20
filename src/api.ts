@@ -12,7 +12,7 @@ import {
   RESULTS_LAYERS,
   getResultsLayerDefs,
   type ResultsThematicPreload,
-} from "./components/ResultPanel/MapResults/cartoCouchesRegistry";
+} from "./pages/Etude/ResultPanel/MapResults/cartoCouchesRegistry";
 
 import { getApiBaseUrl, resolveApiUrl } from "./config/apiBase";
 
@@ -448,10 +448,23 @@ export type FilterPipelineBody = {
   /** Distance max (m) au tronçon hydro ; omis ou null = critère ignoré. */
   troncons_hydros_max_dist_m?: number | null;
   surfaces_hydros_max_dist_m?: number | null;
+  same_bassin_versant?: boolean;
+  arrachage_vignes?: boolean;
+  arrachage_vignes_types?: string[];
+  /** false = ne calcule pas les unités foncières après le filtre. */
+  include_unites_foncieres?: boolean;
 };
 
 export async function fetchFilterPhases(): Promise<FilterPhaseInfo[]> {
   const res = await fetch(`${API}/api/filter-phases`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function startUfSearch(
+  projectId: string,
+): Promise<{ status: string; project_id: string }> {
+  const res = await fetch(`${API}/api/projects/${projectId}/filter-uf`, { method: "POST" });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -647,6 +660,39 @@ export type PoolDureteRecomputeResponse = {
   duration_s: number;
 };
 
+export type PoolUrbaRecomputeResponse = {
+  status: string;
+  project_id: string;
+  run_id: string;
+  metric_key: string;
+  updated_count: number;
+  active_idus: number;
+  requested_idus?: number;
+  skipped_indesirables: number;
+  missing_geom: number;
+  wfs_requests: number;
+  errors: string[];
+  duration_s: number;
+};
+
+/** Profil urbanisme GPU — tout le pool actif, ou une sélection d'IDU. */
+export async function computePoolRunUrbanisme(
+  projectId: string,
+  runId: string,
+  idus?: string[] | null,
+): Promise<PoolUrbaRecomputeResponse> {
+  const res = await fetch(
+    `${API}/api/projects/${projectId}/pool/runs/${runId}/recompute-urbanisme`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(idus?.length ? { idus } : {}),
+    },
+  );
+  if (!res.ok) await throwHttpError(res);
+  return res.json();
+}
+
 /** Dureté foncière (attractivité) — tout le pool actif, ou une sélection d'IDU. */
 export async function computePoolRunDurete(
   projectId: string,
@@ -808,7 +854,11 @@ export async function fetchProjectStoredResults(projectId: string): Promise<{
   last_filter_uf: unknown;
 }> {
   const res = await fetch(`${API}/api/projects/${projectId}/results`);
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) {
+    const err = new Error(await res.text()) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
   const data = (await res.json()) as {
     status?: string;
     last_results?: unknown;
@@ -969,6 +1019,18 @@ export async function exportRapportPdf(
   document.body.removeChild(a);
   window.URL.revokeObjectURL(blobUrl);
   return { rssDeltaMb };
+}
+
+export async function fetchUrbaEntitesGeojson(
+  projectId: string,
+  poolRunId: string,
+): Promise<FeatureCollection<Geometry, GeoJsonProperties>> {
+  const res = await fetch(
+    `${API}/api/projects/${projectId}/pool/runs/${poolRunId}/urbanisme-geojson`,
+    { cache: "no-store" },
+  );
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
 }
 
 export async function fetchResultsLayerGeojson(

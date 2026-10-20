@@ -1,6 +1,6 @@
-import { IndesirablesTable } from "../../components/ResultPanel/IndesirablesTable";
-import { RankingTable } from "../../components/ResultPanel/RankingTable";
-import { UnitesFoncieresTable } from "../../components/ResultPanel/UnitesFoncieresTable";
+import { IndesirablesTable } from "./ResultPanel/IndesirablesTable";
+import { RankingTable } from "./ResultPanel/RankingTable";
+import { UnitesFoncieresTable } from "./ResultPanel/UnitesFoncieresTable";
 import type { FilterResponse, ParcelleResult, ParcelPoolMetricRow, RankingSortKey, UfFilterResponse } from "../../types";
 
 type RankingShared = {
@@ -8,10 +8,13 @@ type RankingShared = {
   poolRunId: string | null;
   poolMetricsByIdu: Record<string, ParcelPoolMetricRow[]> | null;
   rankingSortKey: RankingSortKey;
+  rankingSortDir?: "asc" | "desc";
   onRankingSortChange: (k: RankingSortKey) => void;
   scrollToIdu: string | null;
   scrollTableNonce: number;
+  detailFocus?: { idu: string; tab: "durete" | "urbanisme"; nonce: number } | null;
   selectedIdu: string | null;
+  hoverIdu: string | null;
   onRowActivate: (idu: string) => void;
   onHover: (idu: string | null) => void;
   showZoneHumideColumn: boolean;
@@ -34,6 +37,8 @@ type ParcellesTableProps = RankingShared & {
   onBatchMarkIndesirable: (idus: string[]) => Promise<void>;
   onRunDureteFonciere: (idus?: string[]) => void | Promise<void>;
   dureteFonciereLoading: boolean;
+  onRunUrbanisme: (idus?: string[]) => void | Promise<void>;
+  urbanismeLoading: boolean;
   onAddParcelles: (idus: string[]) => void | Promise<void>;
   addParcellesLoading: boolean;
   indesirableParcelles: FilterResponse["parcelles"];
@@ -72,16 +77,21 @@ export function EtudeResultatsParcellesTable({
   isPoolMetricsPending,
   poolMetricsOverlayText,
   rankingSortKey,
+  rankingSortDir = "desc",
   onRankingSortChange,
   scrollToIdu,
   scrollTableNonce,
+  detailFocus = null,
   selectedIdu,
+  hoverIdu,
   onRowActivate,
   onHover,
   onMarkIndesirable,
   onBatchMarkIndesirable,
   onRunDureteFonciere,
   dureteFonciereLoading,
+  onRunUrbanisme,
+  urbanismeLoading,
   onAddParcelles,
   addParcellesLoading,
   showZoneHumideColumn,
@@ -93,7 +103,7 @@ export function EtudeResultatsParcellesTable({
 }: ParcellesTableProps) {
   const metricsLoading = !!poolRunId && poolMetricsByIdu === null;
   return (
-    <div className="results-split__table">
+    <div className="results-split__table-fill">
       <div className="results-split__table-inner">
         <div className={`ranking-table-shell${isPoolMetricsPending ? " ranking-table-shell--loading" : ""}`}>
           <RankingTable
@@ -104,16 +114,21 @@ export function EtudeResultatsParcellesTable({
             poolMetricsByIdu={poolMetricsByIdu}
             poolMetricsLoading={metricsLoading}
             rankingSortKey={rankingSortKey}
+            rankingSortDir={rankingSortDir}
             onRankingSortChange={onRankingSortChange}
             scrollToIdu={scrollToIdu}
             scrollTableNonce={scrollTableNonce}
+            detailFocus={detailFocus}
             selectedIdu={selectedIdu}
+            hoverIdu={hoverIdu}
             onRowActivate={onRowActivate}
             onHover={onHover}
             onMarkIndesirable={onMarkIndesirable}
             onBatchMarkIndesirable={onBatchMarkIndesirable}
             onRunDureteFonciere={onRunDureteFonciere}
             dureteFonciereLoading={dureteFonciereLoading}
+            onRunUrbanisme={onRunUrbanisme}
+            urbanismeLoading={urbanismeLoading}
             onAddParcelles={onAddParcelles}
             addParcellesLoading={addParcellesLoading}
             showZoneHumideColumn={showZoneHumideColumn}
@@ -148,6 +163,9 @@ export function EtudeResultatsParcellesTable({
             onRestore={onRestoreIndesirable}
             onRowActivate={onRowActivate}
             onHover={onHover}
+            hoverIdu={hoverIdu}
+            scrollToIdu={scrollToIdu}
+            scrollTableNonce={scrollTableNonce}
           />
         )}
       </div>
@@ -160,10 +178,12 @@ export function EtudeResultatsCombinedTable({
   poolRunId,
   poolMetricsByIdu,
   rankingSortKey,
+  rankingSortDir = "desc",
   onRankingSortChange,
   scrollToIdu,
   scrollTableNonce,
   selectedIdu,
+  hoverIdu,
   onRowActivate,
   onHover,
   showZoneHumideColumn,
@@ -171,7 +191,7 @@ export function EtudeResultatsCombinedTable({
   showSurfaceHydroColumn,
 }: CombinedTableProps) {
   return (
-    <div className="results-split__table">
+    <div className="results-split__table-fill">
       <div className="results-split__table-inner">
         <div className="ranking-table-shell">
           <RankingTable
@@ -182,10 +202,12 @@ export function EtudeResultatsCombinedTable({
             poolMetricsByIdu={poolMetricsByIdu}
             poolMetricsLoading={!!poolRunId && poolMetricsByIdu === null}
             rankingSortKey={rankingSortKey}
+            rankingSortDir={rankingSortDir}
             onRankingSortChange={onRankingSortChange}
             scrollToIdu={scrollToIdu}
             scrollTableNonce={scrollTableNonce}
             selectedIdu={selectedIdu}
+            hoverIdu={hoverIdu}
             onRowActivate={onRowActivate}
             onHover={onHover}
             onMarkIndesirable={undefined}
@@ -211,7 +233,7 @@ export function EtudeResultatsUnitesTable({
   onUfHover,
 }: UnitesTableProps) {
   return (
-    <div className="results-split__table">
+    <div className="results-split__table-fill">
       <div className="results-split__table-inner">
         <UnitesFoncieresTable
           ufResults={ufResults}

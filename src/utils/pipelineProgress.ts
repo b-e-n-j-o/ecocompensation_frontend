@@ -20,7 +20,7 @@ export const SUBSTEP_LABELS: Record<SubStepKey, string> = {
 
 export const MAIN_STAGE_LABELS: Record<MainStageKey, string> = {
   parcelles: "Parcelles seules",
-  uf: "Unités foncières personnes morales",
+  uf: "Groupement de parcelles de personnes morales",
 };
 
 const SUBSTEP_ORDER: SubStepKey[] = ["analyse", "sol", "fauna"];

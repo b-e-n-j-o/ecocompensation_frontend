@@ -1,7 +1,13 @@
 import { CESBIO_LIBELLES, CESBIO_LIBELLE_COLORS } from "../../types";
-import type { CesbioLibelle } from "../../types";
+import type { CesbioLibelle, ZoneHumideMode } from "../../types";
 import { FaunaSpeciesPicker } from "../../components/FilterPanel/FaunaSpeciesPicker";
 import { SelectNationalExclusions } from "./SelectNationalExclusions";
+
+const ZH_MODE_OPTIONS: { value: ZoneHumideMode; label: string }[] = [
+  { value: "ignore", label: "Ignorer" },
+  { value: "intersect", label: "Intersecter" },
+  { value: "exclude", label: "Exclure" },
+];
 
 export type FaunaFilterCriterion = {
   species: string;
@@ -23,10 +29,36 @@ type Props = {
   onFaunaSpeciesChange: (v: string[]) => void;
   faunaDistM: number;
   onFaunaDistMChange: (v: number) => void;
+  zoneHumideMode: ZoneHumideMode;
+  onZoneHumideModeChange: (v: ZoneHumideMode) => void;
+  minZoneHumideHa: number;
+  onMinZoneHumideHaChange: (v: number) => void;
+  zonesHumidesProbablesMode: ZoneHumideMode;
+  onZonesHumidesProbablesModeChange: (v: ZoneHumideMode) => void;
+  tronconsHydroEnabled: boolean;
+  onTronconsHydroEnabledChange: (v: boolean) => void;
+  tronconsHydroMaxDistM: number;
+  onTronconsHydroMaxDistMChange: (v: number) => void;
+  surfacesHydroEnabled: boolean;
+  onSurfacesHydroEnabledChange: (v: boolean) => void;
+  surfacesHydroMaxDistM: number;
+  onSurfacesHydroMaxDistMChange: (v: number) => void;
+  sameBassinVersant: boolean;
+  onSameBassinVersantChange: (v: boolean) => void;
+  arrachageVignes: boolean;
+  onArrachageVignesChange: (v: boolean) => void;
+  arrachageVignesTypes: string[];
+  onArrachageVignesTypesChange: (v: string[]) => void;
   excludedLayers: string[];
   onExcludedLayersChange: (v: string[]) => void;
   disabled?: boolean;
 };
+
+const ARRACHAGE_TYPES = [
+  "diversification",
+  "renaturation (boisements)",
+  "renaturation (jachères)",
+] as const;
 
 export function SelectFilterCriteria({
   minAreaHa,
@@ -43,6 +75,26 @@ export function SelectFilterCriteria({
   onFaunaSpeciesChange,
   faunaDistM,
   onFaunaDistMChange,
+  zoneHumideMode,
+  onZoneHumideModeChange,
+  minZoneHumideHa,
+  onMinZoneHumideHaChange,
+  zonesHumidesProbablesMode,
+  onZonesHumidesProbablesModeChange,
+  tronconsHydroEnabled,
+  onTronconsHydroEnabledChange,
+  tronconsHydroMaxDistM,
+  onTronconsHydroMaxDistMChange,
+  surfacesHydroEnabled,
+  onSurfacesHydroEnabledChange,
+  surfacesHydroMaxDistM,
+  onSurfacesHydroMaxDistMChange,
+  sameBassinVersant,
+  onSameBassinVersantChange,
+  arrachageVignes,
+  onArrachageVignesChange,
+  arrachageVignesTypes,
+  onArrachageVignesTypesChange,
   excludedLayers,
   onExcludedLayersChange,
   disabled = false,
@@ -58,6 +110,40 @@ export function SelectFilterCriteria({
   return (
     <div className="eco-filter-criteria">
       <div className="eco-filter-block eco-filter-block--first">
+        <h3 className="eco-filter-block-title">Présence d&apos;espèce(s)</h3>
+        <FaunaSpeciesPicker
+          selectedSpecies={faunaSpecies}
+          onChange={(next) => {
+            onFaunaSpeciesChange(next);
+            onFaunaEnabledChange(next.length > 0);
+          }}
+          disabled={disabled}
+          compact
+        />
+        <div
+          className={`eco-aoi-slider${faunaSpecies.length === 0 ? " is-muted" : ""}`}
+          style={{ marginTop: "0.65rem" }}
+        >
+          <div className="eco-aoi-slider-head">
+            <span className="eco-aoi-label">Distance</span>
+            <span className="eco-aoi-slider-value">{faunaDistM.toFixed(0)} m</span>
+          </div>
+          <input
+            type="range"
+            min={100}
+            max={5000}
+            step={100}
+            value={faunaDistM}
+            disabled={disabled || faunaSpecies.length === 0}
+            onChange={(e) => onFaunaDistMChange(Number(e.target.value))}
+          />
+          <p className="eco-aoi-slider-caption">
+            Distance maximale entre une observation et une parcelle retenue par le filtre.
+          </p>
+        </div>
+      </div>
+
+      <div className="eco-filter-block">
         <h3 className="eco-filter-block-title">Filtre géométrique</h3>
         <div className="eco-aoi-slider">
           <div className="eco-aoi-slider-head">
@@ -133,40 +219,186 @@ export function SelectFilterCriteria({
       </div>
 
       <div className="eco-filter-block">
+        <h3 className="eco-filter-block-title">Zones humides</h3>
+        <p className="eco-layer-row__meta" style={{ margin: "0 0 0.65rem" }}>
+          Optionnel. Laisser sur Ignorer pour ne pas filtrer.
+        </p>
+        <fieldset className="eco-zh-fieldset" disabled={disabled}>
+          <legend className="eco-aoi-label">Zones humides établies</legend>
+          <div className="eco-zh-modes">
+            {ZH_MODE_OPTIONS.map((opt) => (
+              <label key={opt.value} className="eco-zh-mode">
+                <input
+                  type="radio"
+                  name="faune-zone-humide-mode"
+                  value={opt.value}
+                  checked={zoneHumideMode === opt.value}
+                  onChange={() => onZoneHumideModeChange(opt.value)}
+                />
+                {opt.label}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        {zoneHumideMode === "intersect" && (
+          <div className="eco-aoi-slider eco-filter-nested">
+            <div className="eco-aoi-slider-head">
+              <span className="eco-aoi-label">Surface minimale de zone humide</span>
+              <span className="eco-aoi-slider-value">
+                {minZoneHumideHa <= 0 ? "Toute intersection" : `${minZoneHumideHa.toFixed(2)} ha`}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={20}
+              step={0.05}
+              value={minZoneHumideHa}
+              disabled={disabled}
+              onChange={(e) => onMinZoneHumideHaChange(Number(e.target.value))}
+            />
+          </div>
+        )}
+        <fieldset className="eco-zh-fieldset" disabled={disabled} style={{ marginTop: "0.75rem" }}>
+          <legend className="eco-aoi-label">Zones humides probables</legend>
+          <div className="eco-zh-modes">
+            {ZH_MODE_OPTIONS.map((opt) => (
+              <label key={opt.value} className="eco-zh-mode">
+                <input
+                  type="radio"
+                  name="faune-zones-humides-probables-mode"
+                  value={opt.value}
+                  checked={zonesHumidesProbablesMode === opt.value}
+                  onChange={() => onZonesHumidesProbablesModeChange(opt.value)}
+                />
+                {opt.label}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      </div>
+
+      <div className="eco-filter-block">
+        <h3 className="eco-filter-block-title">Bassin versant</h3>
+        <p className="eco-layer-row__meta" style={{ margin: "0 0 0.55rem" }}>
+          Optionnel. Uniquement les bassins versants qui touchent le foncier déposé.
+        </p>
         <button
           type="button"
-          className={`eco-filter-block-toggle${faunaEnabled ? " is-on" : ""}`}
+          className={`eco-layer-row eco-layer-row--inset${sameBassinVersant ? " is-on" : ""}`}
           disabled={disabled}
-          aria-pressed={faunaEnabled}
-          onClick={() => onFaunaEnabledChange(!faunaEnabled)}
+          aria-pressed={sameBassinVersant}
+          onClick={() => onSameBassinVersantChange(!sameBassinVersant)}
         >
-          <span className={`eco-dot${faunaEnabled ? " is-on" : ""}`} aria-hidden />
-          <h3 className="eco-filter-block-title">Présence d&apos;espèce(s)</h3>
+          <span className={`eco-dot${sameBassinVersant ? " is-on" : ""}`} aria-hidden />
+          <span className="eco-layer-row__label">Même bassin versant que le projet</span>
         </button>
+      </div>
 
-        {faunaEnabled && (
-          <div className="eco-filter-nested">
-            <FaunaSpeciesPicker
-              selectedSpecies={faunaSpecies}
-              onChange={onFaunaSpeciesChange}
-              disabled={disabled}
-              compact
-            />
-            <div className="eco-aoi-slider" style={{ marginTop: "0.65rem" }}>
-              <div className="eco-aoi-slider-head">
-                <span className="eco-aoi-label">Distance max</span>
-                <span className="eco-aoi-slider-value">{faunaDistM.toFixed(0)} m</span>
-              </div>
-              <input
-                type="range"
-                min={100}
-                max={5000}
-                step={100}
-                value={faunaDistM}
-                disabled={disabled}
-                onChange={(e) => onFaunaDistMChange(Number(e.target.value))}
-              />
+      <div className="eco-filter-block">
+        <h3 className="eco-filter-block-title">Hydrographie</h3>
+        <p className="eco-layer-row__meta" style={{ margin: "0 0 0.65rem" }}>
+          Optionnel. Cours d’eau et plans d’eau, seuls ou combinés aux autres critères.
+        </p>
+        <button
+          type="button"
+          className={`eco-layer-row eco-layer-row--inset${tronconsHydroEnabled ? " is-on" : ""}`}
+          disabled={disabled}
+          aria-pressed={tronconsHydroEnabled}
+          onClick={() => onTronconsHydroEnabledChange(!tronconsHydroEnabled)}
+        >
+          <span className={`eco-dot${tronconsHydroEnabled ? " is-on" : ""}`} aria-hidden />
+          <span className="eco-layer-row__label">Cours d&apos;eau</span>
+        </button>
+        {tronconsHydroEnabled && (
+          <div className="eco-aoi-slider eco-filter-nested">
+            <div className="eco-aoi-slider-head">
+              <span className="eco-aoi-label">Distance max</span>
+              <span className="eco-aoi-slider-value">
+                {tronconsHydroMaxDistM <= 0 ? "Intersection" : `${tronconsHydroMaxDistM.toFixed(0)} m`}
+              </span>
             </div>
+            <input
+              type="range"
+              min={0}
+              max={2000}
+              step={25}
+              value={tronconsHydroMaxDistM}
+              disabled={disabled}
+              onChange={(e) => onTronconsHydroMaxDistMChange(Number(e.target.value))}
+            />
+          </div>
+        )}
+        <button
+          type="button"
+          className={`eco-layer-row eco-layer-row--inset${surfacesHydroEnabled ? " is-on" : ""}`}
+          disabled={disabled}
+          aria-pressed={surfacesHydroEnabled}
+          onClick={() => onSurfacesHydroEnabledChange(!surfacesHydroEnabled)}
+        >
+          <span className={`eco-dot${surfacesHydroEnabled ? " is-on" : ""}`} aria-hidden />
+          <span className="eco-layer-row__label">Plans d&apos;eau</span>
+        </button>
+        {surfacesHydroEnabled && (
+          <div className="eco-aoi-slider eco-filter-nested">
+            <div className="eco-aoi-slider-head">
+              <span className="eco-aoi-label">Distance max</span>
+              <span className="eco-aoi-slider-value">
+                {surfacesHydroMaxDistM <= 0 ? "Intersection" : `${surfacesHydroMaxDistM.toFixed(0)} m`}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={2000}
+              step={25}
+              value={surfacesHydroMaxDistM}
+              disabled={disabled}
+              onChange={(e) => onSurfacesHydroMaxDistMChange(Number(e.target.value))}
+            />
+          </div>
+        )}
+      </div>
+
+      <div className="eco-filter-block">
+        <h3 className="eco-filter-block-title">Arrachage de vignes</h3>
+        <p className="eco-layer-row__meta" style={{ margin: "0 0 0.65rem" }}>
+          Optionnel. Sans type coché, toute intersection compte.
+        </p>
+        <button
+          type="button"
+          className={`eco-layer-row eco-layer-row--inset${arrachageVignes ? " is-on" : ""}`}
+          disabled={disabled}
+          aria-pressed={arrachageVignes}
+          onClick={() => onArrachageVignesChange(!arrachageVignes)}
+        >
+          <span className={`eco-dot${arrachageVignes ? " is-on" : ""}`} aria-hidden />
+          <span className="eco-layer-row__label">Arrachage de vignes</span>
+        </button>
+        {arrachageVignes && (
+          <div className="eco-filter-nested">
+            {ARRACHAGE_TYPES.map((type) => {
+              const on = arrachageVignesTypes.includes(type);
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  className={`eco-layer-row eco-layer-row--class${on ? " is-on" : ""}`}
+                  disabled={disabled}
+                  aria-pressed={on}
+                  onClick={() =>
+                    onArrachageVignesTypesChange(
+                      on
+                        ? arrachageVignesTypes.filter((x) => x !== type)
+                        : [...arrachageVignesTypes, type],
+                    )
+                  }
+                >
+                  <span className={`eco-dot${on ? " is-on" : ""}`} aria-hidden />
+                  <span className="eco-layer-row__label">{type}</span>
+                </button>
+              );
+            })}
           </div>
         )}
       </div>

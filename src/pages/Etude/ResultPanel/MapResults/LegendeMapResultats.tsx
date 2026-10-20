@@ -25,6 +25,8 @@ interface LegendeMapResultatsProps {
   };
   bulkLoading?: boolean;
   onToggleValue?: (layerKey: string, value: string) => void;
+  /** Sans cadre ni titre : contenu seul, à placer dans un onglet. */
+  embedded?: boolean;
 }
 
 export function LegendeMapResultats({
@@ -34,6 +36,7 @@ export function LegendeMapResultats({
   primaryLayer,
   bulkLoading = false,
   onToggleValue,
+  embedded = false,
 }: LegendeMapResultatsProps) {
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
 
@@ -59,10 +62,8 @@ export function LegendeMapResultats({
     return DISCRIMINANT_PALETTE[(idx >= 0 ? idx : 0) % DISCRIMINANT_PALETTE.length];
   }
 
-  return (
-    <div className="map-legende">
-      <div className="map-legende__head">Couches</div>
-
+  const body = (
+    <>
       {bulkLoading && (
         <div className="map-legende__busy" role="status" aria-live="polite">
           <span className="parcelles-map-spinner" aria-hidden />
@@ -183,6 +184,15 @@ export function LegendeMapResultats({
           );
         })}
       </ul>
+    </>
+  );
+
+  if (embedded) return body;
+
+  return (
+    <div className="map-legende">
+      <div className="map-legende__head">Couches</div>
+      {body}
     </div>
   );
 }

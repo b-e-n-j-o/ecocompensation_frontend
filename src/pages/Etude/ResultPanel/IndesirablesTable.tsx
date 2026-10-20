@@ -1,7 +1,7 @@
 // ─── Table des parcelles « pool indésirables » (sous le classement principal) ─
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { exportCsv, exportShp } from "../../api";
-import type { ParcelleResult, ParcelPoolMetricRow } from "../../types";
+import { exportCsv, exportShp } from "../../../api";
+import type { ParcelleResult, ParcelPoolMetricRow } from "../../../types";
 import { RankingLine } from "./RankingLine";
 
 const COL_SPAN_DETAIL = 9;
@@ -33,6 +33,9 @@ interface IndesirablesTableProps {
   onRestore: (idu: string) => void;
   onRowActivate?: (idu: string) => void;
   onHover?: (idu: string | null) => void;
+  hoverIdu?: string | null;
+  scrollToIdu?: string | null;
+  scrollTableNonce?: number;
 }
 
 export function IndesirablesTable({
@@ -44,6 +47,9 @@ export function IndesirablesTable({
   onRestore,
   onRowActivate,
   onHover,
+  hoverIdu = null,
+  scrollToIdu = null,
+  scrollTableNonce = 0,
 }: IndesirablesTableProps) {
   const [hoveredIdu, setHoveredIdu] = useState<string | null>(null);
   const [expandedIdus, setExpandedIdus] = useState<Set<string>>(() => new Set());
@@ -58,6 +64,43 @@ export function IndesirablesTable({
   useEffect(() => {
     setExpandedIdus(new Set());
   }, [identity]);
+
+  useEffect(() => {
+    if (!scrollToIdu) return;
+    if (!parcelles.some((p) => p.idu === scrollToIdu)) return;
+    setExpandedIdus(new Set([scrollToIdu]));
+    const idu = scrollToIdu;
+    const timer = window.setTimeout(() => {
+      const row = document.getElementById(`row-parcelle-indesirable-${idu}`);
+      row?.scrollIntoView({ block: "start" });
+    }, 50);
+    return () => window.clearTimeout(timer);
+  }, [scrollToIdu, scrollTableNonce, parcelles]);
+
+  useEffect(() => {
+    if (!hoverIdu || hoverIdu === hoveredIdu) return;
+    if (!parcelles.some((p) => p.idu === hoverIdu)) return;
+    const idu = hoverIdu;
+    const timer = window.setTimeout(() => {
+      const row = document.getElementById(`row-parcelle-indesirable-${idu}`);
+      if (!row) return;
+      const container =
+        (row.closest(".results-split__table-inner") as HTMLElement | null) ??
+        (row.closest(".ranking-table-scroll") as HTMLElement | null);
+      if (!container) {
+        row.scrollIntoView({ block: "nearest" });
+        return;
+      }
+      const containerRect = container.getBoundingClientRect();
+      const rowRect = row.getBoundingClientRect();
+      const visible = rowRect.bottom > containerRect.top + 4 && rowRect.top < containerRect.bottom - 4;
+      if (visible) return;
+      const top = rowRect.top - containerRect.top + container.scrollTop;
+      const target = top - container.clientHeight / 2 + rowRect.height / 2;
+      container.scrollTo({ top: Math.max(0, target) });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [hoverIdu, hoveredIdu, parcelles]);
 
   function handleClick(idu: string) {
     onRowActivate?.(idu);
@@ -160,7 +203,7 @@ export function IndesirablesTable({
           </thead>
           <tbody>
             {parcelles.map((p, idx) => {
-              const isHovered = hoveredIdu === p.idu;
+              const isHovered = hoveredIdu === p.idu || hoverIdu === p.idu;
               const isSelected = expandedIdus.has(p.idu);
               const ref = parseIdu(p.idu, p.code_insee);
 
@@ -238,6 +281,8 @@ export function IndesirablesTable({
                           }
                           metricsLoading={poolMetricsLoading}
                           noPoolRun={!poolRunId}
+                          parcelSurfaceHa={p.surface_ha}
+                          onShowOnMap={onRowActivate}
                         />
                       </td>
                     </tr>

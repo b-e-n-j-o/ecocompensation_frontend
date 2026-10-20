@@ -1,7 +1,7 @@
 // ─── RankingTable ─────────────────────────────────────────────────────────────
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { exportCsv, exportRapportPdf, exportShp } from "../../api";
-import type { ParcelleResult, ParcelPoolMetricRow, RankingSortKey } from "../../types";
+import { exportCsv, exportRapportPdf, exportShp } from "../../../api";
+import type { ParcelleResult, ParcelPoolMetricRow, RankingSortKey } from "../../../types";
 import {
   type FaunaTableEntry,
   compositeBadgeStyle,
@@ -11,13 +11,42 @@ import {
   getDureteFonciereMetric,
   getFaunaTableEntries,
   getPersonnesMoralesMetric,
-} from "../../utils/poolMetrics";
+} from "../../../utils/poolMetrics";
+import { AppDialog } from "./AppDialog";
 import { RankingLine } from "./RankingLine";
 
 const PAGE_SIZE = 50;
 
-/** Colonnes fixes : #, éco, dureté, composite, surface, dist espèce, espèce, dist projet, IDU, PM, prospect. */
-const RANKING_BASE_COL_COUNT = 11;
+function SortTh({
+  label,
+  sortKey,
+  activeKey,
+  dir,
+  onSort,
+  className,
+  title,
+}: {
+  label: string;
+  sortKey: RankingSortKey;
+  activeKey: RankingSortKey;
+  dir: "asc" | "desc";
+  onSort: (key: RankingSortKey) => void;
+  className?: string;
+  title?: string;
+}) {
+  const active = activeKey === sortKey;
+  return (
+    <th className={className} title={title}>
+      <button type="button" className={`ranking-sort-th${active ? " is-active" : ""}`} onClick={() => onSort(sortKey)}>
+        {label}
+        {active ? (dir === "asc" ? " ↑" : " ↓") : ""}
+      </button>
+    </th>
+  );
+}
+
+/** Colonnes fixes : #, éco, dureté, composite, surface, dist espèce, espèce, dist projet, PM, déjà compensé. */
+const RANKING_BASE_COL_COUNT = 10;
 
 interface RankingTableProps {
   parcelles: ParcelleResult[];
@@ -25,21 +54,29 @@ interface RankingTableProps {
   poolMetricsByIdu: Record<string, ParcelPoolMetricRow[]> | null;
   poolMetricsLoading: boolean;
   rankingSortKey: RankingSortKey;
+  rankingSortDir?: "asc" | "desc";
   onRankingSortChange: (k: RankingSortKey) => void;
   onHover?: (idu: string | null) => void;
   onSelect?: (idu: string | null) => void;
   /** Clic ligne : focus carte (App). */
   onRowActivate?: (idu: string) => void;
   selectedIdu?: string | null;
+  /** Survol carte ou tableau : surligne la ligne même si le pointeur n'est pas dessus. */
+  hoverIdu?: string | null;
   scrollToIdu?: string | null;
   /** Compteur pour rejouer le scroll vers la même parcelle (clic carte). */
   scrollTableNonce?: number;
+  /** Ouvre la ligne et l’onglet après un calcul de dureté ou d’urbanisme. */
+  detailFocus?: { idu: string; tab: "durete" | "urbanisme"; nonce: number } | null;
   onMarkIndesirable?: (idu: string) => void;
   /** Filtrage manuel : envoyer plusieurs IDU vers les indésirables. */
   onBatchMarkIndesirable?: (idus: string[]) => Promise<void>;
   /** Calcule la dureté foncière : tout le pool, ou les IDU fournis. */
   onRunDureteFonciere?: (idus?: string[]) => void | Promise<void>;
   dureteFonciereLoading?: boolean;
+  /** Profil urbanisme GPU : tout le pool, ou les IDU fournis. */
+  onRunUrbanisme?: (idus?: string[]) => void | Promise<void>;
+  urbanismeLoading?: boolean;
   /** Ajoute des IDU au pool (proposition foncière reçue après le calcul). */
   onAddParcelles?: (idus: string[]) => void | Promise<void>;
   addParcellesLoading?: boolean;
@@ -98,6 +135,25 @@ function formatFaunaDistanceM(distM: number): string {
   return `${Math.round(distM).toLocaleString("fr-FR")} m`;
 }
 
+function scrollTableRowIntoViewIfNeeded(rowId: string) {
+  const row = document.getElementById(rowId);
+  if (!row) return;
+  const container =
+    (row.closest(".results-split__table-inner") as HTMLElement | null) ??
+    (row.closest(".ranking-table-scroll") as HTMLElement | null);
+  if (!container) {
+    row.scrollIntoView({ block: "nearest" });
+    return;
+  }
+  const containerRect = container.getBoundingClientRect();
+  const rowRect = row.getBoundingClientRect();
+  const visible = rowRect.bottom > containerRect.top + 4 && rowRect.top < containerRect.bottom - 4;
+  if (visible) return;
+  const top = rowRect.top - containerRect.top + container.scrollTop;
+  const target = top - container.clientHeight / 2 + rowRect.height / 2;
+  container.scrollTo({ top: Math.max(0, target) });
+}
+
 function scrollTableRowToTop(idu: string) {
   const row = document.getElementById(`row-parcelle-${idu}`);
   if (!row) return;
@@ -146,17 +202,22 @@ export function RankingTable({
   poolMetricsByIdu,
   poolMetricsLoading,
   rankingSortKey,
+  rankingSortDir = "desc",
   onRankingSortChange,
   onHover,
   onSelect,
   onRowActivate,
   selectedIdu,
+  hoverIdu = null,
   scrollToIdu,
   scrollTableNonce = 0,
+  detailFocus = null,
   onMarkIndesirable,
   onBatchMarkIndesirable,
   onRunDureteFonciere,
   dureteFonciereLoading = false,
+  onRunUrbanisme,
+  urbanismeLoading = false,
   onAddParcelles,
   addParcellesLoading = false,
   projectId,
@@ -172,17 +233,31 @@ export function RankingTable({
   const [exporting, setExporting] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
   const [lastPdfRssDeltaMb, setLastPdfRssDeltaMb] = useState<number | null>(null);
-  const [toolsOpen, setToolsOpen] = useState(() => parcelles.length === 0);
-  const [selectionIntent, setSelectionIntent] = useState<"indesirables" | "durete" | null>(null);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+  const [scoringsOpen, setScoringsOpen] = useState(false);
+  const [selectionIntent, setSelectionIntent] = useState<"indesirables" | "durete" | "urbanisme" | null>(null);
   const [checkedIdus, setCheckedIdus] = useState<Set<string>>(() => new Set());
   const [applyingSelection, setApplyingSelection] = useState(false);
   const [addDraft, setAddDraft] = useState("");
   const [addPanelOpen, setAddPanelOpen] = useState(false);
   const [dureteMenuOpen, setDureteMenuOpen] = useState(false);
+  const [urbaMenuOpen, setUrbaMenuOpen] = useState(false);
+  const [pendingPoolRun, setPendingPoolRun] = useState<"durete" | "urbanisme" | null>(null);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
 
   const selectionMode = selectionIntent != null;
   const manualSelectionEnabled = !!(onBatchMarkIndesirable && poolRunId && projectId);
+  const pmIdus = useMemo(() => {
+    const next = new Set<string>();
+    for (const p of parcelles) {
+      if (getPersonnesMoralesMetric(poolMetricsByIdu?.[p.idu])?.intersects_pm_database === true) {
+        next.add(p.idu);
+      }
+    }
+    return next;
+  }, [parcelles, poolMetricsByIdu]);
 
   const parcellesIdentity = useMemo(
     () => [...parcelles].map((p) => p.idu).sort().join("|"),
@@ -196,7 +271,9 @@ export function RankingTable({
     setCheckedIdus(new Set());
     setAddPanelOpen(false);
     setDureteMenuOpen(false);
+    setUrbaMenuOpen(false);
     setExportMenuOpen(false);
+    setPendingPoolRun(null);
   }, [parcellesIdentity]);
 
   useEffect(() => {
@@ -204,17 +281,39 @@ export function RankingTable({
     const idx = parcelles.findIndex((p) => p.idu === scrollToIdu);
     if (idx === -1) return;
     setVisibleCount((prev) => Math.max(prev, idx + 1));
-    setExpandedIdus((prev) => new Set(prev).add(scrollToIdu));
+    setExpandedIdus(new Set([scrollToIdu]));
     const iduToScroll = scrollToIdu;
     window.setTimeout(() => {
       scrollTableRowToTop(iduToScroll);
     }, 50);
   }, [scrollToIdu, scrollTableNonce, parcelles]);
 
+  useEffect(() => {
+    if (!detailFocus) return;
+    const idx = parcelles.findIndex((p) => p.idu === detailFocus.idu);
+    if (idx === -1) return;
+    setVisibleCount((prev) => Math.max(prev, idx + 1));
+    setExpandedIdus(new Set([detailFocus.idu]));
+    const iduToScroll = detailFocus.idu;
+    window.setTimeout(() => {
+      scrollTableRowToTop(iduToScroll);
+    }, 50);
+  }, [detailFocus, parcelles]);
+
   function handleHover(idu: string | null) {
     setHoveredIdu(idu);
     onHover?.(idu);
   }
+
+  useEffect(() => {
+    if (!hoverIdu || hoverIdu === hoveredIdu) return;
+    const idx = parcelles.findIndex((p) => p.idu === hoverIdu);
+    if (idx < 0) return;
+    if (idx >= visibleCount) setVisibleCount(idx + 1);
+    const idu = hoverIdu;
+    const timer = window.setTimeout(() => scrollTableRowIntoViewIfNeeded(`row-parcelle-${idu}`), 0);
+    return () => window.clearTimeout(timer);
+  }, [hoverIdu, hoveredIdu, parcelles, visibleCount]);
 
   function handleClick(idu: string) {
     onRowActivate?.(idu);
@@ -242,12 +341,13 @@ export function RankingTable({
     setCheckedIdus(new Set());
   }
 
-  function enterSelection(intent: "indesirables" | "durete") {
+  function enterSelection(intent: "indesirables" | "durete" | "urbanisme") {
     setSelectionIntent(intent);
     setCheckedIdus(new Set());
     setToolsOpen(false);
     setAddPanelOpen(false);
     setDureteMenuOpen(false);
+    setUrbaMenuOpen(false);
     setExportMenuOpen(false);
   }
 
@@ -312,19 +412,43 @@ export function RankingTable({
       alert("Cochez au moins une parcelle pour calculer la dureté foncière.");
       return;
     }
-    const idus = [...checkedIdus];
+    const idus = [...checkedIdus].filter((idu) => pmIdus.has(idu));
+    if (!idus.length) {
+      alert("Aucune parcelle personne morale cochée. La dureté foncière ne s’applique qu’aux PM.");
+      return;
+    }
     exitSelectionMode();
     await onRunDureteFonciere(idus);
   }
 
+  async function handleUrbaSelected() {
+    if (!onRunUrbanisme) return;
+    if (checkedIdus.size === 0) {
+      alert("Cochez au moins une parcelle pour le profil urbanisme.");
+      return;
+    }
+    const idus = [...checkedIdus];
+    exitSelectionMode();
+    await onRunUrbanisme(idus);
+  }
+
+  function handleUrbaAll() {
+    if (!onRunUrbanisme) return;
+    setUrbaMenuOpen(false);
+    setPendingPoolRun("urbanisme");
+  }
+
   function handleDureteAll() {
     if (!onRunDureteFonciere) return;
-    const ok = window.confirm(
-      `Calculer la dureté foncière pour les ${parcelles.length} parcelle(s) du classement (hors indésirables) ?`,
-    );
-    if (!ok) return;
     setDureteMenuOpen(false);
-    void onRunDureteFonciere();
+    setPendingPoolRun("durete");
+  }
+
+  function confirmPendingPoolRun() {
+    const kind = pendingPoolRun;
+    setPendingPoolRun(null);
+    if (kind === "urbanisme") void onRunUrbanisme?.();
+    if (kind === "durete") void onRunDureteFonciere?.();
   }
 
   async function handleAddParcellesSubmit() {
@@ -375,63 +499,60 @@ export function RankingTable({
   const surfaceActive = showSurfaceSlider && poolFilters.surfaceMinHa > 0.05;
   const hasExport = !!projectId;
   const hasDurete = !!(onRunDureteFonciere && poolRunId && projectId);
-  const hasActions = hasDurete || manualSelectionEnabled || hasExport || hasAdd;
+  const hasUrba = !!(onRunUrbanisme && poolRunId && projectId);
+  const hasActions = hasDurete || hasUrba || manualSelectionEnabled || hasExport || hasAdd;
   const showTools = hasPoolFilters || hasActions;
 
-  const sortSelect = (
-    <label className="ranking-sort-label">
-      Trier
-      <select
-        value={rankingSortKey}
-        onChange={(e) => onRankingSortChange(e.target.value as RankingSortKey)}
-        onClick={(ev) => ev.stopPropagation()}
-      >
-        <option value="rank">Rang (score)</option>
-        <option value="composite_score">Score composite</option>
-        <option value="durete_score">Dureté foncière</option>
-        <option value="distance">Distance projet</option>
-        <option value="surface">Surface</option>
-        {showZoneHumideColumn && (
-          <option value="zone_humide_ha">Surface ZH</option>
-        )}
-        {showDistHydroColumn && (
-          <option value="dist_hydro_m">Dist. cours d&apos;eau</option>
-        )}
-        {showSurfaceHydroColumn && (
-          <>
-            <option value="surface_hydro_ha">Surf. hydro</option>
-            <option value="dist_surface_hydro_m">Dist. surface hydro</option>
-          </>
-        )}
-        <option value="miller">Miller</option>
-        <option value="veg_dominant">Part dominante</option>
-        <option value="veg_priority">Priorité végétation</option>
-        <optgroup label="Personnes morales">
-          <option value="pm_personne_morale">Personne morale</option>
-          <option value="pm_compensation">Déjà compensé</option>
-          <option value="pm_prospect_detail">Prospect détaillé</option>
-        </optgroup>
-      </select>
-    </label>
-  );
+  const filterChoices: { id: RankingSortKey; label: string }[] = [
+    { id: "rank", label: "Score éco" },
+    { id: "durete_score", label: "Score foncier" },
+    { id: "urba_score", label: "Score urbanistique" },
+    { id: "composite_score", label: "Score composite" },
+  ];
+  const activeFilter = filterChoices.find((c) => c.id === rankingSortKey)?.label ?? "Score éco";
 
   return (
+    <>
     <div className="ranking-wrap">
       <div className={`ranking-chrome${toolsOpen ? " is-open" : ""}`}>
         <div className="ranking-chrome__bar">
-          {showTools && (
+          <div className="ranking-filter">
             <button
               type="button"
-              className="ranking-chrome__toggle"
-              aria-expanded={toolsOpen}
-              onClick={() => setToolsOpen((v) => !v)}
+              className={`ranking-btn-filter${filterMenuOpen ? " is-on" : ""}`}
+              aria-expanded={filterMenuOpen}
+              title={`Filtre : ${activeFilter}`}
+              onClick={() => {
+                setFilterMenuOpen((v) => !v);
+                setScoringsOpen(false);
+                setToolsOpen(false);
+              }}
             >
-              Outils
-              <span className="ranking-chrome__caret" aria-hidden>
-                {toolsOpen ? "▴" : "▾"}
-              </span>
+              <svg className="ranking-btn__icon" viewBox="0 0 16 16" aria-hidden>
+                <path d="M1.5 2.5h13l-5 6.2V13l-3 1.2V8.7l-5-6.2z" fill="currentColor" />
+              </svg>
+              Filtrer
             </button>
-          )}
+            <span className="ranking-filter__current">{activeFilter}</span>
+            {filterMenuOpen && (
+              <div className="ranking-menu" role="menu">
+                {filterChoices.map((choice) => (
+                  <button
+                    key={choice.id}
+                    type="button"
+                    role="menuitem"
+                    className={`ranking-menu__item${rankingSortKey === choice.id ? " is-active" : ""}`}
+                    onClick={() => {
+                      onRankingSortChange(choice.id);
+                      setFilterMenuOpen(false);
+                    }}
+                  >
+                    {choice.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           {distanceActive && poolFilters && (
             <span className="ranking-chrome__chip">≤ {poolFilters.distanceCursorKm.toFixed(1)} km</span>
           )}
@@ -440,6 +561,9 @@ export function RankingTable({
           )}
           {dureteFonciereLoading && (
             <span className="ranking-chrome__status">Dureté…</span>
+          )}
+          {urbanismeLoading && (
+            <span className="ranking-chrome__status">Urbanisme…</span>
           )}
           {addParcellesLoading && (
             <span className="ranking-chrome__status">Ajout…</span>
@@ -450,17 +574,67 @@ export function RankingTable({
           {poolMetricsLoading && (
             <span className="ranking-chrome__status">Métriques…</span>
           )}
-          {sortSelect}
+          {hasPoolFilters && (
+            <button
+              type="button"
+              className={`ranking-btn-options${optionsOpen ? " is-on" : ""}`}
+              aria-expanded={optionsOpen}
+              title="Distance au projet et surface minimale"
+              onClick={() => setOptionsOpen((v) => !v)}
+            >
+              <svg className="ranking-btn__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9c.3.6.9 1 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
+              </svg>
+              Options
+            </button>
+          )}
+          {(hasDurete || hasUrba) && (
+            <button
+              type="button"
+              className={`ranking-btn-durete${scoringsOpen ? " is-on" : ""}`}
+              aria-expanded={scoringsOpen}
+              onClick={() => {
+                setScoringsOpen((v) => !v);
+                setToolsOpen(false);
+                setFilterMenuOpen(false);
+                setDureteMenuOpen(false);
+                setUrbaMenuOpen(false);
+              }}
+            >
+              <svg className="ranking-btn__icon" viewBox="0 0 16 16" aria-hidden>
+                <path fill="currentColor" d="M1 12.5h2.2V8H1v4.5zm3.8 0h2.2V4.5H4.8V12.5zM8.6 12.5H11V6.5H8.6v6zm3.8 0H15V2h-2.6v10.5z" />
+              </svg>
+              Scorings
+            </button>
+          )}
+          {hasActions && (
+            <button
+              type="button"
+              className={`ranking-btn-tools${toolsOpen ? " is-on" : ""}`}
+              aria-expanded={toolsOpen}
+              onClick={() => {
+                setToolsOpen((v) => !v);
+                setScoringsOpen(false);
+                setFilterMenuOpen(false);
+              }}
+            >
+              <svg className="ranking-btn__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+              </svg>
+              Outils
+            </button>
+          )}
           <span className="ranking-count mono">
             {visibleParcelles.length} / {parcelles.length}
           </span>
         </div>
 
-        {toolsOpen && showTools && (
+        {(optionsOpen || scoringsOpen || toolsOpen) && showTools && (
           <div className="ranking-tools" role="region" aria-label="Outils du classement">
-            {hasPoolFilters && (
+            {optionsOpen && hasPoolFilters && (
               <div className="ranking-tools__block">
-                <div className="ranking-tools__label">Ajuster le pool</div>
+                <div className="ranking-tools__label">Distance et surface</div>
                 <div className="results-split-filters">
                   {showDistanceSlider && poolFilters && (
                     <label className="results-split-filters__item">
@@ -501,25 +675,69 @@ export function RankingTable({
               </div>
             )}
 
-            {hasActions && (
+            {scoringsOpen && (hasDurete || hasUrba) && (
               <div className="ranking-tools__block">
-                <div className="ranking-tools__label">Opérations</div>
+                <div className="ranking-tools__label">Scorings</div>
                 <div className="ranking-tools__actions">
                   {hasDurete && (
                     <button
                       type="button"
                       className={`ranking-btn-durete${dureteMenuOpen ? " is-on" : ""}`}
                       disabled={dureteFonciereLoading || addParcellesLoading || selectionMode || poolMetricsLoading}
-                      title="Calculer la dureté foncière sur le pool ou une sélection"
                       onClick={() => {
                         setDureteMenuOpen((v) => !v);
-                        setAddPanelOpen(false);
-                        setExportMenuOpen(false);
+                        setUrbaMenuOpen(false);
                       }}
                     >
                       {dureteFonciereLoading ? "Dureté…" : "Dureté foncière"}
                     </button>
                   )}
+                  {hasUrba && (
+                    <button
+                      type="button"
+                      className={`ranking-btn-durete${urbaMenuOpen ? " is-on" : ""}`}
+                      disabled={urbanismeLoading || dureteFonciereLoading || selectionMode || poolMetricsLoading}
+                      onClick={() => {
+                        setUrbaMenuOpen((v) => !v);
+                        setDureteMenuOpen(false);
+                      }}
+                    >
+                      {urbanismeLoading ? "Urbanisme…" : "Urbanisme"}
+                    </button>
+                  )}
+                </div>
+                {hasDurete && dureteMenuOpen && (
+                  <div className="ranking-tools__reveal">
+                    <button type="button" className="ranking-btn-durete" disabled={dureteFonciereLoading || poolMetricsLoading} onClick={handleDureteAll}>
+                      Tout le pool
+                    </button>
+                    <button
+                      type="button"
+                      className="ranking-btn-durete ranking-btn-durete--select"
+                      disabled={dureteFonciereLoading || poolMetricsLoading || pmIdus.size === 0}
+                      onClick={() => enterSelection("durete")}
+                    >
+                      Choisir des parcelles
+                    </button>
+                  </div>
+                )}
+                {hasUrba && urbaMenuOpen && (
+                  <div className="ranking-tools__reveal">
+                    <button type="button" className="ranking-btn-durete" disabled={urbanismeLoading || poolMetricsLoading} onClick={handleUrbaAll}>
+                      Tout le pool
+                    </button>
+                    <button type="button" className="ranking-btn-durete ranking-btn-durete--select" disabled={urbanismeLoading || poolMetricsLoading} onClick={() => enterSelection("urbanisme")}>
+                      Sélection
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {toolsOpen && hasActions && (
+              <div className="ranking-tools__block">
+                <div className="ranking-tools__label">Outils</div>
+                <div className="ranking-tools__actions">
                   {hasAdd && (
                     <button
                       type="button"
@@ -532,7 +750,7 @@ export function RankingTable({
                         setExportMenuOpen(false);
                       }}
                     >
-                      {addParcellesLoading ? "Ajout…" : "Ajouter du foncier"}
+                      {addParcellesLoading ? "Ajout…" : "Ajouter une parcelle"}
                     </button>
                   )}
                   {manualSelectionEnabled && !selectionMode && (
@@ -542,7 +760,7 @@ export function RankingTable({
                       onClick={() => enterSelection("indesirables")}
                       title="Cocher les parcelles à conserver, les autres iront dans les indésirables"
                     >
-                      Sélectionner
+                      Sélectionner des parcelles
                     </button>
                   )}
                   {hasExport && (
@@ -554,7 +772,7 @@ export function RankingTable({
                         title="Rapport PDF du pool (même périmètre que CSV / GPKG)"
                         onClick={() => void handlePdf()}
                       >
-                        {exportingPdf ? "Rapport…" : "Rapport PDF"}
+                        {exportingPdf ? "Rapport…" : "Générer rapport PDF"}
                       </button>
                       <button
                         type="button"
@@ -567,7 +785,7 @@ export function RankingTable({
                           setAddPanelOpen(false);
                         }}
                       >
-                        {exporting ? "Export…" : "Export"}
+                        {exporting ? "Export…" : "Exporter les données SIG"}
                       </button>
                     </>
                   )}
@@ -594,30 +812,10 @@ export function RankingTable({
                       type="button"
                       className="ranking-btn-export"
                       disabled={exporting || exportingPdf}
-                      title="GeoPackage : parcelles + zone projet + aire d'étude. Textes complets (dureté, etc.). Un shapefile tronqué est aussi dans le zip."
+                      title="GeoPackage : parcelles + zone projet + aire d'étude. Attributs zh / zh_int / zh_pct / zh_m2 = intersection zone humide (si le critère était actif). occ_sol = JSON des parts d'occupation du sol. Un shapefile tronqué (254 c.) est aussi dans le zip."
                       onClick={() => void handleExport("shp")}
                     >
                       GPKG
-                    </button>
-                  </div>
-                )}
-                {hasDurete && dureteMenuOpen && (
-                  <div className="ranking-tools__reveal">
-                    <button
-                      type="button"
-                      className="ranking-btn-durete"
-                      disabled={dureteFonciereLoading || poolMetricsLoading}
-                      onClick={handleDureteAll}
-                    >
-                      Tout le pool
-                    </button>
-                    <button
-                      type="button"
-                      className="ranking-btn-durete ranking-btn-durete--select"
-                      disabled={dureteFonciereLoading || poolMetricsLoading}
-                      onClick={() => enterSelection("durete")}
-                    >
-                      Choisir des parcelles
                     </button>
                   </div>
                 )}
@@ -659,12 +857,20 @@ export function RankingTable({
           className={`ranking-selection-bar${selectionIntent === "durete" ? " ranking-selection-bar--durete" : ""}`}
         >
           <span className="ranking-selection-count mono">
-            {checkedIdus.size} / {parcelles.length} cochée(s)
+            {selectionIntent === "durete"
+              ? `${checkedIdus.size} / ${pmIdus.size} PM cochée(s)`
+              : `${checkedIdus.size} / ${parcelles.length} cochée(s)`}
           </span>
           <button
             type="button"
             className="ranking-btn-select-all"
-            onClick={() => setCheckedIdus(new Set(parcelles.map((p) => p.idu)))}
+            onClick={() =>
+              setCheckedIdus(
+                selectionIntent === "durete"
+                  ? new Set(pmIdus)
+                  : new Set(parcelles.map((p) => p.idu)),
+              )
+            }
           >
             Tout cocher
           </button>
@@ -686,6 +892,17 @@ export function RankingTable({
                 ? "Calcul…"
                 : `Calculer la dureté (${checkedIdus.size})`}
             </button>
+          ) : selectionIntent === "urbanisme" ? (
+            <button
+              type="button"
+              className="ranking-btn-durete"
+              disabled={urbanismeLoading || checkedIdus.size === 0}
+              onClick={() => void handleUrbaSelected()}
+            >
+              {urbanismeLoading
+                ? "Urbanisme…"
+                : `Profiler l'urbanisme (${checkedIdus.size})`}
+            </button>
           ) : (
             <button
               type="button"
@@ -699,7 +916,7 @@ export function RankingTable({
           <button
             type="button"
             className="ranking-btn-select-cancel"
-            disabled={applyingSelection || dureteFonciereLoading}
+            disabled={applyingSelection || dureteFonciereLoading || urbanismeLoading}
             onClick={exitSelectionMode}
           >
             Annuler
@@ -725,44 +942,27 @@ export function RankingTable({
                 </th>
               )}
               <th className="col-rank">#</th>
-              <th className="col-eco">Score éco</th>
-              <th className="col-durete" title="Dureté foncière (0 = facile, 100 = difficile)">
-                Dureté
-              </th>
-              <th className="col-composite" title="Score composite (éco + attractivité foncière)">
-                Comp.
-              </th>
-              <th className="col-surf">Surface</th>
+              <SortTh label="Score éco" sortKey="rank" activeKey={rankingSortKey} dir={rankingSortDir} onSort={onRankingSortChange} className="col-eco" />
+              <SortTh label="Dureté" sortKey="durete_score" activeKey={rankingSortKey} dir={rankingSortDir} onSort={onRankingSortChange} className="col-durete" title="Dureté foncière" />
+              <SortTh label="Comp." sortKey="composite_score" activeKey={rankingSortKey} dir={rankingSortDir} onSort={onRankingSortChange} className="col-composite" />
+              <SortTh label="Surface" sortKey="surface" activeKey={rankingSortKey} dir={rankingSortDir} onSort={onRankingSortChange} className="col-surf" />
               {showZoneHumideColumn && (
-                <th className="col-zh" title="Surface de zone humide intersectée sur la parcelle">
-                  Surf. ZH
-                </th>
+                <SortTh label="Surf. ZH" sortKey="zone_humide_ha" activeKey={rankingSortKey} dir={rankingSortDir} onSort={onRankingSortChange} className="col-zh" />
               )}
               {showDistHydroColumn && (
-                <th className="col-hydro" title="Distance au cours d'eau le plus proche">
-                  Dist. eau
-                </th>
+                <SortTh label="Dist. eau" sortKey="dist_hydro_m" activeKey={rankingSortKey} dir={rankingSortDir} onSort={onRankingSortChange} className="col-hydro" />
               )}
               {showSurfaceHydroColumn && (
                 <>
-                  <th className="col-surf-hydro" title="Surface de parcelle intersectant une surface hydro">
-                    Surf. hydro
-                  </th>
-                  <th className="col-dist-surf-hydro" title="Distance à la surface hydro la plus proche">
-                    Dist. surf.
-                  </th>
+                  <SortTh label="Surf. hydro" sortKey="surface_hydro_ha" activeKey={rankingSortKey} dir={rankingSortDir} onSort={onRankingSortChange} className="col-surf-hydro" />
+                  <SortTh label="Dist. surf." sortKey="dist_surface_hydro_m" activeKey={rankingSortKey} dir={rankingSortDir} onSort={onRankingSortChange} className="col-dist-surf-hydro" />
                 </>
               )}
               <th className="col-dist-espece">Dist espèce</th>
               <th className="col-espece">Espèce</th>
-              <th className="col-dist">Dist projet</th>
-              <th className="col-idu">IDU</th>
-              <th className="col-pm" title="Répertoire personnes morales">
-                PM
-              </th>
-              <th className="col-prospect" title="Propriétaire ayant déjà compensé (autre foncier)">
-                Prospect
-              </th>
+              <SortTh label="Dist projet" sortKey="distance" activeKey={rankingSortKey} dir={rankingSortDir} onSort={onRankingSortChange} className="col-dist" />
+              <SortTh label="Personnes morales" sortKey="pm_personne_morale" activeKey={rankingSortKey} dir={rankingSortDir} onSort={onRankingSortChange} className="col-pm" />
+              <SortTh label="Déjà compensé ?" sortKey="pm_compensation" activeKey={rankingSortKey} dir={rankingSortDir} onSort={onRankingSortChange} className="col-prospect" />
               {showTrashColumn && (
                 <th className="col-indesirable" title="Exclure du classement (pool indésirables)" aria-label="Indésirable">
                   ⊘
@@ -781,7 +981,7 @@ export function RankingTable({
               </tr>
             )}
             {visibleParcelles.map((p, idx) => {
-              const isHovered = hoveredIdu === p.idu;
+              const isHovered = hoveredIdu === p.idu || hoverIdu === p.idu;
               const isSelected = selectedIdu === p.idu || expandedIdus.has(p.idu);
               const isChecked = checkedIdus.has(p.idu);
               const ecoScore = getEcologicalScore(poolMetricsByIdu?.[p.idu]);
@@ -796,7 +996,9 @@ export function RankingTable({
                 pmMetric == null ? null : pmMetric.intersects_pm_database,
               );
               const prospectStyle = prospectBadgeStyle(
-                pmMetric == null ? null : pmMetric.compensation_deja_realisee,
+                pmMetric == null || pmMetric.intersects_pm_database !== true
+                  ? null
+                  : pmMetric.compensation_deja_realisee,
               );
 
               return (
@@ -814,7 +1016,17 @@ export function RankingTable({
                           type="checkbox"
                           className="ranking-row-checkbox"
                           checked={isChecked}
-                          aria-label={`Conserver la parcelle ${p.idu}`}
+                          disabled={selectionIntent === "durete" && !pmIdus.has(p.idu)}
+                          title={
+                            selectionIntent === "durete" && !pmIdus.has(p.idu)
+                              ? "Dureté foncière réservée aux personnes morales"
+                              : undefined
+                          }
+                          aria-label={
+                            selectionIntent === "durete"
+                              ? `Calculer la dureté de ${p.idu}`
+                              : `Conserver la parcelle ${p.idu}`
+                          }
                           onChange={(e) => toggleChecked(p.idu, e.target.checked)}
                         />
                       </td>
@@ -998,9 +1210,6 @@ export function RankingTable({
                     <td className="col-dist mono">
                       {p.distance_km.toFixed(1)}<span className="unit"> km</span>
                     </td>
-                    <td className="col-idu">
-                      <span className="idu-main mono">{p.idu}</span>
-                    </td>
                     <td className="col-pm">
                       <span
                         className="mono"
@@ -1044,10 +1253,12 @@ export function RankingTable({
                         }}
                         title={
                           pmMetric == null
-                            ? "Métrique prospects non calculée"
-                            : pmMetric.compensation_deja_realisee
-                              ? "Propriétaire ayant déjà compensé sur un autre foncier"
-                              : "Propriétaire sans compensation antérieure connue"
+                            ? "Métrique non calculée"
+                            : pmMetric.intersects_pm_database !== true
+                              ? "Non applicable hors personne morale"
+                              : pmMetric.compensation_deja_realisee
+                                ? "Personne morale ayant déjà compensé sur un autre foncier"
+                                : "Personne morale sans compensation antérieure connue"
                         }
                       >
                         {prospectStyle.label}
@@ -1085,6 +1296,18 @@ export function RankingTable({
                           }
                           metricsLoading={poolMetricsLoading}
                           noPoolRun={!poolRunId}
+                          parcelSurfaceHa={p.surface_ha}
+                          onRunDureteFonciere={
+                            onRunDureteFonciere ? (targetIdu) => onRunDureteFonciere([targetIdu]) : undefined
+                          }
+                          onRunUrbanisme={
+                            onRunUrbanisme ? (targetIdu) => onRunUrbanisme([targetIdu]) : undefined
+                          }
+                          dureteFonciereLoading={dureteFonciereLoading}
+                          urbanismeLoading={urbanismeLoading}
+                          onShowOnMap={onRowActivate}
+                          focusTab={detailFocus?.idu === p.idu ? detailFocus.tab : null}
+                          focusNonce={detailFocus?.idu === p.idu ? detailFocus.nonce : 0}
                         />
                       </td>
                     </tr>
@@ -1107,5 +1330,32 @@ export function RankingTable({
         )}
       </div>
     </div>
+    {pendingPoolRun === "urbanisme" && (
+      <AppDialog
+        title="Profiler l’urbanisme"
+        confirmLabel="Lancer"
+        onConfirm={confirmPendingPoolRun}
+        onClose={() => setPendingPoolRun(null)}
+      >
+        <p>
+          Interroger le Géoportail de l’urbanisme pour les {parcelles.length} parcelle
+          {parcelles.length > 1 ? "s" : ""} du classement. Cela peut prendre plusieurs minutes.
+        </p>
+      </AppDialog>
+    )}
+    {pendingPoolRun === "durete" && (
+      <AppDialog
+        title="Calculer la dureté foncière"
+        confirmLabel="Lancer"
+        onConfirm={confirmPendingPoolRun}
+        onClose={() => setPendingPoolRun(null)}
+      >
+        <p>
+          Calculer la dureté foncière pour les {parcelles.length} parcelle
+          {parcelles.length > 1 ? "s" : ""} du classement (hors indésirables).
+        </p>
+      </AppDialog>
+    )}
+    </>
   );
 }

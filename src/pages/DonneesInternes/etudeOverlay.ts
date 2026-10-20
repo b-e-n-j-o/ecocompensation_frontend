@@ -5,7 +5,8 @@ import { fetchPoolMapOverlay, fetchProjectContextGeometry } from "../../api";
 import type { InternalLayerInfo } from "./api";
 
 export const ETUDE_FAMILY = "etude";
-export const ETUDE_FAMILY_LABEL = "Étude";
+export const ETUDE_FAMILY_LABEL = "Pools de parcelles";
+export const RESERVE_FONCIERE_FAMILY = "reserves_foncieres";
 
 type EtudeLayerDef = {
   key: string;

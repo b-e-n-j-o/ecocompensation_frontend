@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { exportCsv, exportShp } from "../../api";
-import type { SousEnsembleResult, UfFilterResponse } from "../../types";
+import { exportCsv, exportShp } from "../../../api";
+import type { SousEnsembleResult, UfFilterResponse } from "../../../types";
 import {
   FilterEnrichBlock,
   PersonnesMoralesBlock,

@@ -7,6 +7,7 @@ import {
   fetchProjects,
   previewFoncierUpload,
   startFilterPipeline,
+  fetchProjectStoredResults,
 } from "../../api";
 import type { FilterPhaseInfo, FromParcelleBody, ParcelleRef, ProjectSummary } from "../../api";
 import type { CesbioLibelle } from "../../types";
@@ -21,7 +22,7 @@ import { SelectFilterCriteriaZonesHumides } from "./SelectFilterCriteriaZonesHum
 import { PipelineProgressPanel } from "../../components/PipelineProgressPanel";
 import type { StudyType } from "../../types/studyTypes";
 import type { ZoneHumideMode } from "../../types";
-import { DEFAULT_ZH_CRITERIA, getStudyProfile } from "../Etude/studyProfiles";
+import { DEFAULT_ZH_CRITERIA } from "../Etude/studyProfiles";
 import { DEFAULT_EXCLUDED_LAYERS } from "../../constants/nationalExclusionLayers";
 import {
   applyWsToPipelineProgress,
@@ -45,16 +46,16 @@ const DEFAULT_FILTER_PHASES: FilterPhaseInfo[] = [
 interface CreateAoiPageProps {
   studyType?: StudyType;
   onDone: (projectId: string) => void;
-  onBack: () => void;
+  /** Projet déjà créé : ouvre l’étape critères avec son dernier filtre. */
+  editProjectId?: string | null;
 }
 
 export function CreateAoiPage({
   studyType = "faune_buffer",
   onDone,
-  onBack,
+  editProjectId = null,
 }: CreateAoiPageProps) {
   const isZh = studyType === "zones_humides_intra";
-  const profile = getStudyProfile(studyType);
   const [codeInsee, setCodeInsee] = useState("");
   const [section, setSection] = useState("");
   const [numero, setNumero] = useState("");
@@ -86,7 +87,7 @@ export function CreateAoiPage({
     "Forêts de conifères",
     "Forêts de feuillus",
   ]);
-  const [faunaEnabled, setFaunaEnabled] = useState(true);
+  const [faunaEnabled, setFaunaEnabled] = useState(false);
   const [faunaSpecies, setFaunaSpecies] = useState<string[]>([]);
   const [faunaDistM, setFaunaDistM] = useState(1000);
   const [ufParcelles, setUfParcelles] = useState<ParcelleRef[]>([]);
@@ -96,19 +97,109 @@ export function CreateAoiPage({
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [selectedExistingProjectId, setSelectedExistingProjectId] = useState<string>("");
   const [projectTab, setProjectTab] = useState<"new" | "existing">("new");
-  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
+  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(editProjectId ? 3 : 1);
   const wsRef = useRef<WebSocket | null>(null);
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
+  const wentToResultsRef = useRef(false);
   const [filterSession, setFilterSession] = useState(0);
   const [ufInProgress, setUfInProgress] = useState(false);
   const [zonesHumidesProbablesMode, setZonesHumidesProbablesMode] = useState<ZoneHumideMode>(
     DEFAULT_ZH_CRITERIA.zones_humides_probables_mode,
   );
-  const [minZoneHumideHa, setMinZoneHumideHa] = useState(DEFAULT_ZH_CRITERIA.min_zone_humide_ha);
-  const [tronconsHydroEnabled, setTronconsHydroEnabled] = useState(DEFAULT_ZH_CRITERIA.troncons_hydro_enabled);
+  const [minZoneHumideHa, setMinZoneHumideHa] = useState(0);
+  const [tronconsHydroEnabled, setTronconsHydroEnabled] = useState(false);
   const [tronconsHydroMaxDistM, setTronconsHydroMaxDistM] = useState(DEFAULT_ZH_CRITERIA.troncons_hydro_max_dist_m);
   const [surfacesHydroEnabled, setSurfacesHydroEnabled] = useState(DEFAULT_ZH_CRITERIA.surfaces_hydro_enabled);
   const [surfacesHydroMaxDistM, setSurfacesHydroMaxDistM] = useState(DEFAULT_ZH_CRITERIA.surfaces_hydro_max_dist_m);
   const [excludedLayers, setExcludedLayers] = useState<string[]>([...DEFAULT_EXCLUDED_LAYERS]);
+  const [fauneZoneHumideMode, setFauneZoneHumideMode] = useState<ZoneHumideMode>("ignore");
+  const [sameBassinVersant, setSameBassinVersant] = useState(false);
+  const [arrachageVignes, setArrachageVignes] = useState(false);
+  const [arrachageVignesTypes, setArrachageVignesTypes] = useState<string[]>([]);
+  const [includeUnitesFoncieres, setIncludeUnitesFoncieres] = useState(false);
+  const includeUfRef = useRef(includeUnitesFoncieres);
+  includeUfRef.current = includeUnitesFoncieres;
+  const editingExisting = !!editProjectId;
+
+  useEffect(() => {
+    if (!editProjectId) return;
+    let cancelled = false;
+    setProjectId(editProjectId);
+    setWizardStep(3);
+    fetchProjectStoredResults(editProjectId)
+      .then((stored) => {
+        if (cancelled) return;
+        const lf = stored.last_filter;
+        if (!lf || typeof lf !== "object") return;
+        const raw = lf as Record<string, unknown>;
+        if (typeof raw.min_area_ha === "number") setMinAreaHa(raw.min_area_ha);
+        if (raw.miller_thresh == null) {
+          setMillerEnabled(false);
+        } else if (typeof raw.miller_thresh === "number") {
+          setMillerEnabled(true);
+          setMillerThresh(raw.miller_thresh);
+        }
+        if (Array.isArray(raw.cesbio_libelles)) {
+          setCesbioLibelles(raw.cesbio_libelles.filter((x): x is CesbioLibelle => typeof x === "string"));
+        }
+        if (Array.isArray(raw.fauna_criteria)) {
+          const species = raw.fauna_criteria
+            .map((item) => {
+              if (!item || typeof item !== "object") return "";
+              const row = item as { species?: string; tax_nom_val?: string };
+              return row.species ?? row.tax_nom_val ?? "";
+            })
+            .filter(Boolean);
+          setFaunaEnabled(species.length > 0);
+          setFaunaSpecies(species);
+          const first = raw.fauna_criteria[0];
+          if (first && typeof first === "object") {
+            const dist = (first as { dist_m?: number; radius_m?: number }).dist_m
+              ?? (first as { radius_m?: number }).radius_m;
+            if (typeof dist === "number") setFaunaDistM(dist);
+          }
+        }
+        if (raw.zone_humide_mode === "intersect" || raw.zone_humide_mode === "exclude" || raw.zone_humide_mode === "ignore") {
+          setFauneZoneHumideMode(raw.zone_humide_mode);
+        }
+        if (
+          raw.zones_humides_probables_mode === "intersect"
+          || raw.zones_humides_probables_mode === "exclude"
+          || raw.zones_humides_probables_mode === "ignore"
+        ) {
+          setZonesHumidesProbablesMode(raw.zones_humides_probables_mode);
+        }
+        if (typeof raw.min_zone_humide_ha === "number") setMinZoneHumideHa(raw.min_zone_humide_ha);
+        if (typeof raw.troncons_hydros_max_dist_m === "number") {
+          setTronconsHydroEnabled(true);
+          setTronconsHydroMaxDistM(raw.troncons_hydros_max_dist_m);
+        } else {
+          setTronconsHydroEnabled(false);
+        }
+        if (typeof raw.surfaces_hydros_max_dist_m === "number") {
+          setSurfacesHydroEnabled(true);
+          setSurfacesHydroMaxDistM(raw.surfaces_hydros_max_dist_m);
+        } else {
+          setSurfacesHydroEnabled(false);
+        }
+        if (Array.isArray(raw.excluded_layers)) {
+          setExcludedLayers(raw.excluded_layers.filter((x): x is string => typeof x === "string"));
+        }
+        setSameBassinVersant(raw.same_bassin_versant === true);
+        setArrachageVignes(raw.arrachage_vignes === true);
+        if (Array.isArray(raw.arrachage_vignes_types)) {
+          setArrachageVignesTypes(raw.arrachage_vignes_types.filter((x): x is string => typeof x === "string"));
+        }
+        setIncludeUnitesFoncieres(raw.include_unites_foncieres !== false);
+      })
+      .catch(() => {
+        if (!cancelled) setError("Impossible de recharger les critères de cette étude.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [editProjectId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -153,10 +244,8 @@ export function CreateAoiPage({
   }, []);
 
   useEffect(() => {
-    if (!faunaEnabled && faunaSpecies.length > 0) {
-      setFaunaSpecies([]);
-    }
-  }, [faunaEnabled, faunaSpecies.length]);
+    setFaunaEnabled(faunaSpecies.length > 0);
+  }, [faunaSpecies.length]);
 
   const currentRefLabel = `${codeInsee.trim()}_${section.trim().toUpperCase()}_${numero.trim()}`.replace(/^_+|_+$/g, "");
   const firstUfRef = ufParcelles[0];
@@ -177,6 +266,7 @@ export function CreateAoiPage({
     setTilesOverlay(EMPTY_TILES_OVERLAY);
     setSummary(null);
     setUfInProgress(false);
+    wentToResultsRef.current = false;
     const WS = getWsBaseUrl();
     const ws = new WebSocket(`${WS}/ws/projects/${projectId}/fetch-progress`);
     wsRef.current = ws;
@@ -200,7 +290,12 @@ export function CreateAoiPage({
         if (ev === "uf_complete") return;
 
         if (ev === "phase:parcelles_ready") {
-          setUfInProgress(true);
+          setPipelineProgress((prev) => applyWsToPipelineProgress(prev, data));
+          setUfInProgress(includeUfRef.current);
+          if (projectId && !wentToResultsRef.current) {
+            wentToResultsRef.current = true;
+            onDoneRef.current(projectId);
+          }
           return;
         }
 
@@ -238,7 +333,11 @@ export function CreateAoiPage({
             return;
           }
           setStep("done");
-          setUfInProgress(true);
+          setUfInProgress(includeUfRef.current);
+          if (projectId && !wentToResultsRef.current) {
+            wentToResultsRef.current = true;
+            onDoneRef.current(projectId);
+          }
         }
       } catch (e) {
         console.warn("WS parse error", e);
@@ -267,30 +366,51 @@ export function CreateAoiPage({
     setError(null);
 
     if (isZh) {
-      if (
-        minZoneHumideHa <= 0
-        && zonesHumidesProbablesMode === "ignore"
-        && !tronconsHydroEnabled
-        && !surfacesHydroEnabled
-        && !(faunaEnabled && faunaSpecies.length > 0)
-      ) {
-        setError("Activez au moins un critère zones humides, hydrographique ou faunistique.");
-        return;
-      }
       if (sourceMode !== "fichier" || !uploadedFile || !uploadedFeature) {
         setError("Le mode zones humides requiert une zone initiale (SHP/ZIP ou GPKG).");
         return;
       }
-    } else if (cesbioLibelles.length === 0 && (!faunaEnabled || faunaSpecies.length === 0)) {
-      setError("Sélectionnez au moins un libellé CESBIO ou une espèce faune.");
+    }
+    if (faunaEnabled && faunaSpecies.length === 0) {
+      setError("Sélectionnez au moins une espèce, ou désactivez le filtre espèces.");
       return;
     }
-    if (isZh && faunaEnabled && faunaSpecies.length === 0) {
-      setError("Sélectionnez au moins une espèce si le filtre faune est activé.");
-      return;
-    }
-    if (!isZh && faunaEnabled && faunaSpecies.length === 0) {
-      setError("Sélectionnez au moins une espèce si le filtre faune est activé.");
+
+    const filterBody = {
+      min_area_ha: minAreaHa,
+      miller_thresh: millerEnabled ? millerThresh : null,
+      cesbio_libelles: isZh ? [] : cesbioLibelles,
+      fauna_criteria: faunaEnabled
+        ? faunaSpecies.map((species) => ({ species, dist_m: faunaDistM }))
+        : [],
+      zone_humide_mode: isZh
+        ? (minZoneHumideHa > 0 ? "intersect" as const : "ignore" as const)
+        : fauneZoneHumideMode,
+      zones_humides_probables_mode: zonesHumidesProbablesMode,
+      min_zone_humide_ha: isZh
+        ? minZoneHumideHa
+        : fauneZoneHumideMode === "intersect" ? minZoneHumideHa : 0,
+      excluded_layers: excludedLayers,
+      troncons_hydros_max_dist_m: tronconsHydroEnabled ? tronconsHydroMaxDistM : null,
+      surfaces_hydros_max_dist_m: surfacesHydroEnabled ? surfacesHydroMaxDistM : null,
+      same_bassin_versant: sameBassinVersant,
+      arrachage_vignes: arrachageVignes,
+      arrachage_vignes_types: arrachageVignes ? arrachageVignesTypes : [],
+      include_unites_foncieres: includeUnitesFoncieres,
+    };
+
+    if (editingExisting && editProjectId) {
+      setPipelineProgress(INITIAL_PIPELINE_PROGRESS);
+      setTilesOverlay(EMPTY_TILES_OVERLAY);
+      setSummary(null);
+      setStep("fetching");
+      setFilterSession((s) => s + 1);
+      try {
+        await startFilterPipeline(editProjectId, filterBody);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Erreur de filtrage");
+        setStep("error");
+      }
       return;
     }
 
@@ -361,30 +481,7 @@ export function CreateAoiPage({
       setProjectId(res.project_id);
       setStep("fetching");
       setFilterSession((s) => s + 1);
-      await startFilterPipeline(res.project_id, isZh
-        ? {
-            min_area_ha: minAreaHa,
-            miller_thresh: millerEnabled ? millerThresh : null,
-            cesbio_libelles: [],
-            fauna_criteria: faunaEnabled
-              ? faunaSpecies.map((species) => ({ species, dist_m: faunaDistM }))
-              : [],
-            zone_humide_mode: minZoneHumideHa > 0 ? "intersect" : "ignore",
-            zones_humides_probables_mode: zonesHumidesProbablesMode,
-            min_zone_humide_ha: minZoneHumideHa,
-            excluded_layers: excludedLayers,
-            troncons_hydros_max_dist_m: tronconsHydroEnabled ? tronconsHydroMaxDistM : null,
-            surfaces_hydros_max_dist_m: surfacesHydroEnabled ? surfacesHydroMaxDistM : null,
-          }
-        : {
-            min_area_ha: minAreaHa,
-            miller_thresh: millerEnabled ? millerThresh : null,
-            cesbio_libelles: cesbioLibelles,
-            fauna_criteria: faunaEnabled
-              ? faunaSpecies.map((species) => ({ species, dist_m: faunaDistM }))
-              : [],
-            excluded_layers: excludedLayers,
-          });
+      await startFilterPipeline(res.project_id, filterBody);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur création projet");
       setStep("error");
@@ -399,26 +496,20 @@ export function CreateAoiPage({
   const phasesReady = filterPhases.length > 0 && !phasesLoadError;
   const sourceFeature = sourceMode === "parcelle" ? parcelFeature : uploadedFeature;
   const geoFileAccept = ".gpkg,.zip";
-  const hasFilterCriteria = isZh
-    ? minZoneHumideHa > 0
-      || zonesHumidesProbablesMode !== "ignore"
-      || tronconsHydroEnabled
-      || surfacesHydroEnabled
-      || (faunaEnabled && faunaSpecies.length > 0)
-    : cesbioLibelles.length > 0 || (faunaEnabled && faunaSpecies.length > 0);
   const canCreateAoi =
     step === "form" &&
     !isSearchingParcel &&
     !isUploadingGeom &&
-    !!sourceFeature &&
-    hasFilterCriteria &&
     (!faunaEnabled || faunaSpecies.length > 0) &&
-    (isZh
-      ? !!uploadedFile
-      : sourceMode === "parcelle"
-        ? (ufParcelles.length > 0 || (!!codeInsee.trim() && !!section.trim() && !!numero.trim()))
-        : !!uploadedFile) &&
-    phasesReady;
+    phasesReady &&
+    (editingExisting || (
+      !!sourceFeature &&
+      (isZh
+        ? !!uploadedFile
+        : sourceMode === "parcelle"
+          ? (ufParcelles.length > 0 || (!!codeInsee.trim() && !!section.trim() && !!numero.trim()))
+          : !!uploadedFile)
+    ));
   const canLoadExistingProject = !!selectedExistingProjectId && step === "form";
   const parcelFormFilled =
     sourceMode === "parcelle"
@@ -548,9 +639,9 @@ export function CreateAoiPage({
         3: "Critères zones humides",
       }
     : {
-        1: "Charger le projet",
-        2: "Définir la zone de recherche",
-        3: "Critères de filtrage",
+        1: "Projet",
+        2: "Zone de recherche",
+        3: "Filtrage",
       };
 
   function renderParcelStep() {
@@ -833,11 +924,56 @@ export function CreateAoiPage({
             onFaunaSpeciesChange={setFaunaSpecies}
             faunaDistM={faunaDistM}
             onFaunaDistMChange={setFaunaDistM}
+            zoneHumideMode={fauneZoneHumideMode}
+            onZoneHumideModeChange={setFauneZoneHumideMode}
+            minZoneHumideHa={minZoneHumideHa}
+            onMinZoneHumideHaChange={setMinZoneHumideHa}
+            zonesHumidesProbablesMode={zonesHumidesProbablesMode}
+            onZonesHumidesProbablesModeChange={setZonesHumidesProbablesMode}
+            tronconsHydroEnabled={tronconsHydroEnabled}
+            onTronconsHydroEnabledChange={setTronconsHydroEnabled}
+            tronconsHydroMaxDistM={tronconsHydroMaxDistM}
+            onTronconsHydroMaxDistMChange={setTronconsHydroMaxDistM}
+            surfacesHydroEnabled={surfacesHydroEnabled}
+            onSurfacesHydroEnabledChange={setSurfacesHydroEnabled}
+            surfacesHydroMaxDistM={surfacesHydroMaxDistM}
+            onSurfacesHydroMaxDistMChange={setSurfacesHydroMaxDistM}
+            sameBassinVersant={sameBassinVersant}
+            onSameBassinVersantChange={setSameBassinVersant}
+            arrachageVignes={arrachageVignes}
+            onArrachageVignesChange={setArrachageVignes}
+            arrachageVignesTypes={arrachageVignesTypes}
+            onArrachageVignesTypesChange={setArrachageVignesTypes}
             excludedLayers={excludedLayers}
             onExcludedLayersChange={setExcludedLayers}
             disabled={isWizardLocked}
           />
         )}
+        <div className="eco-filter-block">
+          <h3 className="eco-filter-block-title">Étendue du résultat</h3>
+          <fieldset className="eco-zh-fieldset" disabled={isWizardLocked}>
+          <div className="eco-zh-modes">
+            <label className="eco-zh-mode">
+              <input
+                type="radio"
+                name="include-unites-foncieres"
+                checked={!includeUnitesFoncieres}
+                onChange={() => setIncludeUnitesFoncieres(false)}
+              />
+              Parcelles seules
+            </label>
+            <label className="eco-zh-mode">
+              <input
+                type="radio"
+                name="include-unites-foncieres"
+                checked={includeUnitesFoncieres}
+                onChange={() => setIncludeUnitesFoncieres(true)}
+              />
+              Groupement de parcelles de personnes morales
+            </label>
+          </div>
+        </fieldset>
+        </div>
         <button type="submit" className="eco-aoi-btn eco-aoi-btn--primary" disabled={!canCreateAoi}>
           Lancer le filtrage
         </button>
@@ -870,7 +1006,7 @@ export function CreateAoiPage({
             </span>
           )}
         </div>
-        <PipelineProgressPanel progress={pipelineProgress} />
+        <PipelineProgressPanel progress={pipelineProgress} showUf={includeUnitesFoncieres} />
         {summary && (
           <div className="eco-aoi-summary">
             <p>
@@ -894,10 +1030,7 @@ export function CreateAoiPage({
       <div className="eco-aoi-layout">
         <aside className="eco-aoi-sidebar">
           <div className="eco-aoi-sidebar-head">
-            <button type="button" className="eco-aoi-icon-btn" onClick={onBack} title="Retour au filtrage" aria-label="Retour">
-              ←
-            </button>
-            <h1>{profile.hubTitle}</h1>
+            <h1>Recherche de foncier</h1>
           </div>
 
           <div className="eco-aoi-tabs" role="tablist">
@@ -938,7 +1071,7 @@ export function CreateAoiPage({
                     }}
                   >
                     <span className="eco-aoi-step-num">{n}</span>
-                    <span>{stepLabels[n]}</span>
+                    <span className="eco-aoi-step-label">{stepLabels[n]}</span>
                   </button>
                 ))}
               </nav>

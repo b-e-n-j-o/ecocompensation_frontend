@@ -2,33 +2,38 @@ import { useState } from "react";
 import { Routes, Route, NavLink, Navigate, useNavigate, useParams, useLocation } from "react-router-dom";
 
 import { CreateAoiPage } from "./pages/FiltreEcologique/CreateAoiPage";
-import { MethodologyHub } from "./pages/Ecocompensation/MethodologyHub";
 import { EtudeResultats } from "./pages/Etude/EtudeResultats";
 import FaunaMapPage from "./pages/FaunaMap/FaunaMapPage";
 import DonneesInternesPage from "./pages/DonneesInternes/DonneesInternesPage";
-import type { StudyType } from "./types/studyTypes";
+import AjoutFoncierPage from "./pages/DonneesInternes/AjoutFoncier/AjoutFoncierPage";
 
 import "./App.css";
 
 const ROUTE_ECOCOMPENSATION = "/ecocompensation";
+const ROUTE_RESERVE = "/reserve-fonciere";
+const ROUTE_AJOUT_FONCIER = "/reserve-fonciere/ajout";
 const RAIL_COLLAPSED_KEY = "kerelia-rail-collapsed";
 
 function readRailCollapsed(): boolean {
   try {
-    return localStorage.getItem(RAIL_COLLAPSED_KEY) === "1";
+    const stored = localStorage.getItem(RAIL_COLLAPSED_KEY);
+    if (stored === null) return true;
+    return stored === "1";
   } catch {
-    return false;
+    return true;
   }
 }
 
-function CreateAoiRoutePage({ studyType }: { studyType: StudyType }) {
+function CreateAoiRoutePage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const editProjectId = (location.state as { editProjectId?: string } | null)?.editProjectId ?? null;
   return (
     <div style={{ height: "100%", minHeight: 0 }}>
       <CreateAoiPage
-        studyType={studyType}
+        key={editProjectId ?? "new"}
+        editProjectId={editProjectId}
         onDone={(id) => navigate(`/projects/${id}/filter`)}
-        onBack={() => navigate(ROUTE_ECOCOMPENSATION)}
       />
     </div>
   );
@@ -51,6 +56,7 @@ function ProjectRunRoutePage() {
   const navigate = useNavigate();
   return (
     <EtudeResultats
+      key={`${projectId ?? ""}:${runId ?? ""}`}
       fixedProjectId={projectId ?? null}
       initialRunId={runId ?? null}
       onNavigateToCreate={() => navigate(ROUTE_ECOCOMPENSATION)}
@@ -88,20 +94,22 @@ export default function App() {
         <div className="kerelia-app__main">
           <Routes>
             <Route path="/" element={<Navigate to={ROUTE_ECOCOMPENSATION} replace />} />
-            <Route path={ROUTE_ECOCOMPENSATION} element={<MethodologyHub />} />
-            <Route path={`${ROUTE_ECOCOMPENSATION}/faune`} element={<CreateAoiRoutePage studyType="faune_buffer" />} />
+            <Route path={ROUTE_ECOCOMPENSATION} element={<CreateAoiRoutePage />} />
+            <Route path={`${ROUTE_ECOCOMPENSATION}/faune`} element={<Navigate to={ROUTE_ECOCOMPENSATION} replace />} />
             <Route
               path={`${ROUTE_ECOCOMPENSATION}/zones-humides`}
-              element={<CreateAoiRoutePage studyType="zones_humides_intra" />}
+              element={<Navigate to={ROUTE_ECOCOMPENSATION} replace />}
             />
-            <Route path="/create-aoi" element={<Navigate to={`${ROUTE_ECOCOMPENSATION}/faune`} replace />} />
+            <Route path="/create-aoi" element={<Navigate to={ROUTE_ECOCOMPENSATION} replace />} />
             <Route path="/etude" element={<StudyHomeRoutePage />} />
             <Route path="/etudes" element={<Navigate to="/etude" replace />} />
             <Route path="/projects/:projectId/filter" element={<ProjectFilterRoutePage />} />
             <Route path="/projects/:projectId/runs/:runId" element={<ProjectRunRoutePage />} />
             <Route path="/faune" element={<FaunaMapPage />} />
             <Route path="/carte-faune" element={<Navigate to="/faune" replace />} />
-            <Route path="/donnees-internes" element={<DonneesInternesPage />} />
+            <Route path={ROUTE_AJOUT_FONCIER} element={<AjoutFoncierPage />} />
+            <Route path={ROUTE_RESERVE} element={<DonneesInternesPage />} />
+            <Route path="/donnees-internes" element={<Navigate to={ROUTE_RESERVE} replace />} />
           </Routes>
         </div>
       </div>
@@ -135,9 +143,9 @@ const RAIL_ITEMS = [
     ),
   },
   {
-    to: "/donnees-internes",
-    label: "Données internes",
-    isActive: (path: string) => path.startsWith("/donnees-internes"),
+    to: ROUTE_RESERVE,
+    label: "Réserve foncière",
+    isActive: (path: string) => path.startsWith(ROUTE_RESERVE) || path.startsWith("/donnees-internes"),
     icon: (
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden>
         <path d="M12 3 3.8 7.5 12 12l8.2-4.5L12 3Z" strokeLinejoin="round" />

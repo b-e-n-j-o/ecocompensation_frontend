@@ -3,7 +3,7 @@ import type { FeatureCollection } from "geojson";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import maplibregl from "maplibre-gl";
 
-import { zipShapefileToFeatureCollection } from "./faunaShpZip";
+import { zipShapefileToFeatureCollection } from "../../geo/importFichiers";
 import { addFaunaDrawLayers, addFaunaLayers, addFaunaObservationLayers, bindFaunaPointInteractions } from "./faunaMapLayers";
 import {
   API_BASE,
@@ -49,9 +49,17 @@ export type UseFaunaQueryOptions = {
   mapReady: boolean;
   enableShapefile?: boolean;
   autoDrawBbox?: boolean;
+  /** Si false, pas de fetch catalogue / pas de couches carte tant que l’outil n’est pas ouvert. */
+  enabled?: boolean;
 };
 
-export function useFaunaQuery({ mapRef, mapReady, enableShapefile = false, autoDrawBbox = false }: UseFaunaQueryOptions) {
+export function useFaunaQuery({
+  mapRef,
+  mapReady,
+  enableShapefile = false,
+  autoDrawBbox = false,
+  enabled = true,
+}: UseFaunaQueryOptions) {
   const shpZipInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchWrapRef = useRef<HTMLDivElement>(null);
@@ -74,7 +82,7 @@ export function useFaunaQuery({ mapRef, mapReady, enableShapefile = false, autoD
   const [searchText, setSearchText] = useState("");
   const [searchFocused, setSearchFocused] = useState(false);
   const [speciesCatalog, setSpeciesCatalog] = useState<CatalogTaxon[]>([]);
-  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [catalogLoading, setCatalogLoading] = useState(enabled);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [highlightIdx, setHighlightIdx] = useState(-1);
   const [selected, setSelected] = useState(() => new Map<string, SelectedInfo>());
@@ -118,7 +126,10 @@ export function useFaunaQuery({ mapRef, mapReady, enableShapefile = false, autoD
     blurCloseTimer.current = setTimeout(() => setSearchFocused(false), 200);
   }, [clearBlurTimer]);
 
+  const catalogFetchedRef = useRef(false);
+
   useEffect(() => {
+    if (!enabled || catalogFetchedRef.current) return;
     let cancelled = false;
     (async () => {
       setCatalogLoading(true);
@@ -128,6 +139,7 @@ export function useFaunaQuery({ mapRef, mapReady, enableShapefile = false, autoD
         if (!r.ok) throw new Error("HTTP " + r.status);
         const data = (await r.json()) as CatalogTaxon[];
         if (!cancelled) {
+          catalogFetchedRef.current = true;
           setSpeciesCatalog(data);
           if (data.length === 0) {
             setStatusMsg("Aucune ligne dans ecocompensation.fauna_taxa_ref (colonne tax).", true);
@@ -146,7 +158,7 @@ export function useFaunaQuery({ mapRef, mapReady, enableShapefile = false, autoD
     return () => {
       cancelled = true;
     };
-  }, [setStatusMsg]);
+  }, [enabled, setStatusMsg]);
 
   const filteredSuggestions = useMemo(() => {
     if (!speciesCatalog.length) return [];
@@ -665,6 +677,7 @@ export function useFaunaQuery({ mapRef, mapReady, enableShapefile = false, autoD
   }, [allSpeciesEntries, allSpeciesFilterText]);
 
   useEffect(() => {
+    if (!enabled) return;
     const map = mapRef.current;
     if (!map || !mapReady || !map.isStyleLoaded()) return;
     if (layersBoundRef.current) {
@@ -679,7 +692,7 @@ export function useFaunaQuery({ mapRef, mapReady, enableShapefile = false, autoD
       unbind();
       layersBoundRef.current = false;
     };
-  }, [mapReady, mapRef, enableShapefile]);
+  }, [enabled, mapReady, mapRef, enableShapefile]);
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {

@@ -1,9 +1,9 @@
 import { Children, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import type { ProjectSummary } from "../../api";
-import type { PoolRunListItem } from "../../types";
-import { getStudyProfile } from "../../pages/Etude/studyProfiles";
-import { normalizeStudyType } from "../../types/studyTypes";
+import type { ProjectSummary } from "../../../api";
+import type { PoolRunListItem } from "../../../types";
+import { getStudyProfile } from "../studyProfiles";
+import { normalizeStudyType } from "../../../types/studyTypes";
 import { ResultsPickList, type ResultsPickItem } from "./ResultsPickList";
 
 export type ResultsToolbarStatus =
@@ -21,8 +21,11 @@ type Props = {
   parcelCount?: number | null;
   status?: ResultsToolbarStatus;
   onNewStudy?: () => void;
+  onEditFilter?: () => void;
   onPoolChange: (projectId: string, poolId: string) => void;
   preferOpen?: boolean;
+  /** Masque le sélecteur de pool (page d’accueil /etude). */
+  hidePoolPicker?: boolean;
   children?: ReactNode;
 };
 
@@ -42,11 +45,13 @@ export function ResultsToolbar({
   parcelCount = null,
   status = { kind: "idle" },
   onNewStudy,
+  onEditFilter,
   onPoolChange,
   preferOpen = false,
+  hidePoolPicker = false,
   children,
 }: Props) {
-  const [infoOpen, setInfoOpen] = useState(!projectId || preferOpen);
+  const [infoOpen, setInfoOpen] = useState(preferOpen && !hidePoolPicker);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -102,52 +107,81 @@ export function ResultsToolbar({
   return (
     <header className={`results-toolbar${infoOpen ? " is-open" : ""}`}>
       <div className="results-toolbar__bar">
-        <div className="results-toolbar__context">
-          <span
-            className={`results-status-dot results-status-dot--${status.kind}`}
-            title={statusTitle}
-            aria-label={statusTitle ?? "Statut"}
-          />
-          {projectName ? (
-            <span className="results-toolbar__project" title={projectName}>
-              {projectName}
-            </span>
-          ) : (
-            <span className="results-toolbar__project results-toolbar__project--empty">
-              Aucun projet
-            </span>
-          )}
-          {currentProfile && (
-            <span className={currentProfile.badgeClass} title={currentProfile.methodologyHint}>
-              {currentProfile.shortLabel}
-            </span>
-          )}
-          {(poolWhen || count != null) && (
-            <span className="results-toolbar__run-meta">
-              {poolWhen}
-              {poolWhen && count != null ? " · " : null}
-              {count != null ? `${count} parc.` : null}
-            </span>
-          )}
-          {(status.kind === "busy" || status.kind === "offline") && (
-            <span className="results-toolbar__status-label">{status.label}</span>
-          )}
-        </div>
+        {hidePoolPicker ? (
+          <div className="results-toolbar__context">
+            <span className="results-toolbar__project">Études</span>
+          </div>
+        ) : (
+          <div className="results-toolbar__context">
+            <span
+              className={`results-status-dot results-status-dot--${status.kind}`}
+              title={statusTitle}
+              aria-label={statusTitle ?? "Statut"}
+            />
+            {projectName ? (
+              <span className="results-toolbar__project" title={projectName}>
+                {projectName}
+              </span>
+            ) : (
+              <span className="results-toolbar__project results-toolbar__project--empty">
+                Aucun projet
+              </span>
+            )}
+            {currentProfile && (
+              <span className={currentProfile.badgeClass} title={currentProfile.methodologyHint}>
+                {currentProfile.shortLabel}
+              </span>
+            )}
+            {(poolWhen || count != null) && (
+              <span className="results-toolbar__run-meta">
+                {poolWhen}
+                {poolWhen && count != null ? " · " : null}
+                {count != null ? `${count} parc.` : null}
+              </span>
+            )}
+            {(status.kind === "busy" || status.kind === "offline") && (
+              <span className="results-toolbar__status-label">{status.label}</span>
+            )}
+          </div>
+        )}
 
-        <button
-          type="button"
-          className="results-toolbar__info-toggle"
-          aria-expanded={infoOpen}
-          onClick={() => setInfoOpen((v) => !v)}
-        >
-          Informations du pool
-          <span className="results-toolbar__caret" aria-hidden>
-            {infoOpen ? "▴" : "▾"}
-          </span>
-        </button>
+        {onEditFilter && (
+          <button type="button" className="results-toolbar__btn" onClick={onEditFilter}>
+            Modifier le filtre
+          </button>
+        )}
+
+        {activePoolId && projectId && !hidePoolPicker && (
+          <Link
+            to={`/reserve-fonciere?etude=${encodeURIComponent(projectId)}&pool=${encodeURIComponent(activePoolId)}`}
+            className="results-toolbar__btn"
+            title="Superposer ce pool sur la carte Réserve foncière"
+          >
+            Visualiser le pool dans la réserve foncière
+          </Link>
+        )}
+
+        {!hidePoolPicker && (
+          <button
+            type="button"
+            className="results-toolbar__info-toggle"
+            aria-expanded={infoOpen}
+            onClick={() => setInfoOpen((v) => !v)}
+          >
+            Informations du pool
+            <span className="results-toolbar__caret" aria-hidden>
+              {infoOpen ? "▴" : "▾"}
+            </span>
+          </button>
+        )}
+        {hidePoolPicker && onNewStudy && (
+          <button type="button" className="results-toolbar__btn results-toolbar__btn--primary" onClick={onNewStudy}>
+            Nouvelle étude
+          </button>
+        )}
       </div>
 
-      {infoOpen && (
+      {infoOpen && !hidePoolPicker && (
         <div className="results-toolbar__panel" role="region" aria-label="Informations du pool">
           {onNewStudy && (
             <button type="button" className="results-toolbar__btn results-toolbar__btn--primary" onClick={onNewStudy}>
@@ -167,16 +201,6 @@ export function ResultsToolbar({
               onPoolChange(pool.project_id, pool.id);
             }}
           />
-
-          {activePoolId && projectId && (
-            <Link
-              to={`/donnees-internes?etude=${encodeURIComponent(projectId)}&pool=${encodeURIComponent(activePoolId)}`}
-              className="results-toolbar__btn"
-              title="Superposer ce pool sur la carte Données internes"
-            >
-              Données internes
-            </Link>
-          )}
 
           {activePoolId && (
             <div className="results-toolbar__run-id-wrap">

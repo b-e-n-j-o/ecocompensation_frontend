@@ -8,6 +8,7 @@ import {
   INITIAL_PIPELINE_PROGRESS,
   type PipelineProgress,
 } from "../utils/pipelineProgress";
+import { parseStoredFilterResponse } from "../utils/storedFilterResults";
 
 export interface FetchProgressEvent {
   event?: string;
@@ -19,13 +20,15 @@ export interface FetchProgressEvent {
   n_final?: number;
 }
 
-import { parseStoredFilterResponse } from "../utils/storedFilterResults";
-
 function countUf(lastResultsUf: unknown): number {
   if (!lastResultsUf || typeof lastResultsUf !== "object") return 0;
   const uf = lastResultsUf as UfFilterResponse;
   if (typeof uf.total_uf === "number") return uf.total_uf;
   return Array.isArray(uf.unites_foncieres) ? uf.unites_foncieres.length : 0;
+}
+
+function isNotFound(err: unknown): boolean {
+  return typeof err === "object" && err !== null && "status" in err && (err as { status?: number }).status === 404;
 }
 
 export function useFetchProgress(projectId: string | null) {
@@ -36,6 +39,8 @@ export function useFetchProgress(projectId: string | null) {
   const [pipelineProgress, setPipelineProgress] = useState<PipelineProgress>(INITIAL_PIPELINE_PROGRESS);
   const socketRef = useRef<WebSocket | null>(null);
   const ufReadyRef = useRef(false);
+  const stopPollRef = useRef(false);
+  const activePidRef = useRef<string | null>(null);
 
   const resetFetchPhases = useCallback(() => {
     setParcellesReady(false);
@@ -45,8 +50,14 @@ export function useFetchProgress(projectId: string | null) {
   }, []);
 
   const syncFromStored = useCallback(async (pid: string) => {
+    if (activePidRef.current !== pid) {
+      return { nParc: 0, nUf: 0, stored: null, missing: false };
+    }
     try {
       const stored = await fetchProjectStoredResults(pid);
+      if (activePidRef.current !== pid) {
+        return { nParc: 0, nUf: 0, stored: null, missing: false };
+      }
       const parsed = parseStoredFilterResponse(stored.last_results);
       const nParc = parsed?.total ?? 0;
       const nUf = countUf(stored.last_results_uf);
@@ -57,18 +68,30 @@ export function useFetchProgress(projectId: string | null) {
       if (nUf > 0) {
         setUfReady(true);
         ufReadyRef.current = true;
+        stopPollRef.current = true;
+      }
+      if (nParc > 0 && nUf === 0) {
+        stopPollRef.current = true;
       }
 
       if (nParc > 0 || nUf > 0) {
         setPipelineProgress(completedPipelineProgress(nParc || undefined, nUf || undefined));
       }
-      return { nParc, nUf, stored };
-    } catch {
-      return { nParc: 0, nUf: 0, stored: null };
+      return { nParc, nUf, stored, missing: false };
+    } catch (err) {
+      if (isNotFound(err)) {
+        stopPollRef.current = true;
+        return { nParc: 0, nUf: 0, stored: null, missing: true };
+      }
+      return { nParc: 0, nUf: 0, stored: null, missing: false };
     }
   }, []);
 
   useEffect(() => {
+    activePidRef.current = projectId;
+    stopPollRef.current = false;
+    ufReadyRef.current = false;
+
     if (!projectId) {
       resetFetchPhases();
       return;
@@ -79,25 +102,29 @@ export function useFetchProgress(projectId: string | null) {
     const WS = getWsBaseUrl();
     const ws = new WebSocket(`${WS}/ws/projects/${projectId}/fetch-progress`);
     socketRef.current = ws;
+    const pid = projectId;
 
     ws.onopen = () => {
-      setConnected(true);
+      if (activePidRef.current === pid) setConnected(true);
     };
 
     ws.onmessage = (event) => {
+      if (activePidRef.current !== pid) return;
       try {
         const data = JSON.parse(event.data) as FetchProgressEvent;
         setProgress(data);
 
         const ev = data.event;
         if (ev === "start") {
+          stopPollRef.current = false;
           resetFetchPhases();
         } else if (ev === "phase:parcelles_ready") {
           setParcellesReady(true);
         } else if (ev === "phase:uf_ready") {
           setUfReady(true);
           ufReadyRef.current = true;
-          void syncFromStored(projectId);
+          stopPollRef.current = true;
+          void syncFromStored(pid);
         }
 
         if (ev && ev !== "connected" && ev !== "ping") {
@@ -109,22 +136,24 @@ export function useFetchProgress(projectId: string | null) {
     };
 
     ws.onclose = () => {
-      setConnected(false);
+      if (activePidRef.current === pid) setConnected(false);
     };
 
-    ws.onerror = (err) => {
-      console.error("WS error", err);
+    ws.onerror = () => {
+      /* projet introuvable ou socket fermée : pas de spam console */
     };
 
-    // Repli : UF terminée en base mais event WS manqué (navigation / reconnexion)
     const poll = window.setInterval(() => {
-      if (ufReadyRef.current) return;
-      void syncFromStored(projectId).then(({ nUf }) => {
-        if (nUf > 0) ufReadyRef.current = true;
-      });
+      if (activePidRef.current !== pid || stopPollRef.current || ufReadyRef.current) {
+        window.clearInterval(poll);
+        return;
+      }
+      void syncFromStored(pid);
     }, 4000);
 
     return () => {
+      activePidRef.current = null;
+      stopPollRef.current = true;
       window.clearInterval(poll);
       ws.close();
     };

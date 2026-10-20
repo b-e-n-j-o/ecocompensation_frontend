@@ -1,6 +1,6 @@
 // ─── FunnelDisplay ───────────────────────────────────────────────────────────
 import { useEffect, useMemo, useState } from "react";
-import type { FunnelStep } from "../../types";
+import type { FunnelStep } from "../../../types";
 
 interface FunnelDisplayProps {
   steps: FunnelStep[];

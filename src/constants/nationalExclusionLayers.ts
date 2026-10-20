@@ -1,5 +1,12 @@
 /** Clés alignées sur excluded_layers côté API (tables ecocompensation.*). */
-export type NationalExclusionKey = "geomce" | "preemption_ens" | "ens" | "natura_2000";
+export type NationalExclusionKey =
+  | "geomce"
+  | "preemption_ens"
+  | "ens"
+  | "natura_2000"
+  | "znieff_1"
+  | "znieff_2"
+  | "ebc";
 
 export type NationalExclusionLayer = {
   key: NationalExclusionKey;
@@ -33,6 +40,24 @@ export const NATIONAL_EXCLUSION_LAYERS: NationalExclusionLayer[] = [
     hint: "Exclut les parcelles intersectant le réseau Natura 2000 national (SIC / ZPS).",
     table: "ecocompensation.natura_2000",
   },
+  {
+    key: "znieff_1",
+    label: "ZNIEFF type 1",
+    hint: "Exclut toute parcelle qui intersecte une ZNIEFF de type 1. Biodiversité déjà remarquable : le gain écologique y est en pratique impossible à démontrer.",
+    table: "ecocompensation.znieff · type_znieff = 1",
+  },
+  {
+    key: "znieff_2",
+    label: "ZNIEFF type 2",
+    hint: "Optionnel. Grand ensemble : une parcelle dégradée à l’intérieur peut encore porter une compensation, sous réserve d’instruction DREAL.",
+    table: "ecocompensation.znieff · type_znieff = 2",
+  },
+  {
+    key: "ebc",
+    label: "Espaces boisés classés (couverture totale)",
+    hint: "Exclut seulement les parcelles couvertes à 100 % par un EBC, un EBC littoral ou un EBC présumé. L’EBC à créer reste dans le pool.",
+    table: "ecocompensation.v_ebc · exclusion seulement si couverture 100 %",
+  },
 ];
 
 export const DEFAULT_EXCLUDED_LAYERS: NationalExclusionKey[] = [
@@ -40,6 +65,7 @@ export const DEFAULT_EXCLUDED_LAYERS: NationalExclusionKey[] = [
   "preemption_ens",
   "ens",
   "natura_2000",
+  "znieff_1",
 ];
 
 export function exclusionLabel(key: string): string {
