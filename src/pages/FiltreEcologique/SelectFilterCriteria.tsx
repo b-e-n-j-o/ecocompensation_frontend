@@ -69,7 +69,7 @@ export function SelectFilterCriteria({
   onMillerThreshChange,
   cesbioLibelles,
   onCesbioLibellesChange,
-  faunaEnabled,
+  faunaEnabled: _faunaEnabled,
   onFaunaEnabledChange,
   faunaSpecies,
   onFaunaSpeciesChange,

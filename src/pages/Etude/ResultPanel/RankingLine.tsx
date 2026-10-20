@@ -222,7 +222,7 @@ function ZoneHumideIntersectBlock({
   );
 }
 
-function nearestFirst<T extends { dist_m?: number }>(items: T[]): T[] {
+function nearestFirst<T extends { dist_m?: number | null }>(items: T[]): T[] {
   return [...items].sort((a, b) => {
     const da = typeof a.dist_m === "number" ? a.dist_m : Number.POSITIVE_INFINITY;
     const db = typeof b.dist_m === "number" ? b.dist_m : Number.POSITIVE_INFINITY;

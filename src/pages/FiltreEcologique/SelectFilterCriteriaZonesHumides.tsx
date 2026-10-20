@@ -51,7 +51,7 @@ export function SelectFilterCriteriaZonesHumides({
   onZonesHumidesProbablesModeChange,
   excludedLayers,
   onExcludedLayersChange,
-  faunaEnabled,
+  faunaEnabled: _faunaEnabled,
   onFaunaEnabledChange,
   faunaSpecies,
   onFaunaSpeciesChange,

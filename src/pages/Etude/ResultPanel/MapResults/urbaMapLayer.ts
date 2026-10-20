@@ -93,7 +93,9 @@ function combine(
 ): maplibregl.FilterSpecification {
   const clause = hiddenClause(hidden);
   if (!clause) return base;
-  return ["all", base, clause];
+  // FilterSpecification est une union trop large pour que ["all", ...]
+  // reste inférable ; le résultat est bien un filtre MapLibre.
+  return ["all", base, clause] as maplibregl.FilterSpecification;
 }
 
 function ensureHatch(map: maplibregl.Map) {
@@ -140,7 +142,10 @@ export function syncUrbaLayers(
         id: FILL_ID,
         type: "fill",
         source: URBA_SOURCE_ID,
-        filter: combine(["all", POLYGON_FILTER, ["!", EBC_CODE]], hidden),
+        filter: combine(
+          ["all", POLYGON_FILTER, ["!", EBC_CODE]] as maplibregl.FilterSpecification,
+          hidden,
+        ),
         paint: {
           "fill-color": FILL_COLOR,
           "fill-opacity": ["case", ["boolean", ["feature-state", "highlighted"], false], 0.55, 0.28],
@@ -153,7 +158,10 @@ export function syncUrbaLayers(
         id: EBC_ID,
         type: "fill",
         source: URBA_SOURCE_ID,
-        filter: combine(["all", POLYGON_FILTER, EBC_CODE], hidden),
+        filter: combine(
+          ["all", POLYGON_FILTER, EBC_CODE] as maplibregl.FilterSpecification,
+          hidden,
+        ),
         paint: {
           "fill-color": "#1f7a3a",
           "fill-opacity": ["case", ["boolean", ["feature-state", "highlighted"], false], 0.35, 0.16],
@@ -202,10 +210,19 @@ export function syncUrbaLayers(
   }
   existing.setData(data);
   if (map.getLayer(FILL_ID)) {
-    map.setFilter(FILL_ID, combine(["all", POLYGON_FILTER, ["!", EBC_CODE]], hidden));
+    map.setFilter(
+      FILL_ID,
+      combine(
+        ["all", POLYGON_FILTER, ["!", EBC_CODE]] as maplibregl.FilterSpecification,
+        hidden,
+      ),
+    );
   }
   if (map.getLayer(EBC_ID)) {
-    map.setFilter(EBC_ID, combine(["all", POLYGON_FILTER, EBC_CODE], hidden));
+    map.setFilter(
+      EBC_ID,
+      combine(["all", POLYGON_FILTER, EBC_CODE] as maplibregl.FilterSpecification, hidden),
+    );
   }
   if (map.getLayer(LINE_ID)) {
     map.setFilter(LINE_ID, combine(["!=", ["get", "famille"], "servitude"], hidden));

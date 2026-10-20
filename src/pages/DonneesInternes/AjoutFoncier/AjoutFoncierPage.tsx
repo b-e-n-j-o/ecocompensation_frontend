@@ -136,13 +136,6 @@ function bboxOf(items: Item[]): [number, number, number, number] | null {
 const fmtHa = (m2: number) => (m2 / 10000).toLocaleString("fr-FR", { maximumFractionDigits: 2 });
 const fmtM2 = (m2: number | null) => (m2 == null ? "—" : Math.round(m2).toLocaleString("fr-FR"));
 
-function toNumberOrNull(s: string): number | null {
-  const v = s.trim().replace(",", ".");
-  if (!v) return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
 function cellToValue(raw: string): AttrValue {
   const s = raw.trim();
   if (s === "") return null;
