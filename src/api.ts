@@ -705,14 +705,24 @@ export async function startPoolRunDurete(
   runId: string,
   idus?: string[] | null,
 ): Promise<PoolDureteRecomputeResponse> {
-  const res = await fetch(
-    `${API}/api/projects/${projectId}/pool/runs/${runId}/recompute-durete`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(idus?.length ? { idus } : {}),
-    },
-  );
+  let res: Response;
+  try {
+    res = await fetch(
+      `${API}/api/projects/${projectId}/pool/runs/${runId}/recompute-durete`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(idus?.length ? { idus } : {}),
+      },
+    );
+  } catch (e) {
+    throw new Error(
+      "Le backend Render n’a pas répondu (réveil d’instance, 502/503). " +
+        "Le message CORS dans la console vient d’une page d’erreur Render sans en-têtes CORS. " +
+        "Réessayez dans quelques secondes." +
+        (e instanceof Error && e.message ? ` (${e.message})` : ""),
+    );
+  }
   if (!res.ok) await throwHttpError(res);
   return res.json();
 }
