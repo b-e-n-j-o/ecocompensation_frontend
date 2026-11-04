@@ -31,7 +31,8 @@ import {
   fetchProjectStoredResults,
   fetchProjects,
   deleteProject,
-  computePoolRunDurete,
+  startPoolRunDurete,
+  fetchPoolRunDureteJob,
   computePoolRunUrbanisme,
   addParcellesToPoolRun,
   startUfSearch,
@@ -431,6 +432,13 @@ export function EtudeResultats({
   const [indesirableParcellesStored, setIndesirableParcellesStored] = useState<FilterResponse["parcelles"]>([]);
   const [indesirableMetricsByIdu, setIndesirableMetricsByIdu] = useState<Record<string, ParcelPoolMetricRow[]>>({});
   const [dureteFonciereLoading, setDureteFonciereLoading] = useState(false);
+  const [dureteProgress, setDureteProgress] = useState<{
+    done: number;
+    total: number;
+    remaining: number;
+    phase: string;
+  } | null>(null);
+  const dureteJobSeqRef = useRef(0);
   const [urbanismeLoading, setUrbanismeLoading] = useState(false);
   const [toolNotice, setToolNotice] = useState<{ title: string; body: string; error?: boolean } | null>(null);
   const [addParcellesLoading, setAddParcellesLoading] = useState(false);
@@ -918,22 +926,80 @@ export function EtudeResultats({
     setDetailFocus((prev) => ({ idu: target, tab, nonce: (prev?.nonce ?? 0) + 1 }));
   }
 
+  async function refreshPoolMetricsQuiet() {
+    const runId = initialRunId ?? results?.pool_run_id ?? null;
+    if (!projectId || !runId) return;
+    const bulk = await fetchPoolRunMetricsBulk(projectId, runId);
+    setPoolMetricsByIdu(normalizePoolMetricsByIdu(bulk.by_idu));
+  }
+
   async function handleRunDureteFonciere(idus?: string[]) {
     const runId = initialRunId ?? results?.pool_run_id ?? null;
     if (!projectId || !runId) return;
+    const seq = ++dureteJobSeqRef.current;
+    const guessTotal = idus?.length || results?.parcelles?.length || 0;
     setDureteFonciereLoading(true);
+    setDureteProgress({
+      done: 0,
+      total: guessTotal,
+      remaining: guessTotal,
+      phase: "queued",
+    });
     try {
-      await computePoolRunDurete(projectId, runId, idus);
-      setMetricsRefreshNonce((n) => n + 1);
-      openComputedRankingLine("durete", idus);
+      const started = await startPoolRunDurete(projectId, runId, idus);
+      const jobId = started.job_id;
+      if (!jobId) {
+        throw new Error("Le serveur n’a pas renvoyé d’identifiant de job dureté.");
+      }
+      let lastDone = -1;
+      const deadline = Date.now() + 30 * 60_000;
+      while (Date.now() < deadline) {
+        if (dureteJobSeqRef.current !== seq) return;
+        const job = await fetchPoolRunDureteJob(projectId, runId, jobId);
+        const total = job.total_idus ?? guessTotal;
+        const done = job.done_idus ?? 0;
+        const remaining = job.remaining_idus ?? Math.max(0, total - done);
+        setDureteProgress({
+          done,
+          total,
+          remaining,
+          phase: job.phase ?? job.status,
+        });
+        if (done !== lastDone) {
+          lastDone = done;
+          try {
+            await refreshPoolMetricsQuiet();
+          } catch (e) {
+            console.warn("Métriques dureté (progress):", e);
+          }
+        }
+        if (job.status === "ok") {
+          try {
+            await refreshPoolMetricsQuiet();
+          } catch (e) {
+            console.warn("Métriques dureté (fin):", e);
+          }
+          openComputedRankingLine("durete", idus);
+          return;
+        }
+        if (job.status === "error") {
+          throw new Error(job.error || "Échec du calcul de dureté foncière.");
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      throw new Error("Le calcul de dureté foncière dépasse 30 minutes.");
     } catch (e) {
+      if (dureteJobSeqRef.current !== seq) return;
       setToolNotice({
         title: "Dureté foncière",
         body: e instanceof Error ? e.message : "Échec du calcul de dureté foncière.",
         error: true,
       });
     } finally {
-      setDureteFonciereLoading(false);
+      if (dureteJobSeqRef.current === seq) {
+        setDureteFonciereLoading(false);
+        setDureteProgress(null);
+      }
     }
   }
 
@@ -1371,8 +1437,7 @@ export function EtudeResultats({
   }, [geojson, poolMetricsByIdu, indesirableIdus]);
 
   const isPoolMetricsPending =
-    dureteFonciereLoading
-    || urbanismeLoading
+    urbanismeLoading
     || addParcellesLoading
     || (!!results?.pool_run_id && loading && (filterLoadingStage === "profiling" || filterLoadingStage === "metrics_loading"));
 
@@ -1380,8 +1445,6 @@ export function EtudeResultats({
     ? "Ajout au pool et enrichissement…"
     : urbanismeLoading
     ? "Profil urbanisme en cours (Géoportail)…"
-    : dureteFonciereLoading
-    ? "Calcul de la dureté foncière en cours…"
     : (loadingStatusText ?? "Calcul des métriques en cours…");
 
   const activeRunId = initialRunId ?? results?.pool_run_id ?? null;
@@ -1603,6 +1666,7 @@ export function EtudeResultats({
                     onBatchMarkIndesirable={handleBatchMarkIndesirable}
                     onRunDureteFonciere={handleRunDureteFonciere}
                     dureteFonciereLoading={dureteFonciereLoading}
+                    dureteProgress={dureteProgress}
                     onRunUrbanisme={handleRunUrbanisme}
                     urbanismeLoading={urbanismeLoading}
                     onAddParcelles={handleAddParcelles}

@@ -650,14 +650,20 @@ export type PoolDureteRecomputeResponse = {
   project_id: string;
   run_id: string;
   metric_key: string;
-  updated_count: number;
-  active_idus: number;
+  job_id?: string;
+  error?: string;
+  phase?: string;
+  done_idus?: number;
+  total_idus?: number;
+  remaining_idus?: number;
+  updated_count?: number;
+  active_idus?: number;
   requested_idus?: number;
-  skipped_indesirables: number;
-  eligible_pm: number;
-  pm_upserts: number;
-  composite_updated: number;
-  duration_s: number;
+  skipped_indesirables?: number;
+  eligible_pm?: number;
+  pm_upserts?: number;
+  composite_updated?: number;
+  duration_s?: number;
 };
 
 export type PoolUrbaRecomputeResponse = {
@@ -693,8 +699,8 @@ export async function computePoolRunUrbanisme(
   return res.json();
 }
 
-/** Dureté foncière (attractivité) — tout le pool actif, ou une sélection d'IDU. */
-export async function computePoolRunDurete(
+/** Démarre le calcul de dureté (job async). Poller `fetchPoolRunDureteJob`. */
+export async function startPoolRunDurete(
   projectId: string,
   runId: string,
   idus?: string[] | null,
@@ -706,6 +712,18 @@ export async function computePoolRunDurete(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(idus?.length ? { idus } : {}),
     },
+  );
+  if (!res.ok) await throwHttpError(res);
+  return res.json();
+}
+
+export async function fetchPoolRunDureteJob(
+  projectId: string,
+  runId: string,
+  jobId: string,
+): Promise<PoolDureteRecomputeResponse> {
+  const res = await fetch(
+    `${API}/api/projects/${projectId}/pool/runs/${runId}/recompute-durete/jobs/${jobId}`,
   );
   if (!res.ok) await throwHttpError(res);
   return res.json();

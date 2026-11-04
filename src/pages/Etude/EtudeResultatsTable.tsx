@@ -37,6 +37,7 @@ type ParcellesTableProps = RankingShared & {
   onBatchMarkIndesirable: (idus: string[]) => Promise<void>;
   onRunDureteFonciere: (idus?: string[]) => void | Promise<void>;
   dureteFonciereLoading: boolean;
+  dureteProgress?: { done: number; total: number; remaining: number; phase: string } | null;
   onRunUrbanisme: (idus?: string[]) => void | Promise<void>;
   urbanismeLoading: boolean;
   onAddParcelles: (idus: string[]) => void | Promise<void>;
@@ -90,6 +91,7 @@ export function EtudeResultatsParcellesTable({
   onBatchMarkIndesirable,
   onRunDureteFonciere,
   dureteFonciereLoading,
+  dureteProgress = null,
   onRunUrbanisme,
   urbanismeLoading,
   onAddParcelles,
@@ -127,6 +129,7 @@ export function EtudeResultatsParcellesTable({
             onBatchMarkIndesirable={onBatchMarkIndesirable}
             onRunDureteFonciere={onRunDureteFonciere}
             dureteFonciereLoading={dureteFonciereLoading}
+            dureteProgress={dureteProgress}
             onRunUrbanisme={onRunUrbanisme}
             urbanismeLoading={urbanismeLoading}
             onAddParcelles={onAddParcelles}

@@ -348,6 +348,13 @@
   font-style: italic;
 }
 
+.ranking-chrome__status--durete {
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: #1d4ed8;
+}
+
 .ranking-tools {
   display: flex;
   flex-direction: column;

@@ -74,6 +74,7 @@ interface RankingTableProps {
   /** Calcule la dureté foncière : tout le pool, ou les IDU fournis. */
   onRunDureteFonciere?: (idus?: string[]) => void | Promise<void>;
   dureteFonciereLoading?: boolean;
+  dureteProgress?: { done: number; total: number; remaining: number; phase: string } | null;
   /** Profil urbanisme GPU : tout le pool, ou les IDU fournis. */
   onRunUrbanisme?: (idus?: string[]) => void | Promise<void>;
   urbanismeLoading?: boolean;
@@ -216,6 +217,7 @@ export function RankingTable({
   onBatchMarkIndesirable,
   onRunDureteFonciere,
   dureteFonciereLoading = false,
+  dureteProgress = null,
   onRunUrbanisme,
   urbanismeLoading = false,
   onAddParcelles,
@@ -418,7 +420,7 @@ export function RankingTable({
       return;
     }
     exitSelectionMode();
-    await onRunDureteFonciere(idus);
+    void onRunDureteFonciere(idus);
   }
 
   async function handleUrbaSelected() {
@@ -560,7 +562,11 @@ export function RankingTable({
             <span className="ranking-chrome__chip">≥ {poolFilters.surfaceMinHa.toFixed(1)} ha</span>
           )}
           {dureteFonciereLoading && (
-            <span className="ranking-chrome__status">Dureté…</span>
+            <span className="ranking-chrome__status ranking-chrome__status--durete" aria-live="polite">
+              {dureteProgress && dureteProgress.total > 0
+                ? `Dureté ${dureteProgress.done} / ${dureteProgress.total} · reste ${dureteProgress.remaining}`
+                : "Dureté en cours…"}
+            </span>
           )}
           {urbanismeLoading && (
             <span className="ranking-chrome__status">Urbanisme…</span>
@@ -689,14 +695,18 @@ export function RankingTable({
                         setUrbaMenuOpen(false);
                       }}
                     >
-                      {dureteFonciereLoading ? "Dureté…" : "Dureté foncière"}
+                      {dureteFonciereLoading && dureteProgress && dureteProgress.total > 0
+                        ? `Dureté ${dureteProgress.done}/${dureteProgress.total}`
+                        : dureteFonciereLoading
+                          ? "Dureté…"
+                          : "Dureté foncière"}
                     </button>
                   )}
                   {hasUrba && (
                     <button
                       type="button"
                       className={`ranking-btn-durete${urbaMenuOpen ? " is-on" : ""}`}
-                      disabled={urbanismeLoading || dureteFonciereLoading || selectionMode || poolMetricsLoading}
+                      disabled={urbanismeLoading || selectionMode || poolMetricsLoading}
                       onClick={() => {
                         setUrbaMenuOpen((v) => !v);
                         setDureteMenuOpen(false);
@@ -742,7 +752,7 @@ export function RankingTable({
                     <button
                       type="button"
                       className={`ranking-btn-add-pool${addPanelOpen ? " is-on" : ""}`}
-                      disabled={addParcellesLoading || dureteFonciereLoading || selectionMode}
+                      disabled={addParcellesLoading || selectionMode}
                       title="Ajouter une parcelle au pool (IDU)"
                       onClick={() => {
                         setAddPanelOpen((v) => !v);
@@ -812,7 +822,7 @@ export function RankingTable({
                       type="button"
                       className="ranking-btn-export"
                       disabled={exporting || exportingPdf}
-                      title="GeoPackage : parcelles + zone projet + aire d'étude. Attributs zh / zh_int / zh_pct / zh_m2 = intersection zone humide (si le critère était actif). occ_sol = JSON des parts d'occupation du sol. Un shapefile tronqué (254 c.) est aussi dans le zip."
+                      title="GeoPackage : parcelles + zone projet + aire d'étude. occ_sol = répartition d'occupation du sol (végétation hybride), occ_json = parts 0–1. zh / zh_int / zh_pct / zh_m2 = intersection zone humide. Un shapefile tronqué (254 c.) est aussi dans le zip."
                       onClick={() => void handleExport("shp")}
                     >
                       GPKG
@@ -831,7 +841,7 @@ export function RankingTable({
                       className="ranking-add-pool__input"
                       value={addDraft}
                       onChange={(e) => setAddDraft(e.target.value)}
-                      disabled={addParcellesLoading || dureteFonciereLoading}
+                      disabled={addParcellesLoading}
                       placeholder="IDU — ex. 330770000E0121"
                       spellCheck={false}
                       autoFocus
@@ -840,7 +850,7 @@ export function RankingTable({
                     <button
                       type="submit"
                       className="ranking-btn-add-pool"
-                      disabled={addParcellesLoading || dureteFonciereLoading || !addDraft.trim()}
+                      disabled={addParcellesLoading || !addDraft.trim()}
                     >
                       {addParcellesLoading ? "Ajout…" : "Ajouter"}
                     </button>
@@ -1353,6 +1363,7 @@ export function RankingTable({
         <p>
           Calculer la dureté foncière pour les {parcelles.length} parcelle
           {parcelles.length > 1 ? "s" : ""} du classement (hors indésirables).
+          Le tableau reste utilisable : les scores apparaissent au fur et à mesure.
         </p>
       </AppDialog>
     )}
