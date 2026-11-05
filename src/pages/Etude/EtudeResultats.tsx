@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { AppDialog } from "./ResultPanel/AppDialog";
-import { FunnelDisplay } from "./ResultPanel/FunnelDisplay";
 import { ResultsToolbar, type ResultsToolbarStatus } from "./ResultPanel/ResultsToolbar";
+import { FilterParamsTab } from "./FiltrageParam/FilterParamTab";
+import { readFilterConfig } from "./FiltrageParam/FilterCatalog";
+import type { FilterConfig } from "./FiltrageParam/FilterCatalog";
 import { PipelineProgressPanel } from "../../components/PipelineProgressPanel";
 import {
   EtudeResultatsCombinedTable,
@@ -66,7 +68,7 @@ import "./ResultPanel/results-page.css";
 import type { FeatureCollection, GeoJsonProperties, Geometry } from "geojson";
 
 /** Onglets principaux : Parcelles | Unités foncières */
-type MainResultsTab = "parcelles" | "unites" | "combine";
+type MainResultsTab = "parcelles" | "unites" | "combine" | "filtrage";
 /** Sous-vues : tableau | carte */
 type ResultsSubView = "classement" | "classement_combine" | "carte";
 type FilterLoadingStage = "idle" | "filtering" | "profiling" | "metrics_loading";
@@ -377,6 +379,8 @@ export function EtudeResultats({
   const [ufResults, setUfResults] = useState<UfFilterResponse | null>(null);
   const [ufGeojson, setUfGeojson] = useState<FeatureCollection<Geometry, GeoJsonProperties> | null>(null);
   const [results, setResults] = useState<FilterResponse | null>(null);
+  /** Config figée du pool affiché (pas le panneau de saisie courant). */
+  const [appliedFilterConfig, setAppliedFilterConfig] = useState<FilterConfig | null>(null);
   const [geojson, setGeojson] = useState<ParcellesGeoJSON | null>(null);
   const [foncierGeojson, setFoncierGeojson] = useState<unknown | null>(null);
   const [mainResultsTab, setMainResultsTab] = useState<MainResultsTab>("parcelles");
@@ -447,8 +451,6 @@ export function EtudeResultats({
   const [ufPoolLoading, setUfPoolLoading] = useState(false);
   const [storedResultsLoading, setStoredResultsLoading] = useState(false);
   const [storedProjectStatus, setStoredProjectStatus] = useState<string | null>(null);
-  const hasParcellesFunnel = (results?.funnel ?? []).some((s) => s.count >= 0);
-  const hasUfFunnel = (ufResults?.funnel ?? []).some((s) => s.count >= 0);
 
   const currentStudyProfile = useMemo(() => {
     const current = projects.find((p) => p.id === projectId);
@@ -646,6 +648,7 @@ export function EtudeResultats({
           run_created_at: run_created_at ?? undefined,
         });
         setLastFilterOptions(filter_options as FilterOptions);
+        setAppliedFilterConfig(readFilterConfig(snap.filter_config ?? snap.filter_options));
 
         if (active) {
           setLoading(false);
@@ -799,6 +802,7 @@ export function EtudeResultats({
                 if (snap.filter_options) {
                   setLastFilterOptions(snap.filter_options as FilterOptions);
                 }
+                setAppliedFilterConfig(readFilterConfig(snap.filter_config ?? snap.filter_options));
                 if (snap.by_idu) {
                   setPoolMetricsByIdu(normalizePoolMetricsByIdu(snap.by_idu));
                   metricsFromSnapshot = true;
@@ -811,7 +815,11 @@ export function EtudeResultats({
         }
 
         if (parsed && !cancelled) {
-          setResults(parsed);
+          const radius =
+            parsed.final_radius_km > 0
+              ? parsed.final_radius_km
+              : stored.buffer_km ?? 0;
+          setResults({ ...parsed, final_radius_km: radius });
           if (!metricsFromSnapshot) {
             setPoolMetricsByIdu(null);
           }
@@ -819,6 +827,17 @@ export function EtudeResultats({
 
         if (filterOpts && !cancelled) {
           setLastFilterOptions(filterOpts);
+        }
+        if (parsed && !cancelled) {
+          const fromResults = readFilterConfig(parsed.filter_config);
+          const fromLastFilter = readFilterConfig(stored.last_filter);
+          const cfg = fromResults ?? fromLastFilter;
+          if (cfg) {
+            setAppliedFilterConfig({
+              ...cfg,
+              buffer_km: cfg.buffer_km ?? stored.buffer_km ?? parsed.final_radius_km,
+            });
+          }
         }
 
         const ufRaw = stored.last_results_uf;
@@ -1035,6 +1054,7 @@ export function EtudeResultats({
         run_created_at: run_created_at ?? undefined,
       });
       if (filter_options) setLastFilterOptions(filter_options as FilterOptions);
+      setAppliedFilterConfig(readFilterConfig(snap.filter_config ?? snap.filter_options));
       const next = await fetchPoolIndesirables(projectId);
       setIndesirableIdus(next.idus ?? []);
       setIndesirableParcellesStored(next.parcelles ?? []);
@@ -1534,31 +1554,14 @@ export function EtudeResultats({
             ? () => navigate(`/ecocompensation`, { state: { editProjectId: projectId } })
             : undefined
         }
-        onPoolChange={handleToolbarPoolChange}
-        preferOpen={!!results && results.total === 0}
+        filterParamsOpen={mainResultsTab === "filtrage"}
+        onToggleFilterParams={
+          results
+            ? () => setMainResultsTab((t) => (t === "filtrage" ? "parcelles" : "filtrage"))
+            : undefined
+        }
         hidePoolPicker={!projectId}
-      >
-        {hasParcellesFunnel && results && (
-          <FunnelDisplay
-            compact
-            title="Entonnoir parcelles"
-            steps={results.funnel ?? []}
-            finalRadiusKm={results.final_radius_km}
-            total={results.total}
-          />
-        )}
-        {hasUfFunnel && ufResults && (
-          <FunnelDisplay
-            compact
-            title="Entonnoir UF"
-            steps={ufResults.funnel ?? []}
-            finalRadiusKm={0}
-            total={ufResults.total_sous_ensembles}
-            entityLabel="sous-ensembles"
-            extraSummary={`${ufResults.total_uf} UF`}
-          />
-        )}
-      </ResultsToolbar>
+      />
 
       <div className="results-page__body">
         {showStudyLoader ? (
@@ -1621,9 +1624,19 @@ export function EtudeResultats({
               {mainResultsTab === "parcelles" && results.total === 0 && (
                 <div style={{ padding: 12, color: "#000000", fontSize: 13 }}>
                   Aucune parcelle retenue après filtrage. Ouvrez{" "}
-                  <strong>Informations du pool</strong> pour voir à quelle étape elles ont été éliminées,
+                  <strong>Paramètres de filtrage</strong> dans la barre du haut pour voir à quelle étape elles ont été éliminées,
                   ou ajoutez un IDU via <strong>Outils</strong>.
                 </div>
+              )}
+
+              {mainResultsTab === "filtrage" && (
+                <FilterParamsTab
+                  steps={results.funnel ?? []}
+                  filterConfig={appliedFilterConfig ?? readFilterConfig(results.filter_config)}
+                  total={results.total}
+                  finalRadiusKm={results.final_radius_km}
+                  computedAt={results.run_created_at}
+                />
               )}
 
               {mainResultsTab === "parcelles" && (

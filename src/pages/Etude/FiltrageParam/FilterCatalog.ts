@@ -14,10 +14,13 @@ export interface FaunaCriterion {
 }
 
 export interface FilterConfig {
+  /** Tampon AOI (km) autour du foncier déposé. 0 = recherche dans le périmètre seulement. */
+  buffer_km?: number | null;
   min_area_ha?: number;
   miller_thresh?: number | null;
   cesbio_libelles?: string[];
   fauna_criteria?: FaunaCriterion[];
+  fauna_combine?: "or" | "and";
   search_mode?: SearchMode;
   zone_humide_mode?: ZhMode;
   min_zone_humide_ha?: number;
@@ -46,6 +49,35 @@ export const THEME_LABELS: Record<FilterTheme, string> = {
 };
 
 export const THEME_ORDER: FilterTheme[] = ["surface", "emprise", "protections", "ecologie", "hydro", "agricole", "autre"];
+
+/** Ordre du panneau de filtrage (CreateAoiPage), pas l'ordre SQL de l'entonnoir. */
+/** Critères calculés mais masqués dans le compte rendu (implicites pour l'utilisateur). */
+export const HIDDEN_FROM_REPORT = new Set(["search_mode"]);
+
+export const UI_CRITERION_ORDER: string[] = [
+  "fauna_criteria",
+  "min_area_ha",
+  "miller_thresh",
+  "cesbio_libelles",
+  "zone_humide_mode",
+  "zones_humides_probables_mode",
+  "same_bassin_versant",
+  "troncons_hydros_max_dist_m",
+  "surfaces_hydros_max_dist_m",
+  "arrachage_vignes",
+  "geomce",
+  "preemption_ens",
+  "ens",
+  "natura_2000",
+  "znieff_1",
+  "znieff_2",
+  "ebc",
+];
+
+export function uiCriterionIndex(key: string): number {
+  const i = UI_CRITERION_ORDER.indexOf(key);
+  return i === -1 ? UI_CRITERION_ORDER.length : i;
+}
 
 // ── Spécification d'un critère ───────────────────────────────────────────────
 export interface CriterionDetail {
@@ -207,6 +239,7 @@ export function buildCriteria(config: FilterConfig | null | undefined): Criterio
 
   // Faune
   const fauna = c?.fauna_criteria ?? [];
+  const faunaAnd = c?.fauna_combine === "and";
   specs.push({
     key: "fauna_criteria",
     theme: "ecologie",
@@ -215,13 +248,20 @@ export function buildCriteria(config: FilterConfig | null | undefined): Criterio
       fauna.length === 1
         ? `Présence : ${fauna[0].species} (≤ ${fmtDist(fauna[0].dist_m)})`
         : fauna.length > 1
-          ? `Présence d'au moins une espèce cible (${fauna.length})`
+          ? faunaAnd
+            ? `Présence de toutes les espèces cibles (${fauna.length}, ET)`
+            : `Présence d'au moins une espèce cible (${fauna.length}, OU)`
           : "Présence d'espèces",
     description:
       fauna.length > 1
-        ? "Conserve les parcelles proches d'une observation d'au moins une des espèces (OU entre espèces)."
+        ? faunaAnd
+          ? "Conserve les parcelles proches d'une observation de chacune des espèces (ET)."
+          : "Conserve les parcelles proches d'une observation d'au moins une des espèces (OU)."
         : "Conserve les parcelles proches d'une observation de l'espèce cible.",
-    details: fauna.map((f) => ({ label: f.species, value: `observation à ≤ ${fmtDist(f.dist_m)}` })),
+    details: [
+      ...(fauna.length > 1 ? [{ label: "Combinaison", value: faunaAnd ? "ET (toutes)" : "OU (au moins une)" }] : []),
+      ...fauna.map((f) => ({ label: f.species, value: `observation à ≤ ${fmtDist(f.dist_m)}` })),
+    ],
     applied: ap(fauna.length > 0),
   });
 
@@ -322,7 +362,7 @@ export function buildCriteria(config: FilterConfig | null | undefined): Criterio
     applied: ap(!!c?.arrachage_vignes),
   });
 
-  return specs;
+  return [...specs].sort((a, b) => uiCriterionIndex(a.key) - uiCriterionIndex(b.key));
 }
 
 // ── Rattachement étape du funnel → critère ───────────────────────────────────
@@ -351,4 +391,23 @@ const STEP_MATCHERS: Array<[string, RegExp]> = [
 export function matchStepKey(step: { key?: string; label: string }): string | null {
   if (step.key) return step.key;
   return STEP_MATCHERS.find(([, re]) => re.test(step.label))?.[0] ?? null;
+}
+
+/** Config réellement utilisée pour un pool (last_results.filter_config, options du run, ou last_filter). */
+export function readFilterConfig(raw: unknown): FilterConfig | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const nested = o.filter_config;
+  const src =
+    nested && typeof nested === "object" && !Array.isArray(nested)
+      ? (nested as Record<string, unknown>)
+      : o;
+  const looksLikeConfig =
+    "min_area_ha" in src
+    || "fauna_criteria" in src
+    || "excluded_layers" in src
+    || "zone_humide_mode" in src
+    || src.pipeline === "filter_v2";
+  if (!looksLikeConfig) return null;
+  return src as FilterConfig;
 }

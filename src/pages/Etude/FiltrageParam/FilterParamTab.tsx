@@ -1,11 +1,12 @@
 // ─── FilterParamsTab ─────────────────────────────────────────────────────────
-// Onglet « Paramètres de filtrage » de la page étude :
-// compte rendu critère par critère (gauche) + entonnoir existant (droite).
+// Onglet « Paramètres de filtrage » : compte rendu des critères du pool.
+import type { FilterConfig } from "./FilterCatalog";
 import { FilterReport, type FunnelStepEnriched, type NormalizedCriterion } from "./FilterReport";
-import { FunnelDisplay } from "./FunnelDisplay";
+import "./FilterReport.css";
 
 interface FilterParamsTabProps {
   steps: FunnelStepEnriched[];
+  filterConfig?: FilterConfig | null;
   total: number;
   aoiTotal?: number | null;
   finalRadiusKm?: number;
@@ -16,6 +17,7 @@ interface FilterParamsTabProps {
 
 export function FilterParamsTab({
   steps,
+  filterConfig = null,
   total,
   aoiTotal = null,
   finalRadiusKm = 0,
@@ -25,28 +27,17 @@ export function FilterParamsTab({
 }: FilterParamsTabProps) {
   return (
     <div className="fparams-tab">
-      <div className="fparams-main">
-        <h3 className="fparams-title">Compte rendu du filtrage</h3>
-        <FilterReport
-          steps={steps}
-          total={total}
-          aoiTotal={aoiTotal}
-          finalRadiusKm={finalRadiusKm}
-          entityLabel={entityLabel}
-          computedAt={computedAt}
-          onShowExcluded={onShowExcluded}
-        />
-      </div>
-      <aside className="fparams-side">
-        <FunnelDisplay
-          steps={steps}
-          total={total}
-          finalRadiusKm={finalRadiusKm}
-          entityLabel={entityLabel}
-          title="Entonnoir"
-          compact
-        />
-      </aside>
+      <h3 className="fparams-title">Compte rendu du filtrage</h3>
+      <FilterReport
+        steps={steps}
+        filterConfig={filterConfig}
+        total={total}
+        aoiTotal={aoiTotal}
+        finalRadiusKm={finalRadiusKm}
+        entityLabel={entityLabel}
+        computedAt={computedAt}
+        onShowExcluded={onShowExcluded}
+      />
     </div>
   );
 }

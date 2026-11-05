@@ -439,6 +439,7 @@ export type FilterPipelineBody = {
   miller_thresh?: number | null;
   cesbio_libelles: string[];
   fauna_criteria: { species: string; dist_m: number }[];
+  fauna_combine?: "or" | "and";
   zone_humide_mode?: "ignore" | "intersect" | "exclude";
   zones_humides_probables_mode?: "ignore" | "intersect" | "exclude";
   /** Surface min. (ha) de ZH établie intersectant la parcelle (mode intersect). */
@@ -880,6 +881,7 @@ export async function fetchProjectStoredResults(projectId: string): Promise<{
   last_filter: unknown;
   last_results_uf: unknown;
   last_filter_uf: unknown;
+  buffer_km: number | null;
 }> {
   const res = await fetch(`${API}/api/projects/${projectId}/results`);
   if (!res.ok) {
@@ -893,6 +895,7 @@ export async function fetchProjectStoredResults(projectId: string): Promise<{
     last_filter?: unknown;
     last_results_uf?: unknown;
     last_filter_uf?: unknown;
+    buffer_km?: number | null;
   };
   return {
     status: data.status ?? "unknown",
@@ -900,6 +903,7 @@ export async function fetchProjectStoredResults(projectId: string): Promise<{
     last_filter: data.last_filter ?? null,
     last_results_uf: data.last_results_uf ?? null,
     last_filter_uf: data.last_filter_uf ?? null,
+    buffer_km: typeof data.buffer_km === "number" ? data.buffer_km : null,
   };
 }
 

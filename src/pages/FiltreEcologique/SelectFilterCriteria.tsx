@@ -29,6 +29,8 @@ type Props = {
   onFaunaSpeciesChange: (v: string[]) => void;
   faunaDistM: number;
   onFaunaDistMChange: (v: number) => void;
+  faunaCombine: "or" | "and";
+  onFaunaCombineChange: (v: "or" | "and") => void;
   zoneHumideMode: ZoneHumideMode;
   onZoneHumideModeChange: (v: ZoneHumideMode) => void;
   minZoneHumideHa: number;
@@ -75,6 +77,8 @@ export function SelectFilterCriteria({
   onFaunaSpeciesChange,
   faunaDistM,
   onFaunaDistMChange,
+  faunaCombine,
+  onFaunaCombineChange,
   zoneHumideMode,
   onZoneHumideModeChange,
   minZoneHumideHa,
@@ -120,6 +124,30 @@ export function SelectFilterCriteria({
           disabled={disabled}
           compact
         />
+        {faunaSpecies.length > 1 && (
+          <div className="eco-zh-modes" style={{ marginTop: "0.55rem" }} role="group" aria-label="Combinaison des espèces">
+            <label className="eco-zh-mode">
+              <input
+                type="radio"
+                name="fauna-combine"
+                checked={faunaCombine === "or"}
+                disabled={disabled}
+                onChange={() => onFaunaCombineChange("or")}
+              />
+              OU — au moins une
+            </label>
+            <label className="eco-zh-mode">
+              <input
+                type="radio"
+                name="fauna-combine"
+                checked={faunaCombine === "and"}
+                disabled={disabled}
+                onChange={() => onFaunaCombineChange("and")}
+              />
+              ET — toutes
+            </label>
+          </div>
+        )}
         <div
           className={`eco-aoi-slider${faunaSpecies.length === 0 ? " is-muted" : ""}`}
           style={{ marginTop: "0.65rem" }}

@@ -89,6 +89,7 @@ export function CreateAoiPage({
   ]);
   const [faunaEnabled, setFaunaEnabled] = useState(false);
   const [faunaSpecies, setFaunaSpecies] = useState<string[]>([]);
+  const [faunaCombine, setFaunaCombine] = useState<"or" | "and">("or");
   const [faunaDistM, setFaunaDistM] = useState(1000);
   const [ufParcelles, setUfParcelles] = useState<ParcelleRef[]>([]);
   const [nameTouched, setNameTouched] = useState(false);
@@ -159,6 +160,7 @@ export function CreateAoiPage({
               ?? (first as { radius_m?: number }).radius_m;
             if (typeof dist === "number") setFaunaDistM(dist);
           }
+          setFaunaCombine(raw.fauna_combine === "and" ? "and" : "or");
         }
         if (raw.zone_humide_mode === "intersect" || raw.zone_humide_mode === "exclude" || raw.zone_humide_mode === "ignore") {
           setFauneZoneHumideMode(raw.zone_humide_mode);
@@ -383,6 +385,7 @@ export function CreateAoiPage({
       fauna_criteria: faunaEnabled
         ? faunaSpecies.map((species) => ({ species, dist_m: faunaDistM }))
         : [],
+      fauna_combine: faunaEnabled && faunaSpecies.length > 1 ? faunaCombine : "or",
       zone_humide_mode: isZh
         ? (minZoneHumideHa > 0 ? "intersect" as const : "ignore" as const)
         : fauneZoneHumideMode,
@@ -898,6 +901,8 @@ export function CreateAoiPage({
             onFaunaSpeciesChange={setFaunaSpecies}
             faunaDistM={faunaDistM}
             onFaunaDistMChange={setFaunaDistM}
+            faunaCombine={faunaCombine}
+            onFaunaCombineChange={setFaunaCombine}
             tronconsHydroEnabled={tronconsHydroEnabled}
             onTronconsHydroEnabledChange={setTronconsHydroEnabled}
             tronconsHydroMaxDistM={tronconsHydroMaxDistM}
@@ -924,6 +929,8 @@ export function CreateAoiPage({
             onFaunaSpeciesChange={setFaunaSpecies}
             faunaDistM={faunaDistM}
             onFaunaDistMChange={setFaunaDistM}
+            faunaCombine={faunaCombine}
+            onFaunaCombineChange={setFaunaCombine}
             zoneHumideMode={fauneZoneHumideMode}
             onZoneHumideModeChange={setFauneZoneHumideMode}
             minZoneHumideHa={minZoneHumideHa}

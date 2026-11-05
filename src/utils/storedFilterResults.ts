@@ -20,6 +20,10 @@ export function parseStoredFilterResponse(lr: unknown): FilterResponse | null {
     final_radius_km: typeof o.final_radius_km === "number" ? o.final_radius_km : 0,
     parcelles: o.parcelles as FilterResponse["parcelles"],
     funnel: Array.isArray(o.funnel) ? (o.funnel as FilterResponse["funnel"]) : [],
+    filter_config:
+      o.filter_config && typeof o.filter_config === "object"
+        ? (o.filter_config as Record<string, unknown>)
+        : null,
     pool_run_id: typeof o.pool_run_id === "string" ? o.pool_run_id : null,
     run_created_at: typeof o.run_created_at === "string" ? o.run_created_at : undefined,
   };

@@ -325,6 +325,8 @@ export interface FunnelStep {
   step: number;
   label: string;
   count: number;
+  /** Champ FilterConfig ou clé de couche (min_area_ha, natura_2000, …). */
+  key?: string;
 }
 
 export interface FilterResponse {
@@ -332,6 +334,8 @@ export interface FilterResponse {
   final_radius_km: number;
   parcelles: ParcelleResult[];
   funnel?: FunnelStep[];
+  /** Config figée au moment du calcul (pas le panneau courant). */
+  filter_config?: Record<string, unknown> | null;
   /** Run du pool persisté en base (métriques par parcelle). */
   pool_run_id?: string | null;
   /** Présent quand les résultats sont chargés depuis un run historique (GET snapshot). */
