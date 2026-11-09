@@ -365,8 +365,10 @@ export async function analyseFoncier(params: {
   foncier: File;
   name?: string;
   occupationSol: boolean;
-  hydro: boolean;
+  hydroTroncons: boolean;
+  hydroSurfaces: boolean;
   faunaSpecies: string[];
+  faunaAliases?: Record<string, string[]>;
   flora: { taxon_key: string; label: string }[];
 }): Promise<{ project_id: string; run_id: string; count: number }> {
   const form = new FormData();
@@ -374,8 +376,11 @@ export async function analyseFoncier(params: {
   form.append("foncier", params.foncier);
   form.append("name", params.name ?? "Analyse de foncier");
   form.append("occupation_sol", params.occupationSol ? "true" : "false");
-  form.append("hydro", params.hydro ? "true" : "false");
+  form.append("hydro", params.hydroTroncons || params.hydroSurfaces ? "true" : "false");
+  form.append("hydro_troncons", params.hydroTroncons ? "true" : "false");
+  form.append("hydro_surfaces", params.hydroSurfaces ? "true" : "false");
   form.append("fauna_species", JSON.stringify(params.faunaSpecies));
+  form.append("fauna_aliases", JSON.stringify(params.faunaAliases ?? {}));
   form.append(
     "flora_criteria",
     JSON.stringify(params.flora.map((item) => ({ taxon_key: item.taxon_key, label: item.label }))),
@@ -1067,21 +1072,34 @@ export async function exportShp(
   window.URL.revokeObjectURL(url);
 }
 
+function errorFromResponse(text: string, fallback: string): string {
+  const raw = text.trim();
+  if (!raw) return fallback;
+  try {
+    const body = JSON.parse(raw) as { detail?: unknown };
+    if (typeof body.detail === "string" && body.detail.trim()) return body.detail;
+  } catch {
+    /* corps non JSON */
+  }
+  return raw;
+}
+
 export async function exportFicheFiltragePdf(projectId: string): Promise<void> {
-  const res = await fetch(`${API}/api/projects/${projectId}/export/fiche-filtrage.pdf`);
+  const url = apiUrlForFetch(`/api/projects/${projectId}/export/fiche-filtrage.pdf`);
+  const res = await fetch(url, { method: "GET", cache: "no-store" });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || "Erreur lors de l'export de la fiche de filtrage");
+    throw new Error(errorFromResponse(text, "Erreur lors de l'export de la fiche de filtrage"));
   }
   const blob = await res.blob();
-  const url = window.URL.createObjectURL(blob);
+  const blobUrl = window.URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url;
+  a.href = blobUrl;
   a.download = `fiche_filtrage_${projectId.slice(0, 8)}.pdf`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  window.URL.revokeObjectURL(url);
+  window.URL.revokeObjectURL(blobUrl);
 }
 
 export type EtudeExportLayer = "parcelles" | "uf" | "ilots";

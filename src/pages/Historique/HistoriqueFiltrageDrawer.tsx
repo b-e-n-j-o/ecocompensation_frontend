@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 
+import { exportFicheFiltragePdf } from "../../api";
 import { parseStoredLastFilter, serializeFilterPreset } from "../../utils/storedFilterResults";
 import {
   buildCriteria,
@@ -12,10 +13,12 @@ import {
 } from "../Etude/FiltrageParam/FilterCatalog";
 
 export function HistoriqueFiltrageDrawer({
+  projectId,
   projectName,
   rawConfig,
   onClose,
 }: {
+  projectId: string;
   projectName: string;
   rawConfig: unknown;
   onClose: () => void;
@@ -42,6 +45,7 @@ export function HistoriqueFiltrageDrawer({
   }, [criteria]);
 
   const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   async function copyParams() {
     const options = parseStoredLastFilter(
@@ -64,6 +68,19 @@ export function HistoriqueFiltrageDrawer({
     window.setTimeout(() => setCopied(false), 2000);
   }
 
+  async function exportFiche() {
+    if (!projectId) return;
+    setBusy(true);
+    try {
+      await exportFicheFiltragePdf(projectId);
+    } catch (err) {
+      console.error("Fiche filtrage:", err);
+      alert(err instanceof Error ? err.message : "Erreur lors de l'export de la fiche.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="historique-drawer-backdrop" role="presentation" onClick={onClose}>
       <aside
@@ -80,15 +97,26 @@ export function HistoriqueFiltrageDrawer({
             <p>{projectName}</p>
           </div>
           <div className="historique-drawer__head-actions">
-            <button
-              type="button"
-              className="fparams-copy"
-              disabled={!rawConfig}
-              onClick={() => void copyParams()}
-              title="Copie un JSON collable dans le panneau de filtrage"
-            >
-              {copied ? "Copié" : "Copier le filtre"}
-            </button>
+            <div className="historique-drawer__head-buttons">
+              <button
+                type="button"
+                className="fparams-copy"
+                disabled={!rawConfig}
+                onClick={() => void copyParams()}
+                title="Copie un JSON collable dans le panneau de filtrage"
+              >
+                {copied ? "Copié" : "Copier le filtre"}
+              </button>
+              <button
+                type="button"
+                className="fparams-export"
+                disabled={busy || !projectId}
+                onClick={() => void exportFiche()}
+                title="PDF A4 des critères réellement exécutés"
+              >
+                {busy ? "Export…" : "Exporter la fiche"}
+              </button>
+            </div>
             <button type="button" className="historique-drawer__close" onClick={onClose} aria-label="Fermer">
               ×
             </button>

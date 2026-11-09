@@ -21,6 +21,8 @@ interface FaunaSpeciesPickerProps {
   bufferM?: number;
   joins?: ("and" | "or")[];
   onJoinsChange?: (next: ("and" | "or")[]) => void;
+  /** false = pas de rayon de filtre : on calcule la distance à l’observation la plus proche. */
+  showDistance?: boolean;
 }
 
 export function FaunaSpeciesPicker({
@@ -37,9 +39,12 @@ export function FaunaSpeciesPicker({
   bufferM = 0,
   joins = [],
   onJoinsChange,
+  showDistance,
 }: FaunaSpeciesPickerProps) {
   const [closeNames, setCloseNames] = useState<Record<string, { nom: string; nb: number }[]>>({});
-  const [zoneCounts, setZoneCounts] = useState<Record<string, number | null>>({});
+  const [zoneCounts, setZoneCounts] = useState<
+    Record<string, { n: number; capped: boolean } | "loading">
+  >({});
   const [taxa, setTaxa] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -94,6 +99,9 @@ export function FaunaSpeciesPicker({
       setZoneCounts({});
       return;
     }
+    const next: Record<string, { n: number; capped: boolean } | "loading"> = {};
+    for (const name of selectedSpecies) next[name] = "loading";
+    setZoneCounts(next);
     const ctrl = new AbortController();
     selectedSpecies.forEach((name) => {
       fetch(`${getApiBaseUrl()}/api/fauna/zone-count`, {
@@ -103,11 +111,20 @@ export function FaunaSpeciesPicker({
         body: JSON.stringify({ species: name, buffer_m: bufferM, geometry: zoneGeometry }),
       })
         .then((r) => (r.ok ? r.json() : null))
-        .then((data: { count?: number } | null) => {
-          if (!data || typeof data.count !== "number") return;
-          setZoneCounts((prev) => ({ ...prev, [name]: data.count as number }));
+        .then((data: { count?: number; capped?: boolean } | null) => {
+          const n = typeof data?.count === "number" ? data.count : null;
+          setZoneCounts((prev) => ({
+            ...prev,
+            [name]:
+              n == null
+                ? { n: 0, capped: false }
+                : { n, capped: Boolean(data?.capped) || n >= 1000 },
+          }));
         })
-        .catch(() => undefined);
+        .catch(() => {
+          if (ctrl.signal.aborted) return;
+          setZoneCounts((prev) => ({ ...prev, [name]: { n: 0, capped: false } }));
+        });
     });
     return () => ctrl.abort();
   }, [selectedSpecies, zoneGeometry, bufferM]);
@@ -190,10 +207,11 @@ export function FaunaSpeciesPicker({
           </p>
         )
       ) : (
-        <div className={onDistanceChange ? "fauna-species-picker__rows" : "fauna-species-picker__chips"}>
+        <div className={onDistanceChange || showDistance === false ? "fauna-species-picker__rows" : "fauna-species-picker__chips"}>
           {selectedSpecies.map((s, index) => {
             const dist = distances?.[s] ?? DEFAULT_DIST_M;
-            const lien = index < selectedSpecies.length - 1 && onJoinsChange ? (
+            const useDistance = showDistance !== false && Boolean(onDistanceChange);
+            const lien = useDistance && index < selectedSpecies.length - 1 && onJoinsChange ? (
               <EntreEspeces
                 value={joins[index] ?? "or"}
                 disabled={disabled}
@@ -205,7 +223,7 @@ export function FaunaSpeciesPicker({
                 }}
               />
             ) : null;
-            if (!onDistanceChange) {
+            if (!useDistance && showDistance !== false) {
               return (
                 <Fragment key={s}>
                 <span className="fauna-species-picker__chip">
@@ -232,8 +250,13 @@ export function FaunaSpeciesPicker({
                   <span className="fauna-species-picker__chip-label">
                     {s}
                     {zoneGeometry && (
-                      <em className="fauna-species-picker__zone">
-                        {zoneCounts[s] == null ? "…" : `${zoneCounts[s]} dans Fauna`}
+                      <em
+                        className={`fauna-species-picker__zone${zoneCounts[s] === "loading" || zoneCounts[s] == null ? " is-loading" : ""}`}
+                        aria-live="polite"
+                      >
+                        {zoneCounts[s] === "loading" || zoneCounts[s] == null
+                          ? "…"
+                          : `${zoneCounts[s].n.toLocaleString("fr-FR")}${zoneCounts[s].capped ? "+" : ""} obs.`}
                       </em>
                     )}
                   </span>
@@ -248,6 +271,7 @@ export function FaunaSpeciesPicker({
                     ×
                   </button>
                 </div>
+                {useDistance && onDistanceChange ? (
                 <div className="eco-aoi-slider">
                   <div className="eco-aoi-slider-head">
                     <span className="eco-aoi-label">Distance max</span>
@@ -264,6 +288,9 @@ export function FaunaSpeciesPicker({
                     aria-label={`Distance maximale pour ${s}`}
                   />
                 </div>
+                ) : (
+                  <p className="fauna-species-picker__hint">Distance à l’observation la plus proche.</p>
+                )}
                 <OwnDataMatch
                   species={s}
                   ready={s in closeNames}
@@ -311,11 +338,11 @@ function OwnDataMatch({
       <p className="fauna-own-data__title">Dans vos données</p>
       {!ready && <p className="fauna-species-picker__hint">Recherche en cours…</p>}
       {ready && propos.length === 0 && (
-        <p className="fauna-species-picker__hint">Aucun nom correspondant. Le filtre utilisera seulement Fauna.</p>
+        <p className="fauna-species-picker__hint">Aucun nom correspondant. Les observations internes ne seront pas associées.</p>
       )}
       {ready && propos.length > 0 && (
         <>
-        <p className="fauna-species-picker__hint">Neutre : le nom n&apos;entre pas dans le filtre. Cochez-le pour l&apos;utiliser.</p>
+        <p className="fauna-species-picker__hint">Neutre : le nom n&apos;est pas utilisé. Cochez-le pour l&apos;inclure dans vos données.</p>
         <div className="fauna-own-data__choices">
           {propos.map((hit) => {
             const on = selected.includes(hit.nom);

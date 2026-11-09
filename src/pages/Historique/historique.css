@@ -114,6 +114,10 @@
 }
 
 .historique-page__name {
+  display: flex;
+  align-items: baseline;
+  gap: 0.7rem;
+  min-width: 0;
   font-weight: 600;
   line-height: 1.35;
   word-break: break-word;
@@ -182,6 +186,31 @@
 
 .historique-page__row--selected:hover {
   background: rgba(133, 227, 114, 0.36);
+}
+
+.historique-page__name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.historique-page__open-study {
+  flex: 0 0 auto;
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #1f7a00;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.historique-page__open-study:hover,
+.historique-page__open-study:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
 }
 
 .historique-page__table tbody tr:focus-visible {
@@ -400,8 +429,15 @@
 
 .historique-drawer__head-actions {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.45rem;
+}
+
+.historique-drawer__head-buttons {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.35rem;
 }
 
 .historique-drawer .fparams-copy {
@@ -422,6 +458,28 @@
 }
 
 .historique-drawer .fparams-copy:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.historique-drawer .fparams-export {
+  border: 1px solid #1f7a00;
+  background: #289f01;
+  color: #fff;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.historique-drawer .fparams-export:hover:not(:disabled) {
+  background: #218500;
+}
+
+.historique-drawer .fparams-export:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }

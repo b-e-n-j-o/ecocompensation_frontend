@@ -39,6 +39,11 @@ export function getWsBaseUrl(): string {
 /** URL absolue pour un chemin `/api/...` (exports PDF, téléchargements). */
 export function resolveApiUrl(path: string): string {
   const p = path.startsWith("/") ? path : `/${path}`;
+  // Dev : toujours la même origine (proxy Vite), même si VITE_API_URL pointe le backend.
+  // Un fetch direct vers :8000 casse CORS et les PDF longs (« Failed to fetch »).
+  if (import.meta.env.DEV && typeof window !== "undefined") {
+    return `${window.location.origin}${p}`;
+  }
   const base = getApiBaseUrl();
   if (!base) {
     if (typeof window !== "undefined") {

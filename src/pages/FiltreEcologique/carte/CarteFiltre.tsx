@@ -89,6 +89,8 @@ export function CarteFiltre({
 }: CarteFiltreProps) {
   const [faunaPoints, setFaunaPoints] = useState<FeatureCollection | null>(null);
   const [floraPoints, setFloraPoints] = useState<FeatureCollection | null>(null);
+  const [faunaLoading, setFaunaLoading] = useState(false);
+  const [floraLoading, setFloraLoading] = useState(false);
   const [tronconsHydro, setTronconsHydro] = useState<FeatureCollection | null>(null);
   const [surfacesHydro, setSurfacesHydro] = useState<FeatureCollection | null>(null);
   const [visible, setVisible] = useState<Record<string, boolean>>({
@@ -109,9 +111,12 @@ export function CarteFiltre({
     const aliases = faunaSpecies.flatMap((species) => faunaAliases[species] ?? []);
     if (!geometry || names.length === 0) {
       setFaunaPoints(null);
+      setFaunaLoading(false);
       return;
     }
+    let cancelled = false;
     const ctrl = new AbortController();
+    setFaunaLoading(true);
     pointsDansZone(
       `${getApiBaseUrl()}/api/fauna/zone-points`,
       names,
@@ -120,9 +125,17 @@ export function CarteFiltre({
       ctrl.signal,
       aliases,
     )
-      .then(setFaunaPoints)
-      .catch(() => undefined);
-    return () => ctrl.abort();
+      .then((fc) => {
+        if (!cancelled) setFaunaPoints(fc);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setFaunaLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      ctrl.abort();
+    };
   }, [sourceFeature, faunaSpecies, faunaAliases, effectiveBufferKm]);
 
   useEffect(() => {
@@ -130,13 +143,24 @@ export function CarteFiltre({
     const names = floraCriteria.flatMap((item) => [item.taxon_key, item.label]);
     if (!geometry || floraCriteria.length === 0) {
       setFloraPoints(null);
+      setFloraLoading(false);
       return;
     }
+    let cancelled = false;
     const ctrl = new AbortController();
+    setFloraLoading(true);
     pointsDansZone(`${getApiBaseUrl()}/api/reserve-fonciere/flore/zone-points`, names, effectiveBufferKm * 1000, geometry, ctrl.signal)
-      .then(setFloraPoints)
-      .catch(() => undefined);
-    return () => ctrl.abort();
+      .then((fc) => {
+        if (!cancelled) setFloraPoints(fc);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setFloraLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      ctrl.abort();
+    };
   }, [sourceFeature, floraCriteria, effectiveBufferKm]);
 
   useEffect(() => {
@@ -200,7 +224,10 @@ export function CarteFiltre({
 
   const faunaColories = useMemo(() => teinter(faunaPoints, couleurFaune), [faunaPoints, faunaSpecies, faunaAliases]);
   const floraColories = useMemo(() => teinter(floraPoints, couleurFlore), [floraPoints, floraCriteria]);
-  const faunaBuffers = useMemo(() => buffersAutour(faunaColories, rayonFaune), [faunaColories, faunaDistBySpecies, faunaAliases, faunaSpecies]);
+  const faunaBuffers = useMemo(
+    () => ((faunaColories?.features.length ?? 0) > 80 ? { type: "FeatureCollection" as const, features: [] } : buffersAutour(faunaColories, rayonFaune)),
+    [faunaColories, faunaDistBySpecies, faunaAliases, faunaSpecies],
+  );
   const floraBuffers = useMemo(() => buffersAutour(floraColories, rayonFlore), [floraColories, floraCriteria]);
   const [tronconsHydroBuffers, setTronconsHydroBuffers] = useState<FeatureCollection>({ type: "FeatureCollection", features: [] });
   const [surfacesHydroBuffers, setSurfacesHydroBuffers] = useState<FeatureCollection>({ type: "FeatureCollection", features: [] });
@@ -286,6 +313,12 @@ export function CarteFiltre({
 
   return (
     <div className="eco-aoi-map-wrap">
+      {(faunaLoading || floraLoading) && (
+        <div className="eco-aoi-map-loading" role="status">
+          <span className="eco-aoi-map-loading__dots" aria-hidden>…</span>
+          Chargement des observations
+        </div>
+      )}
       {sourceFeature && <LegendeCarte lignes={lignes} visible={visible} onToggle={toggle} />}
 
       <CartoAoi

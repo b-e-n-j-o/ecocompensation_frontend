@@ -17,7 +17,6 @@ import {
   EMPTY_TILES_OVERLAY,
 } from "./filterTilesOverlay";
 import { SelectFilterCriteria } from "./SelectFilterCriteria";
-import { AnalyseFoncierPanel } from "./AnalyseFoncierPanel";
 import { SelectFilterCriteriaZonesHumides } from "./SelectFilterCriteriaZonesHumides";
 import { PipelineProgressPanel } from "../../components/PipelineProgressPanel";
 import type { StudyType } from "../../types/studyTypes";
@@ -151,7 +150,6 @@ export function CreateAoiPage({
   const [pasteText, setPasteText] = useState("");
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteMsg, setPasteMsg] = useState<string | null>(null);
-  const [workMode, setWorkMode] = useState<"recherche" | "analyse">("recherche");
   const editingExisting = !!editProjectId;
 
   function applySnapshot(input: Record<string, unknown>) {
@@ -1193,30 +1191,11 @@ export function CreateAoiPage({
     <div className="eco-aoi-page">
       <div className="eco-aoi-layout">
         <aside className="eco-aoi-sidebar">
-          <div className="eco-aoi-sidebar-head eco-aoi-mode">
-            <button
-              type="button"
-              className={`eco-aoi-mode__tab${workMode === "recherche" ? " is-on" : ""}`}
-              onClick={() => setWorkMode("recherche")}
-            >
-              Recherche
-            </button>
-            <button
-              type="button"
-              className={`eco-aoi-mode__tab${workMode === "analyse" ? " is-on" : ""}`}
-              onClick={() => setWorkMode("analyse")}
-            >
-              Analyse
-            </button>
+          <div className="eco-aoi-sidebar-head">
+            <h1>Recherche de foncier</h1>
           </div>
 
           <div className="eco-aoi-sidebar-main">
-            {workMode === "analyse" ? (
-              <div className="eco-aoi-body">
-                <AnalyseFoncierPanel />
-              </div>
-            ) : (
-            <>
               <nav className="eco-aoi-steps" aria-label="Étapes de création">
                 {([1, 2, 3] as const).map((n) => (
                   <button
@@ -1313,8 +1292,6 @@ export function CreateAoiPage({
                   </button>
                 )}
               </div>
-            </>
-            )}
           </div>
         </aside>
 

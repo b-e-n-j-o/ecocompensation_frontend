@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { Routes, Route, NavLink, Navigate, useNavigate, useParams, useLocation } from "react-router-dom";
 
 import { CreateAoiPage } from "./pages/FiltreEcologique/CreateAoiPage";
+import { AnalyseFoncierPage } from "./pages/AnalyseFoncier";
 import { EtudeResultats } from "./pages/Etude/EtudeResultats";
 import { HistoriquePage } from "./pages/Historique/HistoriquePage";
 import FaunaMapPage from "./pages/FaunaMap/FaunaMapPage";
@@ -11,6 +12,7 @@ import AjoutFoncierPage from "./pages/DonneesInternes/AjoutDonnees/Foncier/Ajout
 import "./App.css";
 
 const ROUTE_ECOCOMPENSATION = "/ecocompensation";
+const ROUTE_ANALYSE = "/analyse-foncier";
 const ROUTE_RESERVE = "/reserve-fonciere";
 const ROUTE_AJOUT_FONCIER = "/reserve-fonciere/ajout";
 const RAIL_COLLAPSED_KEY = "kerelia-rail-collapsed-v2";
@@ -94,12 +96,11 @@ export default function App() {
         onExpand={() => setRailOpen(false)}
       />
       <div className="kerelia-app__body">
-        <AppHeader />
-
         <div className="kerelia-app__main">
           <Routes>
             <Route path="/" element={<Navigate to={ROUTE_ECOCOMPENSATION} replace />} />
             <Route path={ROUTE_ECOCOMPENSATION} element={<CreateAoiRoutePage />} />
+            <Route path={ROUTE_ANALYSE} element={<AnalyseFoncierPage />} />
             <Route path={`${ROUTE_ECOCOMPENSATION}/faune`} element={<Navigate to={ROUTE_ECOCOMPENSATION} replace />} />
             <Route
               path={`${ROUTE_ECOCOMPENSATION}/zones-humides`}
@@ -125,13 +126,25 @@ export default function App() {
 const RAIL_ITEMS = [
   {
     to: ROUTE_ECOCOMPENSATION,
-    label: "Recherche",
-    isActive: (path: string) => path === "/" || path.startsWith(ROUTE_ECOCOMPENSATION),
+    label: "Rechercher",
+    isActive: (path: string) =>
+      path === "/" || (path.startsWith(ROUTE_ECOCOMPENSATION) && !path.startsWith(ROUTE_ANALYSE)),
+    icon: (
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+        <circle cx="11" cy="11" r="6.2" />
+        <path d="M16.2 16.2 20.5 20.5" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    to: ROUTE_ANALYSE,
+    label: "Analyser",
+    isActive: (path: string) => path.startsWith(ROUTE_ANALYSE),
     icon: (
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden>
-        <path d="M12 21c0-6 4-9 8-9-1 6-5 9-8 9Z" strokeLinejoin="round" />
-        <path d="M12 21c0-8-5-12-9-13 2 7 6 11 9 13Z" strokeLinejoin="round" />
-        <path d="M12 21V8" strokeLinecap="round" />
+        <ellipse cx="12" cy="6.2" rx="7.2" ry="2.6" />
+        <path d="M4.8 6.2v4.6c0 1.4 3.2 2.6 7.2 2.6s7.2-1.2 7.2-2.6V6.2" />
+        <path d="M4.8 10.8v4.8c0 1.4 3.2 2.6 7.2 2.6s7.2-1.2 7.2-2.6v-4.8" />
       </svg>
     ),
   },
@@ -185,6 +198,12 @@ function AppRail({
         ignoreHoverExpand.current = false;
       }}
     >
+      <NavLink to={ROUTE_ECOCOMPENSATION} className="kerelia-rail__brand" title="KERFoncier">
+        <span className="kerelia-rail__brand-full">KERFoncier</span>
+        <span className="kerelia-rail__brand-short" aria-hidden>
+          KF
+        </span>
+      </NavLink>
       <button
         type="button"
         className="kerelia-rail__toggle"
@@ -221,17 +240,5 @@ function AppRail({
         </NavLink>
       ))}
     </nav>
-  );
-}
-
-function AppHeader() {
-  return (
-    <header className="kerelia-app__header">
-      <NavLink to={ROUTE_ECOCOMPENSATION} className="kerelia-app__brand">
-        <span className="kerelia-app__brand-dot" aria-hidden />
-        <span className="kerelia-app__brand-name">KERELIA</span>
-        <span className="kerelia-app__brand-sub">EcoCompensation</span>
-      </NavLink>
-    </header>
   );
 }

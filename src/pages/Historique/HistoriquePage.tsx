@@ -263,7 +263,22 @@ export function HistoriquePage() {
                             {formatWhen(latest.created_at)}
                           </span>
                         </td>
-                        <td className="historique-page__name">{name}</td>
+                        <td className="historique-page__name">
+                          <span className="historique-page__name-text">{name}</span>
+                          {isSelected ? (
+                            <button
+                              type="button"
+                              className="historique-page__open-study"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openStudy(project.id, latest.id);
+                              }}
+                            >
+                              Ouvrir l’étude
+                              <span aria-hidden="true"> →</span>
+                            </button>
+                          ) : null}
+                        </td>
                         <td>{kind}</td>
                         <td>{latest.total_count.toLocaleString("fr-FR")}</td>
                         <td className="historique-page__col-actions">
@@ -320,6 +335,7 @@ export function HistoriquePage() {
 
       {filterProject ? (
         <HistoriqueFiltrageDrawer
+          projectId={filterProject.id}
           projectName={filterProject.name?.trim() || filterProject.id.slice(0, 8)}
           rawConfig={filterProject.filter_config ?? filterProject.history.last_filter}
           onClose={() => setFilterProject(null)}

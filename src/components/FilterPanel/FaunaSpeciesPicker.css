@@ -73,6 +73,17 @@
   color: #3a3a3a;
 }
 
+.fauna-species-picker__zone.is-loading {
+  animation: fauna-zone-pulse 0.9s ease-in-out infinite;
+  letter-spacing: 0.12em;
+}
+
+@keyframes fauna-zone-pulse {
+  0%,
+  100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+
 .fauna-species-picker__chip-remove {
   width: 1.25rem;
   height: 1.25rem;
