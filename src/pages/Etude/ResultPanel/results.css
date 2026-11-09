@@ -481,16 +481,30 @@
   color: #1d4ed8;
 }
 
+.ranking-table th.ranking-sort-cell {
+  padding: 0;
+  cursor: pointer;
+}
+
 .ranking-sort-th {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
   border: 0;
   background: transparent;
-  padding: 0;
+  padding: 6px 8px;
+  text-align: inherit;
   font: inherit;
   font-size: inherit;
   font-weight: 650;
   color: inherit;
   cursor: pointer;
   white-space: nowrap;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.ranking-sort-th:hover {
+  background: rgba(15, 23, 42, 0.07);
 }
 
 .ranking-sort-th.is-active {

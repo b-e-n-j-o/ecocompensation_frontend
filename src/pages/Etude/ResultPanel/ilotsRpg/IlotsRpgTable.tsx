@@ -401,7 +401,7 @@ export function IlotsRpgTable({
   }
 
   const SortTh = ({ label, k, className, title }: { label: string; k: IlotsRpgSortKey; className?: string; title?: string }) => (
-    <th className={className} title={title}>
+    <th className={`ranking-sort-cell${className ? ` ${className}` : ""}`} title={title}>
       <button type="button" className={`ranking-sort-th${sortKey === k ? " is-active" : ""}`} onClick={() => onSort(k)}>
         {label}{sortKey === k ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
       </button>

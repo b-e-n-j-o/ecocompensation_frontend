@@ -37,7 +37,7 @@ function SortTh({
 }) {
   const active = activeKey === sortKey;
   return (
-    <th className={className} title={title}>
+    <th className={`ranking-sort-cell${className ? ` ${className}` : ""}`} title={title}>
       <button type="button" className={`ranking-sort-th${active ? " is-active" : ""}`} onClick={() => onSort(sortKey)}>
         {label}
         {active ? (dir === "asc" ? " ↑" : " ↓") : ""}
@@ -236,19 +236,15 @@ export function RankingTable({
   const [hoveredIdu, setHoveredIdu] = useState<string | null>(null);
   const [expandedIdus, setExpandedIdus] = useState<Set<string>>(() => new Set());
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-  const [optionsOpen, setOptionsOpen] = useState(false);
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
   const [scoringsOpen, setScoringsOpen] = useState(false);
   const [selectionIntent, setSelectionIntent] = useState<"indesirables" | "durete" | "urbanisme" | null>(null);
   const [checkedIdus, setCheckedIdus] = useState<Set<string>>(() => new Set());
   const [applyingSelection, setApplyingSelection] = useState(false);
-  const [addDraft, setAddDraft] = useState("");
-  const [addPanelOpen, setAddPanelOpen] = useState(false);
   const [dureteMenuOpen, setDureteMenuOpen] = useState(false);
   const [urbaMenuOpen, setUrbaMenuOpen] = useState(false);
   const [pendingPoolRun, setPendingPoolRun] = useState<"durete" | "urbanisme" | null>(null);
   const selectionMode = selectionIntent != null;
-  const manualSelectionEnabled = !!(onBatchMarkIndesirable && poolRunId && projectId);
   const pmIdus = useMemo(() => {
     const next = new Set<string>();
     for (const p of parcelles) {
@@ -269,7 +265,6 @@ export function RankingTable({
     setExpandedIdus(new Set());
     setSelectionIntent(null);
     setCheckedIdus(new Set());
-    setAddPanelOpen(false);
     setDureteMenuOpen(false);
     setUrbaMenuOpen(false);
     setPendingPoolRun(null);
@@ -344,10 +339,8 @@ export function RankingTable({
   function enterSelection(intent: "indesirables" | "durete" | "urbanisme") {
     setSelectionIntent(intent);
     setCheckedIdus(new Set());
-    setAddPanelOpen(false);
     setDureteMenuOpen(false);
     setUrbaMenuOpen(false);
-    setOptionsOpen(false);
     setScoringsOpen(false);
   }
 
@@ -422,29 +415,6 @@ export function RankingTable({
     if (kind === "durete") void onRunDureteFonciere?.([...pmIdus]);
   }
 
-  async function handleAddParcellesSubmit() {
-    if (!onAddParcelles) return;
-    const idus = [
-      ...new Set(
-        addDraft
-          .split(/[\s,;]+/)
-          .map((s) => s.trim().toUpperCase().replace(/-/g, ""))
-          .filter(Boolean),
-      ),
-    ];
-    if (!idus.length) {
-      alert("Saisissez au moins un IDU (un par ligne).");
-      return;
-    }
-    try {
-      await onAddParcelles(idus);
-      setAddDraft("");
-      setAddPanelOpen(false);
-    } catch {
-      /* message déjà affiché par la page */
-    }
-  }
-
   const hasAdd = !!(onAddParcelles && poolRunId && projectId);
   if (!parcelles.length && !hasAdd) return null;
 
@@ -472,7 +442,7 @@ export function RankingTable({
   const hasExport = !!projectId;
   const hasDurete = !!(onRunDureteFonciere && poolRunId && projectId);
   const hasUrba = !!(onRunUrbanisme && poolRunId && projectId);
-  const showToolsPanel = optionsOpen || scoringsOpen || addPanelOpen;
+  const showToolsPanel = hasPoolFilters || scoringsOpen;
 
   const filterChoices: { id: RankingSortKey; label: string }[] = [
     { id: "rank", label: "Score éco" },
@@ -497,8 +467,6 @@ export function RankingTable({
               onClick={() => {
                 setFilterMenuOpen((v) => !v);
                 setScoringsOpen(false);
-                setOptionsOpen(false);
-                setAddPanelOpen(false);
               }}
             >
               <svg className="ranking-btn__icon" viewBox="0 0 16 16" aria-hidden>
@@ -547,26 +515,6 @@ export function RankingTable({
           {poolMetricsLoading && (
             <span className="ranking-chrome__status">Métriques…</span>
           )}
-          {hasPoolFilters && (
-            <button
-              type="button"
-              className={`ranking-btn-options${optionsOpen ? " is-on" : ""}`}
-              aria-expanded={optionsOpen}
-              title="Distance au projet et surface minimale"
-              onClick={() => {
-                setOptionsOpen((v) => !v);
-                setScoringsOpen(false);
-                setFilterMenuOpen(false);
-                setAddPanelOpen(false);
-              }}
-            >
-              <svg className="ranking-btn__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <circle cx="12" cy="12" r="3" />
-                <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9c.3.6.9 1 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
-              </svg>
-              Options
-            </button>
-          )}
           {(hasDurete || hasUrba) && (
             <button
               type="button"
@@ -575,8 +523,6 @@ export function RankingTable({
               onClick={() => {
                 setScoringsOpen((v) => !v);
                 setFilterMenuOpen(false);
-                setOptionsOpen(false);
-                setAddPanelOpen(false);
                 setDureteMenuOpen(false);
                 setUrbaMenuOpen(false);
               }}
@@ -585,32 +531,6 @@ export function RankingTable({
                 <path fill="currentColor" d="M1 12.5h2.2V8H1v4.5zm3.8 0h2.2V4.5H4.8V12.5zM8.6 12.5H11V6.5H8.6v6zm3.8 0H15V2h-2.6v10.5z" />
               </svg>
               Scorings
-            </button>
-          )}
-          {manualSelectionEnabled && !selectionMode && (
-            <button
-              type="button"
-              className="ranking-btn-select-mode"
-              onClick={() => enterSelection("indesirables")}
-              title="Cocher les parcelles à conserver, les autres iront dans les indésirables"
-            >
-              Sélectionner
-            </button>
-          )}
-          {hasAdd && (
-            <button
-              type="button"
-              className={`ranking-btn-add-pool${addPanelOpen ? " is-on" : ""}`}
-              disabled={addParcellesLoading || selectionMode}
-              title="Ajouter une parcelle au pool (IDU)"
-              onClick={() => {
-                setAddPanelOpen((v) => !v);
-                setOptionsOpen(false);
-                setScoringsOpen(false);
-                setFilterMenuOpen(false);
-              }}
-            >
-              {addParcellesLoading ? "Ajout…" : "Ajouter"}
             </button>
           )}
           {hasExport && (
@@ -628,7 +548,7 @@ export function RankingTable({
 
         {showToolsPanel && (
           <div className="ranking-tools" role="region" aria-label="Outils du classement">
-            {optionsOpen && hasPoolFilters && (
+            {hasPoolFilters && (
               <div className="ranking-tools__block">
                 <div className="ranking-tools__label">Distance et surface</div>
                 <div className="results-split-filters">
@@ -740,36 +660,6 @@ export function RankingTable({
               </div>
             )}
 
-            {addPanelOpen && hasAdd && (
-              <div className="ranking-tools__block">
-                <div className="ranking-tools__label">Ajouter une parcelle</div>
-                <form
-                  className="ranking-tools__reveal ranking-add-pool"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    void handleAddParcellesSubmit();
-                  }}
-                >
-                  <input
-                    className="ranking-add-pool__input"
-                    value={addDraft}
-                    onChange={(e) => setAddDraft(e.target.value)}
-                    disabled={addParcellesLoading}
-                    placeholder="IDU — ex. 330770000E0121"
-                    spellCheck={false}
-                    autoFocus
-                    aria-label="IDU de la parcelle"
-                  />
-                  <button
-                    type="submit"
-                    className="ranking-btn-add-pool"
-                    disabled={addParcellesLoading || !addDraft.trim()}
-                  >
-                    {addParcellesLoading ? "Ajout…" : "Ajouter"}
-                  </button>
-                </form>
-              </div>
-            )}
           </div>
         )}
       </div>
@@ -897,9 +787,7 @@ export function RankingTable({
             {!visibleParcelles.length && (
               <tr>
                 <td colSpan={rankingColCount} className="ranking-empty">
-                  {hasAdd
-                    ? "Aucune parcelle dans le classement. Ajoutez un IDU via Ajouter."
-                    : "Aucune parcelle dans le classement."}
+                  Aucune parcelle dans le classement.
                 </td>
               </tr>
             )}

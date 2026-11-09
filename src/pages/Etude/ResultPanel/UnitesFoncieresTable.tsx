@@ -212,7 +212,7 @@ export function UnitesFoncieresTable({
 
   useEffect(() => {
     setVisibleUfCount(UF_PAGE_SIZE);
-    setExpandedUfId(ufResults.unites_foncieres?.[0]?.uf_id ?? null);
+    setExpandedUfId(null);
     setExpandedSubsetId(null);
     setUfTab("parcelles");
   }, [ufResults]);
