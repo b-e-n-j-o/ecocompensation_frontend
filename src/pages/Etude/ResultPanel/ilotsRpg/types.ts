@@ -1,5 +1,5 @@
 // Types du module « Îlots agricoles RPG » (miroir de backend rpg_ilots/pool.py et api.py).
-import type { FeatureCollection, Geometry } from "geojson";
+import type { FeatureCollection, GeoJsonProperties, Geometry } from "geojson";
 
 export interface IlotRpgScoreEco {
   total_score: number;
@@ -42,7 +42,7 @@ export interface IlotsRpgResponse {
 }
 
 /** GET /api/projects/{id}/geojson/ilots-rpg : entités kind = "uf" | "parcelle" | "ilot_rpg". */
-export type IlotsRpgGeojson = FeatureCollection<Geometry, Record<string, unknown>>;
+export type IlotsRpgGeojson = FeatureCollection<Geometry, GeoJsonProperties>;
 
 export type IlotsRpgSortKey = "rang" | "score" | "surface" | "nb_parcelles" | "distance";
 

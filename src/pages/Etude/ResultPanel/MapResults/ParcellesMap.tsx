@@ -94,7 +94,7 @@ const CADASTRE_API_BASE = `${getApiBaseUrl()}/api`;
 const POOL_LAYER_IDS = ["parcelles-fill", "parcelles-outline"];
 
 const EMPTY_URBA: UrbaFeatureCollection = { type: "FeatureCollection", features: [] };
-type ScoreColorMode = "ecologique";
+type ScoreColorMode = "ecologique" | "foncier";
 
 // ─── Helpers MapLibre ─────────────────────────────────────────────────────────
 

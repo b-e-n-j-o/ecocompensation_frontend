@@ -155,7 +155,7 @@ export function parseFilterPreset(raw: unknown): FilterOptions | null {
     return { ...DEFAULT_FILTER, ...(o.options as FilterOptions) };
   }
   if ("faune_criteria" in o || "vegetation_hybride" in o) {
-    return { ...DEFAULT_FILTER, ...(o as FilterOptions) };
+    return { ...DEFAULT_FILTER, ...(o as unknown as FilterOptions) };
   }
   return parseStoredLastFilter(raw);
 }

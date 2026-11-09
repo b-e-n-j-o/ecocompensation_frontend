@@ -1163,10 +1163,6 @@ export function EtudeResultats({
     }
   }
 
-  function handleToolbarPoolChange(poolProjectId: string, poolId: string) {
-    navigate(`/projects/${poolProjectId}/runs/${poolId}`);
-  }
-
   const subsetScores = useMemo(() => {
     if (!ufResults) return null;
     const m: Record<string, number> = {};
