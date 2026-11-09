@@ -1,7 +1,7 @@
 import buffer from "@turf/buffer";
 import type { Feature, FeatureCollection, Polygon, MultiPolygon } from "geojson";
 
-const EMPTY: FeatureCollection = { type: "FeatureCollection", features: [] };
+const EMPTY: FeatureCollection<Polygon | MultiPolygon> = { type: "FeatureCollection", features: [] };
 
 /** Tampons autour des géométries. 0 m ne dessine rien. */
 export function buffersAutour(

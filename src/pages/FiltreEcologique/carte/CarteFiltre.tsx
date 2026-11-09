@@ -225,7 +225,9 @@ export function CarteFiltre({
   const faunaColories = useMemo(() => teinter(faunaPoints, couleurFaune), [faunaPoints, faunaSpecies, faunaAliases]);
   const floraColories = useMemo(() => teinter(floraPoints, couleurFlore), [floraPoints, floraCriteria]);
   const faunaBuffers = useMemo(
-    () => ((faunaColories?.features.length ?? 0) > 80 ? { type: "FeatureCollection" as const, features: [] } : buffersAutour(faunaColories, rayonFaune)),
+    () => ((faunaColories?.features.length ?? 0) > 80
+      ? { type: "FeatureCollection" as const, features: [] }
+      : buffersAutour(faunaColories, rayonFaune)),
     [faunaColories, faunaDistBySpecies, faunaAliases, faunaSpecies],
   );
   const floraBuffers = useMemo(() => buffersAutour(floraColories, rayonFlore), [floraColories, floraCriteria]);
