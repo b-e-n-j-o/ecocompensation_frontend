@@ -23,7 +23,7 @@ export function SelectNationalExclusions({
   }
 
   return (
-    <div className="eco-filter-block">
+    <div className="eco-filter-block eco-filter-block--break">
       <h3 className="eco-filter-block-title">Couches d&apos;exclusion</h3>
       <ul className="eco-layer-list">
         {NATIONAL_EXCLUSION_LAYERS.map((layer) => {

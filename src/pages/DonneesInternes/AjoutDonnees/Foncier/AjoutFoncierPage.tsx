@@ -4,7 +4,7 @@ import maplibregl, { type Map as MapLibreMap } from "maplibre-gl";
 import type { Feature, FeatureCollection } from "geojson";
 import "maplibre-gl/dist/maplibre-gl.css";
 
-import { geometryFilesToLayers } from "../../../geo/importFichiers";
+import { geometryFilesToLayers } from "../../../../geo/importFichiers";
 import {
   ApiError,
   createIlot,

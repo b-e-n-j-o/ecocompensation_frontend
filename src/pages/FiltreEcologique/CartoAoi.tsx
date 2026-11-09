@@ -53,6 +53,16 @@ export interface CartoAoiProps {
   initialZoneFeature?: Feature<Polygon | MultiPolygon> | null;
   bufferKm?: number;
   tilesOverlay?: FilterTilesOverlay;
+  observationPoints?: FeatureCollection | null;
+  floraPoints?: FeatureCollection | null;
+  faunaBuffers?: FeatureCollection | null;
+  floraBuffers?: FeatureCollection | null;
+  tronconsHydro?: FeatureCollection | null;
+  surfacesHydro?: FeatureCollection | null;
+  tronconsHydroBuffers?: FeatureCollection | null;
+  surfacesHydroBuffers?: FeatureCollection | null;
+  /** Visibilité des couches, clé = id de couche. Absent = visible. */
+  visible?: Record<string, boolean>;
 }
 
 /**
@@ -165,6 +175,15 @@ export function CartoAoi({
   initialZoneFeature,
   bufferKm = 0,
   tilesOverlay = EMPTY_TILES_OVERLAY,
+  observationPoints = null,
+  floraPoints = null,
+  faunaBuffers = null,
+  floraBuffers = null,
+  tronconsHydro = null,
+  surfacesHydro = null,
+  tronconsHydroBuffers = null,
+  surfacesHydroBuffers = null,
+  visible,
 }: CartoAoiProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -188,6 +207,38 @@ export function CartoAoi({
     map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
 
     map.on("load", () => {
+      map.addSource("obs-points-source", {
+        type: "geojson",
+        data: emptyFeatureCollection(),
+      });
+      map.addSource("flora-points-source", {
+        type: "geojson",
+        data: emptyFeatureCollection(),
+      });
+      map.addSource("fauna-buffer-source", {
+        type: "geojson",
+        data: emptyFeatureCollection(),
+      });
+      map.addSource("flora-buffer-source", {
+        type: "geojson",
+        data: emptyFeatureCollection(),
+      });
+      map.addSource("troncons-hydro-source", {
+        type: "geojson",
+        data: emptyFeatureCollection(),
+      });
+      map.addSource("surfaces-hydro-source", {
+        type: "geojson",
+        data: emptyFeatureCollection(),
+      });
+      map.addSource("troncons-hydro-buffer-source", {
+        type: "geojson",
+        data: emptyFeatureCollection(),
+      });
+      map.addSource("surfaces-hydro-buffer-source", {
+        type: "geojson",
+        data: emptyFeatureCollection(),
+      });
       map.addSource("parcel-source", {
         type: "geojson",
         data: emptyFeatureCollection(),
@@ -259,6 +310,95 @@ export function CartoAoi({
           "line-width": 2.5,
         },
       });
+      map.addLayer({
+        id: "troncons-hydro-buffer-fill",
+        type: "fill",
+        source: "troncons-hydro-buffer-source",
+        paint: { "fill-color": "#0369a1", "fill-opacity": 0.14 },
+      });
+      map.addLayer({
+        id: "surfaces-hydro-buffer-fill",
+        type: "fill",
+        source: "surfaces-hydro-buffer-source",
+        paint: { "fill-color": "#38bdf8", "fill-opacity": 0.16 },
+      });
+      map.addLayer({
+        id: "surfaces-hydro-fill",
+        type: "fill",
+        source: "surfaces-hydro-source",
+        paint: { "fill-color": "#38bdf8", "fill-opacity": 0.45 },
+      });
+      map.addLayer({
+        id: "surfaces-hydro-line",
+        type: "line",
+        source: "surfaces-hydro-source",
+        paint: { "line-color": "#0284c7", "line-width": 1.2 },
+      });
+      map.addLayer({
+        id: "troncons-hydro-line",
+        type: "line",
+        source: "troncons-hydro-source",
+        paint: { "line-color": "#0369a1", "line-width": 2.2 },
+      });
+      map.addLayer({
+        id: "fauna-buffer-fill",
+        type: "fill",
+        source: "fauna-buffer-source",
+        paint: { "fill-color": ["coalesce", ["get", "color"], "#c47b2b"], "fill-opacity": 0.16 },
+      });
+      map.addLayer({
+        id: "fauna-buffer-line",
+        type: "line",
+        source: "fauna-buffer-source",
+        paint: { "line-color": ["coalesce", ["get", "color"], "#c47b2b"], "line-width": 1.4, "line-dasharray": [1.2, 1] },
+      });
+      map.addLayer({
+        id: "flora-buffer-fill",
+        type: "fill",
+        source: "flora-buffer-source",
+        paint: { "fill-color": ["coalesce", ["get", "color"], "#7c3aed"], "fill-opacity": 0.16 },
+      });
+      map.addLayer({
+        id: "flora-buffer-line",
+        type: "line",
+        source: "flora-buffer-source",
+        paint: { "line-color": ["coalesce", ["get", "color"], "#7c3aed"], "line-width": 1.4, "line-dasharray": [1.2, 1] },
+      });
+      map.addLayer({
+        id: "obs-points-fauna",
+        type: "circle",
+        source: "obs-points-source",
+        filter: ["==", ["get", "source"], "fauna"],
+        paint: {
+          "circle-radius": 5,
+          "circle-color": ["coalesce", ["get", "color"], "#c47b2b"],
+          "circle-stroke-width": 1.5,
+          "circle-stroke-color": "#fff",
+        },
+      });
+      map.addLayer({
+        id: "obs-points-perso",
+        type: "circle",
+        source: "obs-points-source",
+        filter: ["==", ["get", "source"], "perso"],
+        paint: {
+          "circle-radius": 5,
+          "circle-color": ["coalesce", ["get", "color"], "#1d4ed8"],
+          "circle-stroke-width": 1.5,
+          "circle-stroke-color": "#fff",
+        },
+      });
+      map.addLayer({
+        id: "obs-points-flore",
+        type: "circle",
+        source: "flora-points-source",
+        paint: {
+          "circle-radius": 5,
+          "circle-color": ["coalesce", ["get", "color"], "#7c3aed"],
+          "circle-stroke-width": 1.5,
+          "circle-stroke-color": "#fff",
+        },
+      });
       addTileLayers(map);
     });
 
@@ -271,6 +411,52 @@ export function CartoAoi({
       mapRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const apply = () => {
+      const set = (id: string, data: FeatureCollection | null) => {
+        const src = map.getSource(id) as maplibregl.GeoJSONSource | undefined;
+        src?.setData(data ?? emptyFeatureCollection());
+      };
+      set("obs-points-source", observationPoints);
+      set("flora-points-source", floraPoints);
+      set("fauna-buffer-source", faunaBuffers);
+      set("flora-buffer-source", floraBuffers);
+      set("troncons-hydro-source", tronconsHydro);
+      set("surfaces-hydro-source", surfacesHydro);
+      set("troncons-hydro-buffer-source", tronconsHydroBuffers);
+      set("surfaces-hydro-buffer-source", surfacesHydroBuffers);
+    };
+    if (map.isStyleLoaded()) apply();
+    else map.once("load", apply);
+  }, [observationPoints, floraPoints, faunaBuffers, floraBuffers, tronconsHydro, surfacesHydro, tronconsHydroBuffers, surfacesHydroBuffers]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !visible) return;
+    const apply = () => {
+    const groups: Record<string, string[]> = {
+      zone: ["aoi-buffer-fill", "aoi-buffer-line"],
+      emprise: ["parcel-fill", "parcel-line"],
+      "faune-points": ["obs-points-fauna", "obs-points-perso", "fauna-buffer-fill", "fauna-buffer-line"],
+      "flore-points": ["obs-points-flore", "flora-buffer-fill", "flora-buffer-line"],
+      "cours-eau": ["troncons-hydro-line", "troncons-hydro-buffer-fill"],
+      "plans-eau": ["surfaces-hydro-fill", "surfaces-hydro-line", "surfaces-hydro-buffer-fill"],
+      "zone-initiale": ["initial-zone-fill", "initial-zone-line"],
+      tuiles: [TILES_FILL, TILES_LINE],
+    };
+    for (const [key, layers] of Object.entries(groups)) {
+      const visibility = visible[key] === false ? "none" : "visible";
+      for (const id of layers) {
+        if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", visibility);
+      }
+    }
+    };
+    if (map.isStyleLoaded()) apply();
+    else map.once("load", apply);
+  }, [visible]);
 
   useEffect(() => {
     const map = mapRef.current;

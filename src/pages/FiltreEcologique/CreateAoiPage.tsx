@@ -11,7 +11,7 @@ import {
 import type { FilterPhaseInfo, FromParcelleBody, ParcelleRef } from "../../api";
 import type { CesbioLibelle } from "../../types";
 import type { Feature, MultiPolygon, Polygon } from "geojson";
-import { CartoAoi } from "./CartoAoi";
+import { CarteFiltre } from "./carte/CarteFiltre";
 import {
   applyWsToTilesOverlay,
   EMPTY_TILES_OVERLAY,
@@ -89,13 +89,25 @@ export function CreateAoiPage({
   ]);
   const [faunaEnabled, setFaunaEnabled] = useState(false);
   const [faunaSpecies, setFaunaSpecies] = useState<string[]>([]);
+  const [faunaAliases, setFaunaAliases] = useState<Record<string, string[]>>({});
   const [faunaCombine, setFaunaCombine] = useState<"or" | "and">("or");
+  const [faunaJoins, setFaunaJoins] = useState<("or" | "and")[]>([]);
   const [floraCriteria, setFloraCriteria] = useState<{ taxon_key: string; label: string; dist_m: number }[]>([]);
   const [floraCombine, setFloraCombine] = useState<"or" | "and">("or");
+  const [floraJoins, setFloraJoins] = useState<("or" | "and")[]>([]);
+  const [bioCombine, setBioCombine] = useState<"or" | "and">("or");
   const [faunaDistBySpecies, setFaunaDistBySpecies] = useState<Record<string, number>>({});
+
+  function fitJoins(prev: ("or" | "and")[], count: number): ("or" | "and")[] {
+    const need = Math.max(0, count - 1);
+    const out = prev.slice(0, need);
+    while (out.length < need) out.push("or");
+    return out;
+  }
 
   function handleFaunaSpeciesChange(next: string[]) {
     setFaunaSpecies(next);
+    setFaunaJoins((prev) => fitJoins(prev, next.length));
     setFaunaDistBySpecies((prev) => {
       const out: Record<string, number> = {};
       for (const s of next) {
@@ -176,20 +188,24 @@ export function CreateAoiPage({
     const faunaSrc = raw.fauna_criteria ?? raw.faune_criteria;
     if (Array.isArray(faunaSrc)) {
       const distBySpecies: Record<string, number> = {};
+      const aliasesBySpecies: Record<string, string[]> = {};
       const species: string[] = [];
       for (const item of faunaSrc) {
         if (!item || typeof item !== "object") continue;
-        const row = item as { species?: string; tax_nom_val?: string; dist_m?: number; radius_m?: number };
+        const row = item as { species?: string; tax_nom_val?: string; dist_m?: number; radius_m?: number; aliases?: string[] };
         const name = row.species ?? row.tax_nom_val ?? "";
         if (!name) continue;
         species.push(name);
         const dist = row.dist_m ?? row.radius_m;
         distBySpecies[name] = typeof dist === "number" ? dist : 1000;
+        aliasesBySpecies[name] = Array.isArray(row.aliases) ? row.aliases.filter((a) => typeof a === "string") : [];
       }
       setFaunaEnabled(species.length > 0);
       setFaunaSpecies(species);
       setFaunaDistBySpecies(distBySpecies);
+      setFaunaAliases(aliasesBySpecies);
       setFaunaCombine(raw.fauna_combine === "and" ? "and" : "or");
+      setFaunaJoins(Array.isArray(raw.fauna_joins) ? raw.fauna_joins.filter((j): j is "or" | "and" => j === "or" || j === "and") : []);
     }
     if (Array.isArray(raw.flora_criteria)) {
       const flora = raw.flora_criteria.flatMap((item) => {
@@ -204,6 +220,10 @@ export function CreateAoiPage({
       });
       setFloraCriteria(flora);
       setFloraCombine(raw.flora_combine === "and" ? "and" : "or");
+      setFloraJoins(Array.isArray(raw.flora_joins) ? raw.flora_joins.filter((j): j is "or" | "and" => j === "or" || j === "and") : []);
+    }
+    if (raw.bio_combine === "and" || raw.bio_combine === "or") {
+      setBioCombine(raw.bio_combine);
     }
     if (raw.zone_humide_mode === "intersect" || raw.zone_humide_mode === "exclude" || raw.zone_humide_mode === "ignore") {
       setFauneZoneHumideMode(raw.zone_humide_mode);
@@ -450,11 +470,15 @@ export function CreateAoiPage({
         ? faunaSpecies.map((species) => ({
             species,
             dist_m: faunaDistBySpecies[species] ?? 1000,
+            aliases: faunaAliases[species] ?? [],
           }))
         : [],
       fauna_combine: faunaEnabled && faunaSpecies.length > 1 ? faunaCombine : "or",
+      fauna_joins: faunaEnabled ? fitJoins(faunaJoins, faunaSpecies.length) : [],
       flora_criteria: floraCriteria,
       flora_combine: floraCriteria.length > 1 ? floraCombine : "or",
+      flora_joins: fitJoins(floraJoins, floraCriteria.length),
+      bio_combine: faunaEnabled && floraCriteria.length > 0 ? bioCombine : "or",
       zone_humide_mode: isZh
         ? (minZoneHumideHa > 0 ? "intersect" as const : "ignore" as const)
         : fauneZoneHumideMode,
@@ -1034,12 +1058,25 @@ export function CreateAoiPage({
             onFaunaSpeciesChange={handleFaunaSpeciesChange}
             faunaDistBySpecies={faunaDistBySpecies}
             onFaunaDistChange={handleFaunaDistChange}
+            zoneGeometry={(sourceMode === "fichier" ? uploadedFeature : parcelFeature)?.geometry ?? null}
+            bufferM={(isZh ? 0 : bufferKm) * 1000}
+            faunaAliases={faunaAliases}
+            onFaunaAliasesChange={(species, names) => setFaunaAliases((prev) => ({ ...prev, [species]: names }))}
             faunaCombine={faunaCombine}
             onFaunaCombineChange={setFaunaCombine}
+            faunaJoins={faunaJoins}
+            onFaunaJoinsChange={setFaunaJoins}
             floraCriteria={floraCriteria}
-            onFloraCriteriaChange={setFloraCriteria}
+            onFloraCriteriaChange={(next) => {
+              setFloraCriteria(next);
+              setFloraJoins((prev) => fitJoins(prev, next.length));
+            }}
             floraCombine={floraCombine}
             onFloraCombineChange={setFloraCombine}
+            floraJoins={floraJoins}
+            onFloraJoinsChange={setFloraJoins}
+            bioCombine={bioCombine}
+            onBioCombineChange={setBioCombine}
             zoneHumideMode={fauneZoneHumideMode}
             onZoneHumideModeChange={setFauneZoneHumideMode}
             minZoneHumideHa={minZoneHumideHa}
@@ -1281,69 +1318,22 @@ export function CreateAoiPage({
           </div>
         </aside>
 
-        <div className="eco-aoi-map-wrap">
-          {sourceFeature && (
-            <div className="eco-aoi-map-legend" aria-hidden>
-              {!isZh && (
-                <div className="eco-aoi-legend-item">
-                  <span className="eco-aoi-legend-swatch eco-aoi-legend-swatch--parcel" />
-                  Parcelle / emprise
-                </div>
-              )}
-              {isZh && initialUploadFeature && (
-                <div className="eco-aoi-legend-item">
-                  <span className="eco-aoi-legend-swatch eco-aoi-legend-swatch--initial" />
-                  Zone initiale uploadée
-                </div>
-              )}
-              {!isZh && bufferKm > 0 && (
-                <div className="eco-aoi-legend-item">
-                  <span className="eco-aoi-legend-swatch eco-aoi-legend-swatch--buffer" />
-                  Zone de recherche ({bufferKm.toFixed(1)} km)
-                </div>
-              )}
-              {isZh && (
-                <div className="eco-aoi-legend-item">
-                  <span className="eco-aoi-legend-swatch eco-aoi-legend-swatch--parcel" />
-                  {bvPreviewNames.length === 1
-                    ? bvPreviewNames[0]
-                    : bvPreviewNames.length > 1
-                      ? `Périmètre BV (${bvPreviewNames.length})`
-                      : "Périmètre de recherche (bassins versants)"}
-                </div>
-              )}
-              {tilesOverlay.phase !== "hidden" && tilesOverlay.tiles.length > 0 && (
-                <>
-                  {tilesOverlay.phase === "tiling" && (
-                    <>
-                      <div className="eco-aoi-legend-item">
-                        <span className="eco-aoi-legend-swatch eco-aoi-legend-swatch--tile-pending" />
-                        Tuile à traiter
-                      </div>
-                      <div className="eco-aoi-legend-item">
-                        <span className="eco-aoi-legend-swatch eco-aoi-legend-swatch--tile-active" />
-                        Tuile en cours
-                      </div>
-                    </>
-                  )}
-                  <div className="eco-aoi-legend-item">
-                    <span className="eco-aoi-legend-swatch eco-aoi-legend-swatch--tile-done" />
-                    {tilesOverlay.phase === "filter"
-                      ? "Rétention par tuile"
-                      : "Tuile traitée"}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-
-          <CartoAoi
-            parcelFeature={sourceFeature}
-            initialZoneFeature={isZh ? initialUploadFeature : null}
-            bufferKm={isZh ? 0 : bufferKm}
-            tilesOverlay={tilesOverlay}
-          />
-        </div>
+        <CarteFiltre
+          sourceFeature={sourceFeature}
+          initialZoneFeature={initialUploadFeature}
+          bufferKm={bufferKm}
+          isZh={isZh}
+          bvPreviewNames={bvPreviewNames}
+          tilesOverlay={tilesOverlay}
+          faunaSpecies={faunaSpecies}
+          faunaAliases={faunaAliases}
+          faunaDistBySpecies={faunaDistBySpecies}
+          floraCriteria={floraCriteria}
+          tronconsHydroEnabled={tronconsHydroEnabled}
+          surfacesHydroEnabled={surfacesHydroEnabled}
+          tronconsHydroMaxDistM={tronconsHydroMaxDistM}
+          surfacesHydroMaxDistM={surfacesHydroMaxDistM}
+        />
       </div>
     </div>
   );

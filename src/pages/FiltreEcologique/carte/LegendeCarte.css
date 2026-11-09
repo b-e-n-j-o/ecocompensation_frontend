@@ -1,0 +1,58 @@
+.eco-legende {
+  position: absolute;
+  bottom: 2.5rem;
+  left: 1rem;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 11.5rem;
+  max-width: 16rem;
+  padding: 0.45rem 0.5rem;
+  border-radius: 0.55rem;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid var(--eco-border);
+  font-size: 0.72rem;
+  color: var(--eco-text-muted);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+}
+
+.eco-legende__bloc {
+  display: flex;
+  flex-direction: column;
+}
+
+.eco-legende__ligne {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.2rem 0.15rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.eco-legende__label {
+  flex: 1;
+}
+
+.eco-legende__oeil {
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+
+.eco-legende__ligne.is-off {
+  opacity: 0.45;
+}
+
+.eco-legende__note {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.05rem 0.15rem 0.05rem 1.15rem;
+  color: #555;
+}

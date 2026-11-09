@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { getApiBaseUrl } from "../../config/apiBase";
+import { EntreEspeces } from "./EntreEspeces";
 import "../../components/FilterPanel/FaunaSpeciesPicker.css";
 
 export type FloraPick = {
@@ -25,9 +26,13 @@ export function FloraTaxonPicker({
   selected,
   onChange,
   disabled = false,
+  joins = [],
+  onJoinsChange,
 }: {
   selected: FloraPick[];
   onChange: (next: FloraPick[]) => void;
+  joins?: ("and" | "or")[];
+  onJoinsChange?: (next: ("and" | "or")[]) => void;
   disabled?: boolean;
 }) {
   const [q, setQ] = useState("");
@@ -87,8 +92,9 @@ export function FloraTaxonPicker({
       </div>
       {selected.length > 0 && (
         <div className="fauna-species-picker__rows">
-          {selected.map((s) => (
-            <div key={s.taxon_key} className="fauna-species-picker__row">
+          {selected.map((s, index) => (
+            <Fragment key={s.taxon_key}>
+            <div className="fauna-species-picker__row">
               <div className="fauna-species-picker__row-head">
                 <span className="fauna-species-picker__chip-label">{s.label}</span>
                 <button
@@ -109,7 +115,7 @@ export function FloraTaxonPicker({
                 </div>
                 <input
                   type="range"
-                  min={100}
+                  min={0}
                   max={5000}
                   step={100}
                   value={s.dist_m}
@@ -125,6 +131,19 @@ export function FloraTaxonPicker({
                 />
               </div>
             </div>
+            {index < selected.length - 1 && onJoinsChange && (
+              <EntreEspeces
+                value={joins[index] ?? "or"}
+                disabled={disabled}
+                onChange={(op) => {
+                  const next = joins.slice(0, selected.length - 1);
+                  while (next.length < selected.length - 1) next.push("or");
+                  next[index] = op;
+                  onJoinsChange(next);
+                }}
+              />
+            )}
+            </Fragment>
           ))}
         </div>
       )}

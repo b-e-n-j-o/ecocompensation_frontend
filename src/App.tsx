@@ -6,7 +6,7 @@ import { EtudeResultats } from "./pages/Etude/EtudeResultats";
 import { HistoriquePage } from "./pages/Historique/HistoriquePage";
 import FaunaMapPage from "./pages/FaunaMap/FaunaMapPage";
 import DonneesInternesPage from "./pages/DonneesInternes/DonneesInternesPage";
-import AjoutFoncierPage from "./pages/DonneesInternes/AjoutFoncier/AjoutFoncierPage";
+import AjoutFoncierPage from "./pages/DonneesInternes/AjoutDonnees/Foncier/AjoutFoncierPage";
 
 import "./App.css";
 

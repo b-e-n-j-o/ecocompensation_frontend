@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { auditUfCombinations, type UfCombinationsAudit } from "../../../api";
 import { ExportEtudeMenu } from "./ExportEtudeMenu";
 import { ResultInfoNote } from "./ResultInfoNote";
 import type { SousEnsembleResult, UfFilterResponse } from "../../../types";
@@ -208,6 +209,10 @@ export function UnitesFoncieresTable({
   const [hoveredSubsetId, setHoveredSubsetId] = useState<string | null>(null);
   const [visibleUfCount, setVisibleUfCount] = useState(UF_PAGE_SIZE);
   const [ufTab, setUfTab] = useState<UfTab>("parcelles");
+  const [auditK, setAuditK] = useState(5);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [audit, setAudit] = useState<UfCombinationsAudit | null>(null);
+  const [auditError, setAuditError] = useState<string | null>(null);
   const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
 
   useEffect(() => {
@@ -269,7 +274,50 @@ export function UnitesFoncieresTable({
           <span className="ranking-count mono">
             {Math.min(visibleUfCount, ufs.length)} / {ufCount} UF
           </span>
+          {projectId && (
+            <form
+              style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto" }}
+              onSubmit={(e) => {
+                e.preventDefault();
+                setAuditLoading(true);
+                setAuditError(null);
+                auditUfCombinations(projectId, auditK)
+                  .then(setAudit)
+                  .catch((err: Error) => setAuditError(err.message))
+                  .finally(() => setAuditLoading(false));
+              }}
+            >
+              <label style={{ fontSize: 12, color: "#475569" }}>
+                Taille max des combinaisons
+                <input
+                  type="number"
+                  min={2}
+                  max={15}
+                  value={auditK}
+                  onChange={(e) => setAuditK(Number(e.target.value))}
+                  style={{ width: 52, marginLeft: 6 }}
+                />
+              </label>
+              <button type="submit" className="ranking-btn-select-mode" disabled={auditLoading}>
+                {auditLoading ? "Comptage…" : "Estimer"}
+              </button>
+            </form>
+          )}
         </div>
+        {audit && (
+          <p className="ranking-line-empty" style={{ margin: "8px 12px 0" }}>
+            De 2 à {audit.max_k} parcelles : {audit.n_combinaisons_surface_ok.toLocaleString("fr-FR")} combinaisons
+            qui passent la surface minimale ({audit.n_combinaisons.toLocaleString("fr-FR")} avant ce filtre),
+            sur {audit.n_uf.toLocaleString("fr-FR")} UF, en {audit.secondes}s.
+            {audit.n_uf_au_dela_du_plafond_actuel > 0
+              ? ` ${audit.n_uf_au_dela_du_plafond_actuel} UF ont plus de ${audit.cap_parcelles_uf_actuel} parcelles : elles sont ignorées par le calcul actuel.`
+              : ""}
+            {" "}Les résultats affichés ne sont pas modifiés.
+          </p>
+        )}
+        {auditError && (
+          <p className="ranking-line-empty" style={{ margin: "8px 12px 0" }}>{auditError}</p>
+        )}
         <ResultInfoNote>
           <p>
             Une unité foncière regroupe les parcelles cadastrales d&apos;une même société

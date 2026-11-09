@@ -569,6 +569,254 @@
   color: #afafaf;
 }
 
+.eco-entre-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.eco-entre {
+  display: flex;
+  gap: 0.55rem;
+  margin: 0.65rem 0;
+}
+
+.eco-entre button {
+  flex: 1;
+  padding: 0.45rem 0.5rem;
+  border: 2px solid #d5d5d5;
+  border-radius: 0.5rem;
+  background: #f3f3f3;
+  color: #6a6a6a;
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+}
+
+.eco-entre button.is-on {
+  background: #289f01;
+  border-color: #1a7a01;
+  color: #fff;
+}
+
+.eco-combine {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.55rem;
+}
+
+.eco-combine__line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.eco-combine__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.eco-combine__name {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #222;
+}
+
+.eco-combine__ops {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.eco-combine__slash {
+  color: #8a8a8a;
+  font-size: 0.68rem;
+}
+
+.eco-combine__op {
+  border: 1px solid #cfcfcf;
+  background: #fff;
+  color: #3a3a3a;
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.eco-combine__op:hover:not(:disabled) {
+  border-color: #289f01;
+  color: #289f01;
+}
+
+.eco-combine__op.is-on {
+  border-color: #289f01;
+  background: rgba(133, 227, 114, 0.28);
+  color: #146b08;
+}
+
+.eco-imports__toggle {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #3a3a3a;
+  cursor: pointer;
+}
+
+.eco-imports__toggle:hover {
+  color: #289f01;
+}
+
+.eco-imports__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+}
+
+.eco-imports__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 100%;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  background: #f3f3f3;
+  color: #222;
+  font-size: 0.72rem;
+}
+
+.eco-imports__chip em {
+  font-style: normal;
+  color: #666;
+}
+
+.eco-imports__more {
+  font: inherit;
+  font-size: 0.72rem;
+  color: #3a3a3a;
+  border: 1px solid #d5d5d5;
+  border-radius: 999px;
+  background: #fff;
+  padding: 0.15rem 0.4rem;
+}
+
+.eco-obs-import {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.55rem;
+}
+
+.eco-obs-import__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: fit-content;
+  padding: 0.15rem 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #3a3a3a;
+}
+
+.eco-obs-import__toggle:hover:not(:disabled) {
+  color: #289f01;
+}
+
+.eco-obs-import__toggle.is-open {
+  color: #289f01;
+}
+
+.eco-obs-import__plus {
+  font-size: 1.05rem;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.eco-obs-import__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--eco-text, #111);
+}
+
+.eco-obs-import__field select {
+  font: inherit;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--eco-border, #e8e8e8);
+  border-radius: 0.4rem;
+  background: #fff;
+}
+
+.eco-obs-import__field span {
+  color: var(--eco-text-muted, #4b4b4b);
+  line-height: 1.35;
+}
+
+.eco-obs-import__warn {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 650;
+  line-height: 1.4;
+  color: #d97706;
+}
+
+.eco-obs-import__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.eco-obs-import__force {
+  width: fit-content;
+  border: none;
+  border-radius: 0.45rem;
+  padding: 0.4rem 0.7rem;
+  background: #ea580c;
+  color: #fff;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.eco-obs-import__force:hover:not(:disabled) {
+  background: #c2410c;
+}
+
+.eco-obs-import__force:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.eco-obs-import__cancel {
+  width: fit-content;
+  border: 1px solid #d97706;
+  border-radius: 0.45rem;
+  padding: 0.4rem 0.7rem;
+  background: #fff;
+  color: #c2410c;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 .eco-aoi-slider-caption {
   margin: 0;
   font-size: 0.72rem;
@@ -676,6 +924,18 @@
   display: flex;
   align-items: center;
   gap: 0.45rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+button.eco-aoi-legend-item.is-off {
+  opacity: 0.4;
+  text-decoration: line-through;
 }
 
 .eco-aoi-legend-swatch {
@@ -910,6 +1170,35 @@
 
 .eco-filter-block--first {
   margin-top: 0;
+}
+
+.eco-filter-group {
+  padding: 0.75rem 0.8rem 0.9rem;
+  border: 1px solid var(--eco-border);
+  border-radius: 0.7rem;
+  background: #fff;
+}
+
+.eco-filter-group .eco-filter-block {
+  margin-top: 0.85rem;
+  padding: 0.65rem 0 0;
+  border: 0;
+  border-radius: 0;
+  border-top: 1px dashed #d4d4d4;
+  background: transparent;
+}
+
+.eco-filter-group .eco-filter-block--first {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.eco-filter-block--break {
+  margin-top: 1.15rem;
+  padding-top: 1.05rem;
+  border-top: 3px solid #289f01;
+  border-radius: 0 0 0.7rem 0.7rem;
 }
 
 .eco-paste {

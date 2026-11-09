@@ -820,6 +820,26 @@ export async function integrateManualParcelles(
   return res.json();
 }
 
+export type UfCombinationsAudit = {
+  max_k: number;
+  cap_parcelles_uf: number;
+  cap_parcelles_uf_actuel: number;
+  n_uf: number;
+  n_uf_au_dela_du_plafond_actuel: number;
+  n_combinaisons: number;
+  n_combinaisons_surface_ok: number;
+  par_taille: Record<string, number>;
+  secondes: number;
+};
+
+export async function auditUfCombinations(projectId: string, maxK: number): Promise<UfCombinationsAudit> {
+  const res = await fetch(
+    `${API}/api/projects/${projectId}/uf-combinations-audit?max_k=${maxK}`,
+  );
+  if (!res.ok) throw new Error(`Audit combinaisons UF : ${res.status}`);
+  return res.json();
+}
+
 export async function fetchUfResults(
   projectId: string,
   params?: {

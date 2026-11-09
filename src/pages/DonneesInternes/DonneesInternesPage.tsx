@@ -5,7 +5,8 @@ import type { Feature, FeatureCollection } from "geojson";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 import { geometryFilesToLayers } from "../../geo/importFichiers";
-import { FloreDock } from "./Flore/FloreDock";
+import { FloreDock } from "./AjoutDonnees/Flore/FloreDock";
+import { FauneDock } from "./AjoutDonnees/Faune/FauneDock";
 import FaunaQueryPanel from "../FaunaMap/FaunaQueryPanel";
 import { useFaunaQuery } from "../FaunaMap/useFaunaQuery";
 import { FAUNA_POINTS_SOURCE, raiseFaunaLayers } from "../FaunaMap/faunaMapShared";
@@ -333,6 +334,25 @@ function formatPropValue(v: unknown): string {
   return s;
 }
 
+function flattenObservationProps(props: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...props };
+  let details: unknown = props.details;
+  if (typeof details === "string") {
+    try {
+      details = JSON.parse(details);
+    } catch {
+      details = null;
+    }
+  }
+  if (details && typeof details === "object" && !Array.isArray(details)) {
+    delete out.details;
+    for (const [key, value] of Object.entries(details as Record<string, unknown>)) {
+      if (out[key] == null || out[key] === "") out[key] = value;
+    }
+  }
+  return out;
+}
+
 function featureTitle(props: Record<string, unknown>): string {
   return (
     String(
@@ -343,6 +363,8 @@ function featureTitle(props: Record<string, unknown>): string {
         props.inv_nom ||
         props.projet ||
         (typeof props.source === "string" ? PROP_VALUE_LABELS[props.source] : "") ||
+        props.nom_espece ||
+        props.nom_scientifique ||
         props.denomination ||
         (props.identifiant != null ? `GEOMCE ${props.identifiant}` : "") ||
         "",
@@ -946,6 +968,9 @@ export default function DonneesInternesPage() {
   const [floreVisible, setFloreVisible] = useState(true);
   const [floreCount, setFloreCount] = useState<number | null>(null);
   const [floreTruncated, setFloreTruncated] = useState(false);
+  const [fauneObsVisible, setFauneObsVisible] = useState(true);
+  const [fauneObsCount, setFauneObsCount] = useState<number | null>(null);
+  const [fauneObsTruncated, setFauneObsTruncated] = useState(false);
   const fauna = useFaunaQuery({
     mapRef,
     mapReady,
@@ -1474,6 +1499,28 @@ export default function DonneesInternesPage() {
 
     const onClick = (e: maplibregl.MapMouseEvent) => {
       if (fauna.isDrawing()) return;
+      const obsLayers = ["faune-circle", "faune-fill", "faune-line", "flore-circle", "flore-fill", "flore-line"]
+        .filter((id) => map.getLayer(id));
+      const obsHit = obsLayers.length ? map.queryRenderedFeatures(e.point, { layers: obsLayers })[0] : undefined;
+      if (obsHit?.properties) {
+        const props = flattenObservationProps(obsHit.properties as Record<string, unknown>);
+        const isFaune = String(obsHit.layer.id).startsWith("faune");
+        if (obsHit.geometry) {
+          fitBounds(
+            map,
+            bboxOfFc({
+              type: "FeatureCollection",
+              features: [{ type: "Feature", geometry: obsHit.geometry, properties: {} }],
+            }),
+          );
+        }
+        inspectRef.current({
+          title: featureTitle(props),
+          layerLabel: isFaune ? "Observations faune" : "Observations flore",
+          rows: collectInspectRows(props),
+        });
+        return;
+      }
       const faunaHitLayers = [`fauna-points-circle`, `fauna-points-clusters`].filter((id) => map.getLayer(id));
       if (faunaHitLayers.length && map.queryRenderedFeatures(e.point, { layers: faunaHitLayers }).length) {
         return;
@@ -1536,10 +1583,17 @@ export default function DonneesInternesPage() {
       });
     };
 
+    const liftObs = () => {
+      for (const id of ["flore-fill", "flore-line", "flore-circle", "faune-fill", "faune-line", "faune-circle"]) {
+        if (map.getLayer(id)) map.moveLayer(id);
+      }
+    };
+    map.on("idle", liftObs);
     map.on("mousemove", onMove);
     map.on("click", onClick);
     map.on("mouseleave", clearHover);
     return () => {
+      map.off("idle", liftObs);
       map.off("mousemove", onMove);
       map.off("click", onClick);
       map.off("mouseleave", clearHover);
@@ -1892,6 +1946,26 @@ export default function DonneesInternesPage() {
                 }}
               />
             </li>
+            <li className="di-fam">
+              <button
+                type="button"
+                className={`di-fam-btn${openTool.faune ? " is-open" : ""}`}
+                aria-expanded={Boolean(openTool.faune)}
+                onClick={() => toggleTool("faune")}
+              >
+                <span className="di-tool-plus" aria-hidden>+</span>
+                <span className="di-fam-label">Ajouter des observations faune</span>
+              </button>
+              <FauneDock
+                map={mapReady ? mapRef.current : null}
+                open={Boolean(openTool.faune)}
+                visible={fauneObsVisible}
+                onStats={(n, truncated) => {
+                  setFauneObsCount(n);
+                  setFauneObsTruncated(truncated);
+                }}
+              />
+            </li>
           </ul>
         </aside>
 
@@ -2214,6 +2288,26 @@ export default function DonneesInternesPage() {
                   label="Observations flore"
                   visible={floreVisible}
                   onClick={() => setFloreVisible((v) => !v)}
+                />
+              </div>
+            </li>
+            <li className="di-fam">
+              <div className="di-fam-head">
+                <button
+                  type="button"
+                  className={`di-fam-btn${fauneObsVisible ? " is-on" : ""}`}
+                  onClick={() => setFauneObsVisible((v) => !v)}
+                >
+                  <span className="di-swatch" style={{ background: "#c47b2b", borderColor: "#c47b2b" }} />
+                  <span className="di-fam-label">Observations faune</span>
+                  <span className="di-fam-meta">
+                    {fauneObsCount == null ? "" : fauneObsTruncated ? `${fauneObsCount.toLocaleString("fr-FR")}+` : fauneObsCount.toLocaleString("fr-FR")}
+                  </span>
+                </button>
+                <VisibilityBtn
+                  label="Observations faune"
+                  visible={fauneObsVisible}
+                  onClick={() => setFauneObsVisible((v) => !v)}
                 />
               </div>
             </li>

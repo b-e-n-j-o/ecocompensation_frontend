@@ -1,6 +1,6 @@
 import type { Feature, MultiPolygon, Polygon } from "geojson";
 
-import { getApiBaseUrl } from "../../../config/apiBase";
+import { getApiBaseUrl } from "../../../../config/apiBase";
 
 const API_BASE = getApiBaseUrl();
 

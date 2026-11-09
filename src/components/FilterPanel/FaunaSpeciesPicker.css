@@ -65,6 +65,14 @@
   color: #111111;
 }
 
+.fauna-species-picker__zone {
+  display: block;
+  font-style: normal;
+  font-weight: 500;
+  font-size: 0.7rem;
+  color: #3a3a3a;
+}
+
 .fauna-species-picker__chip-remove {
   width: 1.25rem;
   height: 1.25rem;
@@ -117,6 +125,101 @@
 .fauna-species-picker__row-head .fauna-species-picker__chip-label {
   font-weight: 600;
   font-size: 0.82rem;
+}
+
+.fauna-own-data {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.15rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--eco-border, #e8e8e8);
+}
+
+.fauna-own-data__title {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 650;
+  color: var(--eco-text, #111);
+}
+
+.fauna-own-data__choices {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.fauna-own-data__row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 0.4rem;
+  align-items: center;
+  padding: 0.28rem 0.4rem;
+  border-radius: 0.4rem;
+  border: 1px solid var(--eco-border, #e8e8e8);
+  background: #fff;
+  font-size: 0.75rem;
+}
+
+.fauna-own-data__row strong {
+  font-weight: 600;
+}
+
+.fauna-own-data__row em {
+  font-style: normal;
+  color: var(--eco-text-muted, #4b4b4b);
+}
+
+.fauna-own-data__row.is-off {
+  background: #f3f3f3;
+  color: #8a8a8a;
+  border-color: #e4e4e4;
+}
+
+.fauna-own-data__row.is-off strong {
+  text-decoration: line-through;
+  font-weight: 500;
+}
+
+.fauna-own-data__row.is-on {
+  border-color: #289f01;
+  background: rgba(133, 227, 114, 0.22);
+  color: #146b08;
+}
+
+.fauna-own-data__mark {
+  color: #289f01;
+  font-weight: 700;
+}
+
+.fauna-own-data__actions {
+  display: inline-flex;
+  gap: 0.2rem;
+}
+
+.fauna-own-data__yes,
+.fauna-own-data__no {
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 999px;
+  border: 1px solid #d0d0d0;
+  background: #fff;
+  color: #666;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+}
+
+.fauna-own-data__yes.is-on {
+  background: #289f01;
+  border-color: #289f01;
+  color: #fff;
+}
+
+.fauna-own-data__no.is-on {
+  background: #fff;
+  border-color: #b9b9b9;
+  color: #333;
 }
 
 .fauna-species-picker__hint {

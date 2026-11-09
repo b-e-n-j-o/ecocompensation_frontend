@@ -1,7 +1,10 @@
 import { CESBIO_LIBELLES, CESBIO_LIBELLE_COLORS } from "../../types";
 import type { CesbioLibelle, ZoneHumideMode } from "../../types";
+import { useState } from "react";
 import { FaunaSpeciesPicker } from "../../components/FilterPanel/FaunaSpeciesPicker";
 import { FloraTaxonPicker, type FloraPick } from "./FloraTaxonPicker";
+import { ObservationZipImport } from "./ObservationZipImport";
+import { EntreEspeces } from "./EntreEspeces";
 import { SelectNationalExclusions } from "./SelectNationalExclusions";
 
 const ZH_MODE_OPTIONS: { value: ZoneHumideMode; label: string }[] = [
@@ -30,12 +33,22 @@ type Props = {
   onFaunaSpeciesChange: (v: string[]) => void;
   faunaDistBySpecies: Record<string, number>;
   onFaunaDistChange: (species: string, distM: number) => void;
+  faunaAliases?: Record<string, string[]>;
+  onFaunaAliasesChange?: (species: string, names: string[]) => void;
   faunaCombine: "or" | "and";
   onFaunaCombineChange: (v: "or" | "and") => void;
+  faunaJoins?: ("or" | "and")[];
+  onFaunaJoinsChange?: (v: ("or" | "and")[]) => void;
+  zoneGeometry?: GeoJSON.Geometry | null;
+  bufferM?: number;
   floraCriteria?: FloraPick[];
   onFloraCriteriaChange?: (v: FloraPick[]) => void;
   floraCombine?: "or" | "and";
   onFloraCombineChange?: (v: "or" | "and") => void;
+  floraJoins?: ("or" | "and")[];
+  onFloraJoinsChange?: (v: ("or" | "and")[]) => void;
+  bioCombine?: "or" | "and";
+  onBioCombineChange?: (v: "or" | "and") => void;
   zoneHumideMode: ZoneHumideMode;
   onZoneHumideModeChange: (v: ZoneHumideMode) => void;
   minZoneHumideHa: number;
@@ -82,12 +95,22 @@ export function SelectFilterCriteria({
   onFaunaSpeciesChange,
   faunaDistBySpecies,
   onFaunaDistChange,
-  faunaCombine,
+  faunaAliases,
+  onFaunaAliasesChange,
+  faunaCombine: _faunaCombine,
   onFaunaCombineChange,
+  faunaJoins = [],
+  onFaunaJoinsChange,
+  zoneGeometry = null,
+  bufferM = 0,
   floraCriteria = [],
   onFloraCriteriaChange,
-  floraCombine = "or",
+  floraCombine: _floraCombine = "or",
   onFloraCombineChange,
+  floraJoins = [],
+  onFloraJoinsChange,
+  bioCombine = "or",
+  onBioCombineChange,
   zoneHumideMode,
   onZoneHumideModeChange,
   minZoneHumideHa,
@@ -112,6 +135,7 @@ export function SelectFilterCriteria({
   onExcludedLayersChange,
   disabled = false,
 }: Props) {
+  const [faunaReload, setFaunaReload] = useState(0);
   function toggleCesbio(lib: CesbioLibelle) {
     onCesbioLibellesChange(
       cesbioLibelles.includes(lib)
@@ -122,6 +146,7 @@ export function SelectFilterCriteria({
 
   return (
     <div className="eco-filter-criteria">
+      <div className="eco-filter-group">
       <div className="eco-filter-block eco-filter-block--first">
         <h3 className="eco-filter-block-title">Présence d&apos;espèce(s)</h3>
         <FaunaSpeciesPicker
@@ -134,38 +159,30 @@ export function SelectFilterCriteria({
           onDistanceChange={onFaunaDistChange}
           disabled={disabled}
           compact
+          reloadToken={faunaReload}
+          aliases={faunaAliases}
+          onAliasesChange={onFaunaAliasesChange}
+          zoneGeometry={zoneGeometry}
+          bufferM={bufferM}
+          joins={faunaJoins}
+          onJoinsChange={(next) => {
+            onFaunaJoinsChange?.(next);
+            onFaunaCombineChange(next.every((op) => op === "and") ? "and" : "or");
+          }}
         />
-        <fieldset className="eco-zh-fieldset" disabled={disabled || faunaSpecies.length < 2} style={{ marginTop: "0.65rem" }}>
-          <legend className="eco-aoi-label">Combinaison des espèces</legend>
-          <div className="eco-zh-modes eco-zh-modes--row">
-            <label className="eco-zh-mode">
-              <input
-                type="radio"
-                name="fauna-combine"
-                checked={faunaCombine === "or"}
-                onChange={() => onFaunaCombineChange("or")}
-              />
-              OU — au moins une
-            </label>
-            <label className="eco-zh-mode">
-              <input
-                type="radio"
-                name="fauna-combine"
-                checked={faunaCombine === "and"}
-                onChange={() => onFaunaCombineChange("and")}
-              />
-              ET — toutes
-            </label>
-          </div>
-          <p className="eco-aoi-slider-caption">
-            {faunaSpecies.length < 2
-              ? "Ajoutez au moins deux espèces pour choisir ET ou OU."
-              : faunaCombine === "and"
-                ? "La parcelle doit être proche d’une observation de chaque espèce."
-                : "La parcelle est retenue dès qu’une des espèces est à distance."}
-          </p>
-        </fieldset>
+        <ObservationZipImport kind="faune" disabled={disabled} onImported={() => setFaunaReload((n) => n + 1)} />
       </div>
+
+      {faunaSpecies.length > 0 && floraCriteria.length > 0 && (
+        <div className="eco-entre-wrap">
+          <EntreEspeces value={bioCombine} disabled={disabled} onChange={(op) => onBioCombineChange?.(op)} />
+          <p className="eco-aoi-slider-caption">
+            {bioCombine === "and"
+              ? "La parcelle doit convenir à la fois pour la faune et pour la flore."
+              : "La parcelle est retenue dès qu'elle convient pour la faune ou pour la flore."}
+          </p>
+        </div>
+      )}
 
       <div className="eco-filter-block">
         <h3 className="eco-filter-block-title">Présence de flore</h3>
@@ -173,30 +190,17 @@ export function SelectFilterCriteria({
           selected={floraCriteria}
           onChange={(next) => onFloraCriteriaChange?.(next)}
           disabled={disabled}
+          joins={floraJoins}
+          onJoinsChange={(next) => {
+            onFloraJoinsChange?.(next);
+            onFloraCombineChange?.(next.every((op) => op === "and") ? "and" : "or");
+          }}
         />
-        <fieldset className="eco-zh-fieldset" disabled={disabled || floraCriteria.length < 2} style={{ marginTop: "0.65rem" }}>
-          <legend className="eco-aoi-label">Combinaison des taxons</legend>
-          <div className="eco-zh-modes eco-zh-modes--row">
-            <label className="eco-zh-mode">
-              <input type="radio" name="flora-combine" checked={floraCombine === "or"} onChange={() => onFloraCombineChange?.("or")} />
-              OU — au moins un
-            </label>
-            <label className="eco-zh-mode">
-              <input type="radio" name="flora-combine" checked={floraCombine === "and"} onChange={() => onFloraCombineChange?.("and")} />
-              ET — tous
-            </label>
-          </div>
-          <p className="eco-aoi-slider-caption">
-            {floraCriteria.length < 2
-              ? "Ajoutez au moins deux taxons pour choisir ET ou OU."
-              : floraCombine === "and"
-                ? "La parcelle doit être proche d’une observation de chaque taxon."
-                : "La parcelle est retenue dès qu’un des taxons est à distance."}
-          </p>
-        </fieldset>
+        <ObservationZipImport kind="flore" disabled={disabled} />
+      </div>
       </div>
 
-      <div className="eco-filter-block">
+      <div className="eco-filter-block eco-filter-block--break">
         <h3 className="eco-filter-block-title">Filtre géométrique</h3>
         <div className="eco-aoi-slider">
           <div className="eco-aoi-slider-head">
@@ -243,7 +247,7 @@ export function SelectFilterCriteria({
         )}
       </div>
 
-      <div className="eco-filter-block">
+      <div className="eco-filter-block eco-filter-block--break">
         <h3 className="eco-filter-block-title">Occupation du sol</h3>
         <ul className="eco-layer-list eco-layer-list--classes">
           {CESBIO_LIBELLES.map((lib) => {
@@ -271,7 +275,7 @@ export function SelectFilterCriteria({
         </ul>
       </div>
 
-      <div className="eco-filter-block">
+      <div className="eco-filter-block eco-filter-block--break">
         <h3 className="eco-filter-block-title">Zones humides</h3>
         <p className="eco-layer-row__meta" style={{ margin: "0 0 0.65rem" }}>
           Optionnel. Laisser sur Ignorer pour ne pas filtrer.
@@ -331,7 +335,7 @@ export function SelectFilterCriteria({
         </fieldset>
       </div>
 
-      <div className="eco-filter-block">
+      <div className="eco-filter-block eco-filter-block--break">
         <h3 className="eco-filter-block-title">Bassin versant</h3>
         <p className="eco-layer-row__meta" style={{ margin: "0 0 0.55rem" }}>
           Optionnel. Uniquement les bassins versants qui touchent le foncier déposé.
@@ -348,7 +352,7 @@ export function SelectFilterCriteria({
         </button>
       </div>
 
-      <div className="eco-filter-block">
+      <div className="eco-filter-block eco-filter-block--break">
         <h3 className="eco-filter-block-title">Hydrographie</h3>
         <p className="eco-layer-row__meta" style={{ margin: "0 0 0.65rem" }}>
           Optionnel. Cours d’eau et plans d’eau, seuls ou combinés aux autres critères.
@@ -413,7 +417,7 @@ export function SelectFilterCriteria({
         )}
       </div>
 
-      <div className="eco-filter-block">
+      <div className="eco-filter-block eco-filter-block--break">
         <h3 className="eco-filter-block-title">Arrachage de vignes</h3>
         <p className="eco-layer-row__meta" style={{ margin: "0 0 0.65rem" }}>
           Optionnel. Sans type coché, toute intersection compte.

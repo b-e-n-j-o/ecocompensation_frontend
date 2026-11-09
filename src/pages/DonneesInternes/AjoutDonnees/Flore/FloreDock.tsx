@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
-import { getApiBaseUrl } from "../../../config/apiBase";
+import { getApiBaseUrl } from "../../../../config/apiBase";
 
 const SRC = "flore-obs";
 
@@ -10,6 +10,8 @@ type Report = {
   nb_valides: number;
   nb_rejetees: number;
   nb_doublons?: number;
+  deja_en_base?: boolean;
+  fichiers_deja?: string[];
   rejets: { ligne: number; raison: string }[];
   apercu: Record<string, unknown>[];
   crs_detecte?: string;
@@ -35,6 +37,7 @@ export function FloreDock({
   const [msg, setMsg] = useState<string | null>(null);
   const [imports, setImports] = useState<ImportRow[]>([]);
   const [dragOver, setDragOver] = useState(false);
+  const [forceImport, setForceImport] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const onStatsRef = useRef(onStats);
@@ -102,6 +105,7 @@ export function FloreDock({
   async function dry(f: File) {
     setBusy(true);
     setMsg(null);
+    setForceImport(false);
     const body = new FormData();
     body.append("file", f);
     const res = await fetch(`${api}/import?dry_run=true`, { method: "POST", body });
@@ -204,6 +208,22 @@ export function FloreDock({
             <span><strong>{report.nb_rejetees}</strong> rejets</span>
           </div>
           {crs && <p className="di-flore-crs">CRS {crs}</p>}
+          {report.deja_en_base && (
+            <p className="di-flore-warn">
+              Ces géométries sont potentiellement déjà en base
+              {report.fichiers_deja?.length
+                ? ` sous le nom de fichier ${report.fichiers_deja.map((f) => `« ${f} »`).join(", ")}`
+                : " (import précédent)"}
+              . Les doublons spatiaux ne seront pas réécrits.
+            </p>
+          )}
+          {!report.deja_en_base && (report.nb_doublons ?? 0) > 0 && (
+            <p className="di-flore-warn">
+              {report.nb_doublons} déjà en base
+              {report.fichiers_deja?.length ? ` (${report.fichiers_deja.join(", ")})` : ""}
+              , les autres seront ajoutées.
+            </p>
+          )}
           {report.rejets.length > 0 && (
             <ul className="di-flore-rejets">
               {report.rejets.slice(0, 6).map((r) => (
@@ -211,27 +231,75 @@ export function FloreDock({
               ))}
             </ul>
           )}
-          <button type="button" className="di-flore-import" disabled={busy || report.nb_valides === 0} onClick={commit}>
-            {busy ? "Import…" : `Importer ${report.nb_valides} observation${report.nb_valides > 1 ? "s" : ""}`}
-          </button>
+          {report.deja_en_base && !forceImport ? (
+            <div className="di-flore-actions">
+              <button type="button" className="di-flore-import di-flore-import--warn" disabled={busy} onClick={() => setForceImport(true)}>
+                Importer quand même
+              </button>
+              <button
+                type="button"
+                className="di-flore-cancel"
+                disabled={busy}
+                onClick={() => {
+                  setReport(null);
+                  setFile(null);
+                  setForceImport(false);
+                  setMsg(null);
+                }}
+              >
+                Ne pas importer
+              </button>
+            </div>
+          ) : (
+            <button type="button" className="di-flore-import" disabled={busy || report.nb_valides === 0} onClick={commit}>
+              {busy ? "Import…" : `Importer ${report.nb_valides} observation${report.nb_valides > 1 ? "s" : ""}`}
+            </button>
+          )}
         </div>
       )}
 
       {msg && <p className={msg.includes("impossible") || msg.includes("refusé") ? "di-error" : "di-flore-ok"}>{msg}</p>}
 
       {imports.length > 0 && (
-        <ul className="di-flore-history">
-          {imports.map((imp) => (
-            <li key={imp.id}>
-              <span>{imp.fichier}</span>
-              <span className="di-flore-history__n">{imp.nb_inserees}</span>
-              <button type="button" onClick={() => cancelImport(imp.id)}>Annuler</button>
-            </li>
-          ))}
-        </ul>
+        <div className="di-flore-catalog">
+          <div className="di-flore-catalog__head">
+            <span>Fichiers en base</span>
+            <span className="di-flore-catalog__count">{imports.length}</span>
+          </div>
+          <ul className={`di-flore-history${imports.length > 4 ? " is-scroll" : ""}`}>
+            {imports.map((imp) => (
+              <li key={imp.id}>
+                <span className="di-flore-history__file" title={imp.fichier}>
+                  <span className="di-flore-history__ext">{fileExt(imp.fichier)}</span>
+                  <span className="di-flore-history__name">{imp.fichier}</span>
+                  {imp.created_at && (
+                    <span className="di-flore-history__date">{formatImportDate(imp.created_at)}</span>
+                  )}
+                </span>
+                <span className="di-flore-history__n" title="Observations importées">
+                  {imp.nb_inserees}
+                </span>
+                <button type="button" onClick={() => cancelImport(imp.id)}>
+                  Annuler
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   );
+}
+
+function fileExt(name: string): string {
+  const m = name.match(/\.([a-z0-9]+)$/i);
+  return (m?.[1] ?? "file").toUpperCase();
+}
+
+function formatImportDate(raw: string): string {
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" });
 }
 
 function formatCrs(raw: string | undefined): string {
