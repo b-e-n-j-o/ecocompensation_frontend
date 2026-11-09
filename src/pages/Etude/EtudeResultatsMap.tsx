@@ -27,16 +27,21 @@ type ParcellesMapPanelProps = SharedMapProps & {
   onParcelleClick: (idu: string) => void;
   onParcelleHover?: (idu: string | null) => void;
   urbaRevision?: number;
+  onAddToPool?: (idus: string[]) => Promise<void>;
 };
 
 type UnitesMapPanelProps = SharedMapProps & {
   ufGeojson: FeatureCollection<Geometry, GeoJsonProperties> | null;
+  parcellesGeojson?: FeatureCollection<Geometry, GeoJsonProperties> | null;
   subsetScores: Record<string, number> | null;
   focusSubsetId: string | null;
   focusUfId: string | null;
   hoverSubsetId?: string | null;
   hoverUfId?: string | null;
+  hoverParcelleIdu?: string | null;
   onSubsetClick: (subsetId: string) => void;
+  onUfClick?: (ufId: string) => void;
+  onParcelleHover?: (idu: string | null) => void;
 };
 
 function MapEmpty({ children }: { children: string }) {
@@ -153,6 +158,7 @@ export function EtudeResultatsParcellesMap({
   onParcelleClick,
   onParcelleHover,
   urbaRevision = 0,
+  onAddToPool,
 }: ParcellesMapPanelProps) {
   if (!geojson) {
     return <MapEmpty>GeoJSON parcelles indisponible.</MapEmpty>;
@@ -175,12 +181,14 @@ export function EtudeResultatsParcellesMap({
       onParcelleClick={onParcelleClick}
       onParcelleHover={onParcelleHover}
       urbaRevision={urbaRevision}
+      onAddToPool={onAddToPool}
     />
   );
 }
 
 export function EtudeResultatsUnitesMap({
   ufGeojson,
+  parcellesGeojson = null,
   subsetScores,
   foncierGeojson,
   projectId,
@@ -191,7 +199,10 @@ export function EtudeResultatsUnitesMap({
   focusUfId,
   hoverSubsetId,
   hoverUfId,
+  hoverParcelleIdu = null,
   onSubsetClick,
+  onUfClick,
+  onParcelleHover,
 }: UnitesMapPanelProps) {
   if (!ufGeojson) {
     return <MapEmpty>GeoJSON des sous-ensembles indisponible.</MapEmpty>;
@@ -210,6 +221,10 @@ export function EtudeResultatsUnitesMap({
       hoverSubsetId={hoverSubsetId}
       hoverUfId={hoverUfId}
       onSubsetClick={onSubsetClick}
+      parcellesGeojson={parcellesGeojson as FeatureCollection<Geometry, Record<string, unknown>> | null}
+      onUfClick={onUfClick}
+      hoverParcelleIdu={hoverParcelleIdu}
+      onParcelleHover={onParcelleHover}
     />
   );
 }

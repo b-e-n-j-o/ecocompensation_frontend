@@ -6,6 +6,7 @@ import type { CSSProperties } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { buildFilterRequestPayload } from "../../api";
 import { DEFAULT_FILTER } from "../../types";
+import { parseFilterPresetText } from "../../utils/storedFilterResults";
 import type {
   FauneCriterion,
   FilterOptions,
@@ -65,6 +66,40 @@ export function FilterPanel({
   const [scoreOnlyMode, setScoreOnlyMode] = useState(false);
   const [ufOnlyMode, setUfOnlyMode] = useState(false);
   const [showDebugPayload, setShowDebugPayload] = useState(false);
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState("");
+  const [pasteError, setPasteError] = useState<string | null>(null);
+  const [pasteOk, setPasteOk] = useState(false);
+
+  function applyPresetText(text: string): boolean {
+    const parsed = parseFilterPresetText(text);
+    if (!parsed) {
+      setPasteError("JSON non reconnu. Collez le JSON copié depuis « Copier paramètres ».");
+      setPasteOk(false);
+      return false;
+    }
+    setOpts({ ...DEFAULT_FILTER, ...parsed });
+    setPasteError(null);
+    setPasteOk(true);
+    return true;
+  }
+
+  async function pasteFromClipboard() {
+    setPasteError(null);
+    setPasteOk(false);
+    try {
+      const text = await navigator.clipboard.readText();
+      if (applyPresetText(text)) {
+        setPasteOpen(false);
+        setPasteText("");
+      } else {
+        setPasteOpen(true);
+        setPasteText(text);
+      }
+    } catch {
+      setPasteOpen(true);
+    }
+  }
 
   useEffect(() => {
     if (initialOptions) {
@@ -177,6 +212,70 @@ export function FilterPanel({
           disabled={isLoading}
         />
 
+        <button
+          type="button"
+          disabled={isLoading}
+          onClick={() => void pasteFromClipboard()}
+          style={{
+            background: "#2a2f3d",
+            border: "1px solid #3b82f6",
+            color: "#93c5fd",
+            borderRadius: 4,
+            height: 32,
+            fontSize: 12,
+            fontWeight: 500,
+            cursor: isLoading ? "not-allowed" : "pointer",
+          }}
+        >
+          Coller paramètres
+        </button>
+        {pasteOk && (
+          <div style={{ fontSize: 11, color: "#6ee7b7" }}>
+            Paramètres collés. Lancez le filtre pour rejouer le même filtrage.
+          </div>
+        )}
+        {pasteOpen && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <textarea
+              value={pasteText}
+              onChange={(e) => {
+                setPasteText(e.target.value);
+                setPasteError(null);
+              }}
+              placeholder="Collez ici le JSON copié depuis le compte rendu de filtrage"
+              rows={6}
+              style={{
+                width: "100%",
+                resize: "vertical",
+                background: "#111827",
+                color: "#e5e7eb",
+                border: "1px solid #3b82f6",
+                borderRadius: 6,
+                fontSize: 11,
+                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                padding: 8,
+              }}
+            />
+            {pasteError && <div style={{ fontSize: 11, color: "#fca5a5" }}>{pasteError}</div>}
+            <button
+              type="button"
+              onClick={() => applyPresetText(pasteText)}
+              style={{
+                background: "#1d4ed8",
+                border: "none",
+                color: "#fff",
+                borderRadius: 4,
+                height: 30,
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Appliquer
+            </button>
+          </div>
+        )}
+
         <ExclusionsSection
           projectId={projectId}
           value={opts.excluded_layers}
@@ -198,6 +297,8 @@ export function FilterPanel({
           projectId={projectId}
           value={opts.faune_criteria}
           onChange={(v: FauneCriterion[]) => patch({ faune_criteria: v })}
+          combine={opts.fauna_combine === "and" ? "and" : "or"}
+          onCombineChange={(v) => patch({ fauna_combine: v })}
         />
 
         <LayerIntersectSection

@@ -53,13 +53,61 @@
   overflow: hidden;
 }
 
-.eco-aoi-sidebar-head {
+.eco-aoi-mode {
+  display: flex;
+  gap: 0;
+  padding: 0;
+}
+
+.eco-aoi-mode__tab {
+  flex: 1;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #6b7280;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.25;
+  padding: 0.85rem 0.7rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.eco-aoi-mode__tab.is-on {
+  color: #14532d;
+  border-bottom-color: #289f01;
+}
+
+.analyse-foncier__hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.analyse-foncier__file {
+  margin: 8px 0 0;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.analyse-foncier__check {
   display: flex;
   align-items: center;
-  gap: 0.65rem;
-  padding: 0.85rem 1rem;
-  border-bottom: 1px solid var(--eco-border);
-  flex-shrink: 0;
+  gap: 8px;
+  font-size: 13px;
+  margin: 0 0 6px;
+}
+
+.analyse-foncier__flora .eco-aoi-slider {
+  display: none;
+}
+
+.analyse-foncier__note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #374151;
 }
 
 .eco-aoi-sidebar-head h1 {
@@ -864,6 +912,65 @@
   margin-top: 0;
 }
 
+.eco-paste {
+  margin: 0 0 10px;
+}
+
+.eco-paste-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: #6b7280;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 0;
+  cursor: pointer;
+}
+
+.eco-paste-toggle:hover:not(:disabled) {
+  color: #1d4ed8;
+}
+
+.eco-paste-body {
+  margin-top: 6px;
+}
+
+.eco-paste-json {
+  width: 100%;
+  min-height: 88px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.eco-paste-apply {
+  margin-top: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: #1d4ed8;
+  color: #fff;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.eco-paste-apply:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.eco-paste-msg {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #166534;
+}
+
 .eco-filter-block-title {
   margin: 0 0 0.55rem;
   font-size: 0.72rem;
@@ -1036,6 +1143,12 @@
   display: flex;
   flex-direction: column;
   gap: 0.08rem;
+}
+
+.eco-zh-modes--row {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
 }
 
 .eco-zh-mode {

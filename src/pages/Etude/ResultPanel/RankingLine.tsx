@@ -11,6 +11,8 @@ import {
   getCompositeScoreMetric,
   getDureteFonciereMetric,
   getEspacesBoisesClassesMetric,
+  formatOccSolPct,
+  getOccupationSolFromVegProfile,
   getOccupationSolMetric,
   getPersonnesMoralesMetric,
   getUrbanismeGpuMetric,
@@ -38,12 +40,6 @@ function colorForZonageLabel(label: string): { fill: string; border: string } {
   };
 }
 
-function formatOccSolPct(ratio: number): string {
-  const pct = ratio * 100;
-  const digits = pct >= 10 || pct === 0 ? 0 : 1;
-  return `${pct.toLocaleString("fr-FR", { maximumFractionDigits: digits, minimumFractionDigits: 0 })} %`;
-}
-
 function formatOccSolHa(areaM2: number | null): string | null {
   if (areaM2 == null || !Number.isFinite(areaM2) || areaM2 <= 0) return null;
   const ha = areaM2 / 10_000;
@@ -52,11 +48,11 @@ function formatOccSolHa(areaM2: number | null): string | null {
 }
 
 function OccupancySolBlock({ metric }: { metric: OccupationSolMetric }) {
-  const rows: OccupationSolShare[] = metric.shares.filter((s) => s.ratio > 0);
+  const rows: OccupationSolShare[] = metric.shares.filter((s) => s.pct > 0);
   const hint =
     metric.source === "cesbio_profile"
-      ? "Classes CESBIO sur la parcelle. Elles peuvent se recouvrir."
-      : "Classes de l’intersection BD TOPO / CESBIO. Elles peuvent se recouvrir.";
+      ? "Part de chaque classe dans la surface de référence. La somme fait 100 %."
+      : "Part de chaque classe dans la surface intersectée.";
 
   return (
     <div className="filter-enrich-section">
@@ -71,16 +67,17 @@ function OccupancySolBlock({ metric }: { metric: OccupationSolMetric }) {
         {rows.map((s) => {
           const { fill } = colorForZonageLabel(s.label);
           const ha = formatOccSolHa(s.areaM2);
-          const width = `${Math.max(2, Math.min(100, s.ratio * 100))}%`;
+          const width = `${Math.max(2, Math.min(100, s.pct))}%`;
           return (
             <li key={s.label} className="filter-enrich-fauna-row">
               <div className="filter-enrich-fauna-row-head">
                 <span className="occ-sol-swatch" style={{ background: fill }} />
                 <span className="filter-enrich-fauna-species" title={s.label}>
                   {s.label}
+                  {s.vegSource ? <span className="filter-enrich-pill filter-enrich-pill--muted"> {s.vegSource}</span> : null}
                 </span>
                 <span className="filter-enrich-pill filter-enrich-pill--muted mono">
-                  {formatOccSolPct(s.ratio)}
+                  {formatOccSolPct(s.pct)}
                   {ha ? ` · ${ha}` : ""}
                 </span>
               </div>
@@ -97,6 +94,11 @@ function OccupancySolBlock({ metric }: { metric: OccupationSolMetric }) {
 
 export function parseFilterEnrichPayload(v: Record<string, unknown>): FilterEnrichPayload | null {
   const veg = v.veg_libelles;
+  const vegProfileRaw = v.veg_profile;
+  const veg_profile =
+    vegProfileRaw && typeof vegProfileRaw === "object" && !Array.isArray(vegProfileRaw)
+      ? vegProfileRaw as FilterEnrichPayload["veg_profile"]
+      : undefined;
   const fauna = v.fauna_distances;
   const troncons = v.troncons_hydro_info;
   const veg_libelles = Array.isArray(veg)
@@ -107,6 +109,14 @@ export function parseFilterEnrichPayload(v: Record<string, unknown>): FilterEnri
     for (const [k, val] of Object.entries(fauna)) {
       const n = typeof val === "number" ? val : Number(val);
       if (k.trim() && Number.isFinite(n) && n >= 0) fauna_distances[k.trim()] = n;
+    }
+  }
+  const floraRaw = v.flora_distances;
+  const flora_distances: Record<string, number> = {};
+  if (floraRaw && typeof floraRaw === "object") {
+    for (const [k, val] of Object.entries(floraRaw)) {
+      const n = typeof val === "number" ? val : Number(val);
+      if (k.trim() && Number.isFinite(n) && n >= 0) flora_distances[k.trim()] = n;
     }
   }
   const troncons_hydro_info = Array.isArray(troncons)
@@ -138,7 +148,9 @@ export function parseFilterEnrichPayload(v: Record<string, unknown>): FilterEnri
     : undefined;
   if (
     !veg_libelles.length
+    && !(veg_profile && Object.keys(veg_profile).length)
     && !Object.keys(fauna_distances).length
+    && !Object.keys(flora_distances).length
     && !troncons_hydro_info?.length
     && !surfaces_hydro_info?.length
     && dist_hydro_m == null
@@ -152,7 +164,9 @@ export function parseFilterEnrichPayload(v: Record<string, unknown>): FilterEnri
   }
   return {
     veg_libelles,
+    veg_profile,
     fauna_distances,
+    flora_distances,
     troncons_hydro_info,
     surfaces_hydro_info,
     dist_hydro_m,
@@ -454,10 +468,12 @@ export function FilterEnrichBlock({
   /** Surface parcelle (ha) pour le % ZH si la métrique n’a pas `zone_humide_pct`. */
   parcelSurfaceHa?: number | null;
   /** Limite l’affichage à une famille, pour les onglets de la fiche parcelle. */
-  part?: "all" | "faune" | "sol" | "hydro" | "zh";
+  part?: "all" | "faune" | "flore" | "sol" | "hydro" | "zh";
 }) {
   const vegLabels = payload.veg_libelles ?? [];
+  const occSolFromProfile = getOccupationSolFromVegProfile(payload.veg_profile);
   const faunaEntries = Object.entries(payload.fauna_distances ?? {}).sort((a, b) => a[1] - b[1]);
+  const floraEntries = Object.entries(payload.flora_distances ?? {}).sort((a, b) => a[1] - b[1]);
   const troncons = payload.troncons_hydro_info ?? [];
   const surfaces = payload.surfaces_hydro_info ?? [];
   const zhHa = payload.zone_humide_ha;
@@ -465,11 +481,14 @@ export function FilterEnrichBlock({
   const showSol = part === "all" || part === "sol";
   const showZh = part === "all" || part === "zh";
   const showFaune = part === "all" || part === "faune";
+  const showFlore = part === "all" || part === "flore";
   const showHydro = part === "all" || part === "hydro";
 
   return (
     <div className="filter-enrich-block">
-      {!hideCesbio && showSol && (
+      {!hideCesbio && showSol && (occSolFromProfile ? (
+        <OccupancySolBlock metric={occSolFromProfile} />
+      ) : (
         <div className="filter-enrich-section">
           <div className="filter-enrich-section-head">
             <span className="filter-enrich-section-title">Végétation CESBIO</span>
@@ -492,7 +511,7 @@ export function FilterEnrichBlock({
             <p className="ranking-line-empty">Aucun libellé CESBIO du filtre sur cette parcelle.</p>
           )}
         </div>
-      )}
+      ))}
 
       {showFaune && (
       <div className="filter-enrich-section">
@@ -525,6 +544,39 @@ export function FilterEnrichBlock({
           </ul>
         ) : (
           <p className="ranking-line-empty">Aucune distance faune enregistrée pour cette parcelle.</p>
+        )}
+      </div>
+      )}
+
+      {showFlore && (
+      <div className="filter-enrich-section">
+        <div className="filter-enrich-section-head">
+          <span className="filter-enrich-section-title">Flore (filtre)</span>
+          <span className="filter-enrich-section-count mono">
+            {floraEntries.length
+              ? `${floraEntries.length} taxon${floraEntries.length > 1 ? "s" : ""}`
+              : "—"}
+          </span>
+        </div>
+        {floraEntries.length ? (
+          <ul className="filter-enrich-fauna-list" aria-label="Distances aux observations flore">
+            {floraEntries.map(([taxon, distM]) => {
+              const tone = faunaDistanceTone(distM);
+              return (
+                <li key={taxon} className="filter-enrich-fauna-row">
+                  <div className="filter-enrich-fauna-row-head">
+                    <span className="filter-enrich-fauna-species" title={taxon}>{taxon}</span>
+                    <span className="filter-enrich-proximity">{tone.label}</span>
+                    <span className="filter-enrich-pill filter-enrich-pill--faune mono">
+                      {distM <= 0 ? "0 m" : `${Math.round(distM).toLocaleString("fr-FR")} m`}
+                    </span>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="ranking-line-empty">Aucune observation flore dans le rayon du filtre.</p>
         )}
       </div>
       )}
@@ -562,6 +614,7 @@ type ParcelScoreBreakdownItem = {
   nearest_observation_distance_m?: number;
   buffer_radius_max_m?: number;
   buffer_half_m?: number;
+  label?: string;
 };
 
 export type ParcelScorePayload = {
@@ -569,7 +622,8 @@ export type ParcelScorePayload = {
   max_score: number;
   breakdown: {
     especes: ParcelScoreBreakdownItem;
-    distance: ParcelScoreBreakdownItem;
+    distance?: ParcelScoreBreakdownItem;
+    flore?: ParcelScoreBreakdownItem & { label?: string };
   };
 };
 
@@ -587,16 +641,19 @@ export function parseParcelScorePayload(v: Record<string, unknown>): ParcelScore
       reason: typeof rec.reason === "string" ? rec.reason : undefined,
       distance_km: typeof rec.distance_km === "number" && Number.isFinite(rec.distance_km) ? rec.distance_km : undefined,
       bucket: typeof rec.bucket === "string" ? rec.bucket : undefined,
-      nearest_observation_distance_m:
-        typeof rec.nearest_observation_distance_m === "number" && Number.isFinite(rec.nearest_observation_distance_m)
-          ? rec.nearest_observation_distance_m
-          : undefined,
       buffer_radius_max_m:
         typeof rec.buffer_radius_max_m === "number" && Number.isFinite(rec.buffer_radius_max_m)
           ? rec.buffer_radius_max_m
           : undefined,
       buffer_half_m:
         typeof rec.buffer_half_m === "number" && Number.isFinite(rec.buffer_half_m) ? rec.buffer_half_m : undefined,
+      nearest_observation_distance_m:
+        typeof rec.nearest_observation_distance_m === "number"
+          ? rec.nearest_observation_distance_m
+          : typeof rec.dist_m === "number" && Number.isFinite(rec.dist_m)
+            ? rec.dist_m
+            : undefined,
+      label: typeof rec.label === "string" ? rec.label : undefined,
     };
   };
 
@@ -605,7 +662,8 @@ export function parseParcelScorePayload(v: Record<string, unknown>): ParcelScore
     max_score: v.max_score,
     breakdown: {
       especes: getItem("especes"),
-      distance: getItem("distance"),
+      distance: (b as Record<string, unknown>).distance ? getItem("distance") : undefined,
+      flore: (b as Record<string, unknown>).flore ? getItem("flore") : undefined,
     },
   };
 }
@@ -652,17 +710,38 @@ export function ScoreBlock({ payload }: { payload: ParcelScorePayload }) {
     return "Hors critères";
   })();
 
+  const fl = payload.breakdown.flore;
+  const flDetail = (() => {
+    if (!fl) return "";
+    if (fl.reason === "intersection") return `Observation dans la parcelle${fl.label ? ` (${fl.label})` : ""}`;
+    if (fl.reason === "within_radius") {
+      return `Dans le rayon du filtre${fl.label ? ` : ${fl.label}` : ""}${fl.nearest_observation_distance_m != null ? ` (${Math.round(fl.nearest_observation_distance_m)} m)` : ""}`;
+    }
+    if (fl.reason === "beyond_radius") return "Aucune observation dans le rayon du filtre";
+    if (fl.reason === "no_flore_criteria") return "Aucun taxon ciblé dans le filtre";
+    return "Hors critères";
+  })();
+
   const lines: { label: string; points: number; detail: string }[] = [
     {
       label: "Espèces faune (proximité)",
       points: es.points,
       detail: esDetail,
     },
-    {
-      label: "Distance au projet",
-      points: payload.breakdown.distance.points,
-      detail: `${payload.breakdown.distance.distance_km?.toFixed(1) ?? "?"} km (${payload.breakdown.distance.bucket ?? "n/a"})`,
-    },
+    ...(fl
+      ? [{
+          label: "Flore (rayon du filtre)",
+          points: fl.points,
+          detail: flDetail,
+        }]
+      : []),
+    ...(payload.breakdown.distance
+      ? [{
+          label: "Distance au projet",
+          points: payload.breakdown.distance.points,
+          detail: `${payload.breakdown.distance.distance_km?.toFixed(1) ?? "?"} km (${payload.breakdown.distance.bucket ?? "n/a"})`,
+        }]
+      : []),
   ];
 
   return (
@@ -745,71 +824,63 @@ export function PersonnesMoralesBlock({ payload }: { payload: PersonnesMoralesPa
 
   return (
     <div
-      className="ranking-metric-vegetation ranking-metric-vegetation--carhab"
-      style={{ border: `1px solid ${borderColor}`, borderRadius: 8, background: bg, padding: 10 }}
+      className="ranking-pm-block"
+      style={{ border: `1px solid ${borderColor}`, background: bg }}
     >
-      <div style={{ display: "grid", gap: 6 }}>
-        <div>
-          <span style={{ color: "#6b7280" }}>Répertoire personnes morales</span>{" "}
-          <strong style={{ color: payload.intersects_pm_database ? "#1d4ed8" : "#6b7280" }}>
-            {payload.intersects_pm_database ? "Oui" : "Non"}
-          </strong>
-        </div>
-        {payload.intersects_pm_database && (
-          <>
-            <div>
-              <span style={{ color: "#6b7280" }}>SIREN</span>{" "}
-              <span className="mono" style={{ color: "#111827" }}>
-                {payload.siren ?? "—"}
-              </span>
-            </div>
-            <div>
-              <span style={{ color: "#6b7280" }}>Dénomination</span>{" "}
-              <span style={{ color: "#111827" }}>{payload.denomination ?? "—"}</span>
-            </div>
-            <div>
-              <span style={{ color: "#6b7280" }}>Forme juridique</span>{" "}
-              <span style={{ color: "#111827" }}>{payload.forme_juridique ?? "—"}</span>
-            </div>
-          </>
-        )}
-        <div>
-          <span style={{ color: "#6b7280" }}>Propriétaire ayant déjà compensé (autre foncier)</span>{" "}
-          <strong style={{ color: compensation ? "#b45309" : "#6b7280" }}>{compensation ? "Oui" : "Non"}</strong>
-        </div>
-        {compensation && (
-          <>
-            {payload.parcelle_deja_en_mc != null && (
-              <div>
-                <span style={{ color: "#6b7280" }}>Cette parcelle déjà en mesure de compensation</span>{" "}
-                <span style={{ color: "#111827" }}>{payload.parcelle_deja_en_mc ? "Oui" : "Non"}</span>
-              </div>
-            )}
-            <div>
-              <span style={{ color: "#6b7280" }}>Mesures compensatoires distinctes (propriétaire)</span>{" "}
-              <span className="mono" style={{ color: "#111827" }}>
-                {formatCountFr(payload.nb_mc_distinctes)}
-              </span>
-            </div>
-            <div>
-              <span style={{ color: "#6b7280" }}>Parcelles du propriétaire déjà en MC</span>{" "}
-              <span className="mono" style={{ color: "#111827" }}>
-                {formatCountFr(payload.nb_parcelles_deja_en_mc)}
-              </span>
-            </div>
-            <div>
-              <span style={{ color: "#6b7280" }}>Surface totale concernée par les MC (propriétaire)</span>{" "}
-              <span className="mono" style={{ color: "#111827" }}>
-                {formatSurfaceM2Fr(payload.surface_deja_en_mc_m2)}
-              </span>
-            </div>
-            <p className="ranking-line-empty" style={{ margin: 0 }}>
-              Parcelle issue de la liste filtrée des prospects dont le propriétaire a déjà exercé de la
-              compensation sur d’autres parcelles.
-            </p>
-          </>
-        )}
+      <div className="ranking-pm-row">
+        <span className="ranking-pm-label">Répertoire personnes morales</span>
+        <strong className="ranking-pm-value" style={{ color: payload.intersects_pm_database ? "#1d4ed8" : "#64748b" }}>
+          {payload.intersects_pm_database ? "Oui" : "Non"}
+        </strong>
       </div>
+      {payload.intersects_pm_database && (
+        <>
+          <div className="ranking-pm-row">
+            <span className="ranking-pm-label">SIREN</span>
+            <span className="ranking-pm-value mono">{payload.siren ?? "—"}</span>
+          </div>
+          <div className="ranking-pm-row">
+            <span className="ranking-pm-label">Dénomination</span>
+            <span className="ranking-pm-value">{payload.denomination ?? "—"}</span>
+          </div>
+          <div className="ranking-pm-row">
+            <span className="ranking-pm-label">Forme juridique</span>
+            <span className="ranking-pm-value">{payload.forme_juridique ?? "—"}</span>
+          </div>
+        </>
+      )}
+      <div className="ranking-pm-row">
+        <span className="ranking-pm-label">Propriétaire ayant déjà compensé (autre foncier)</span>
+        <strong className="ranking-pm-value" style={{ color: compensation ? "#b45309" : "#64748b" }}>
+          {compensation ? "Oui" : "Non"}
+        </strong>
+      </div>
+      {compensation && (
+        <>
+          {payload.parcelle_deja_en_mc != null && (
+            <div className="ranking-pm-row">
+              <span className="ranking-pm-label">Cette parcelle déjà en mesure de compensation</span>
+              <span className="ranking-pm-value">{payload.parcelle_deja_en_mc ? "Oui" : "Non"}</span>
+            </div>
+          )}
+          <div className="ranking-pm-row">
+            <span className="ranking-pm-label">Mesures compensatoires distinctes (propriétaire)</span>
+            <span className="ranking-pm-value mono">{formatCountFr(payload.nb_mc_distinctes)}</span>
+          </div>
+          <div className="ranking-pm-row">
+            <span className="ranking-pm-label">Parcelles du propriétaire déjà en MC</span>
+            <span className="ranking-pm-value mono">{formatCountFr(payload.nb_parcelles_deja_en_mc)}</span>
+          </div>
+          <div className="ranking-pm-row">
+            <span className="ranking-pm-label">Surface totale concernée par les MC (propriétaire)</span>
+            <span className="ranking-pm-value mono">{formatSurfaceM2Fr(payload.surface_deja_en_mc_m2)}</span>
+          </div>
+          <p className="ranking-line-empty ranking-pm-hint">
+            Parcelle issue de la liste filtrée des prospects dont le propriétaire a déjà exercé de la
+            compensation sur d’autres parcelles.
+          </p>
+        </>
+      )}
     </div>
   );
 }
@@ -907,6 +978,7 @@ function ArrachageVignesBlock({ payload }: { payload: ArrachageVignesMetric }) {
 const DETAIL_TABS: { id: DetailTab; label: string }[] = [
   { id: "score", label: "Scoring" },
   { id: "especes", label: "Espèces animales" },
+  { id: "flore", label: "Flore" },
   { id: "sol", label: "Occupation du sol" },
   { id: "zh", label: "Zones humides" },
   { id: "hydros", label: "Hydros" },
@@ -919,6 +991,7 @@ const DETAIL_TABS: { id: DetailTab; label: string }[] = [
 type DetailTab =
   | "score"
   | "especes"
+  | "flore"
   | "sol"
   | "zh"
   | "hydros"
@@ -964,7 +1037,7 @@ export function RankingLine({
   focusTab = null,
   focusNonce = 0,
 }: RankingLineProps) {
-  const [tab, setTab] = useState<DetailTab>("especes");
+  const [tab, setTab] = useState<DetailTab>("score");
   useEffect(() => {
     if (focusTab) setTab(focusTab);
   }, [focusTab, focusNonce]);
@@ -1066,6 +1139,29 @@ export function RankingLine({
         )
       )}
 
+      {tab === "flore" && (() => {
+        const fromMetric = metrics.find((row) => row.metric_key === "especes_flore");
+        const taxa = (fromMetric?.metric_value_jsonb as { taxa?: Array<{ label?: string; dist_m?: number }> } | undefined)?.taxa;
+        const metricDistances: Record<string, number> = {};
+        if (Array.isArray(taxa)) {
+          for (const t of taxa) {
+            const label = String(t?.label ?? "").trim();
+            const dist = Number(t?.dist_m);
+            if (label && Number.isFinite(dist) && dist >= 0) metricDistances[label] = dist;
+          }
+        }
+        const floraPayload: FilterEnrichPayload | null = Object.keys(filterEnrichPayload?.flora_distances ?? {}).length
+          ? filterEnrichPayload
+          : Object.keys(metricDistances).length
+            ? { flora_distances: metricDistances }
+            : filterEnrichPayload;
+        return floraPayload ? (
+          <FilterEnrichBlock payload={floraPayload} part="flore" />
+        ) : (
+          <p className="ranking-line-empty">Aucune observation flore enregistrée pour cette parcelle.</p>
+        );
+      })()}
+
       {tab === "sol" && (
         <>
           {occSolMetric ? <OccupancySolBlock metric={occSolMetric} /> : null}
@@ -1127,7 +1223,19 @@ export function RankingLine({
           {duretePayload?.eligible && duretePayload.score_final != null ? (
             <FoncierScoreBlock payload={duretePayload} onShowDetails={() => setTab("durete")} />
           ) : (
-            <p className="ranking-line-empty">Score de dureté foncière non calculé pour cette parcelle.</p>
+            <div className="ranking-line-empty-action">
+              <p className="ranking-line-empty">Score de dureté foncière non calculé pour cette parcelle.</p>
+              {isPersonneMorale && onRunDureteFonciere ? (
+                <button
+                  type="button"
+                  className="ranking-line-run"
+                  disabled={dureteFonciereLoading}
+                  onClick={() => void onRunDureteFonciere(idu)}
+                >
+                  {dureteFonciereLoading ? "Calcul…" : "Calculer la dureté"}
+                </button>
+              ) : null}
+            </div>
           )}
           {urbanismePayload?.score?.scoreGlobal != null ? (
             <div style={{ border: "1px solid #1d4ed8", borderRadius: 8, background: "rgba(29, 78, 216, 0.06)", padding: 10 }}>
@@ -1143,7 +1251,19 @@ export function RankingLine({
               </div>
             </div>
           ) : (
-            <p className="ranking-line-empty">Score urbanistique non calculé pour cette parcelle.</p>
+            <div className="ranking-line-empty-action">
+              <p className="ranking-line-empty">Score urbanistique non calculé pour cette parcelle.</p>
+              {onRunUrbanisme ? (
+                <button
+                  type="button"
+                  className="ranking-line-run"
+                  disabled={urbanismeLoading}
+                  onClick={() => void onRunUrbanisme(idu)}
+                >
+                  {urbanismeLoading ? "Calcul…" : "Calculer le score urba"}
+                </button>
+              ) : null}
+            </div>
           )}
           {compositePayload ? <CompositeScoreBlock payload={compositePayload} /> : (
             <p className="ranking-line-empty">Score composite non calculé pour cette parcelle.</p>

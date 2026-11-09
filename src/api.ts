@@ -36,22 +36,12 @@ export type ProjectSummary = {
 };
 
 export type ProjectHistorySummary = ProjectSummary & {
+  filter_config?: unknown;
   history: {
     buffer_km: number | null;
     foncier_area_ha: number | null;
     pool_total_count: number | null;
-    last_filter: {
-      min_area_ha?: number;
-      miller_threshold?: number;
-      radius_start_km?: number;
-      target_count?: number;
-      faune_criteria?: unknown[];
-      vegetation_hybride?: {
-        mode?: string;
-        zdv_natures?: string[];
-        cesbio_libelles?: string[];
-      };
-    } | null;
+    last_filter: unknown;
   };
 };
 
@@ -70,6 +60,17 @@ export async function fetchProjects(studyType?: StudyType): Promise<ProjectSumma
 
 export async function fetchProjectHistory(): Promise<ProjectHistorySummary[]> {
   const res = await fetch(`${API}/api/projects/history`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export type HistoriqueMapData = {
+  points: FeatureCollection<Geometry, GeoJsonProperties>;
+  outlines: FeatureCollection<Geometry, GeoJsonProperties>;
+};
+
+export async function fetchHistoriqueMap(): Promise<HistoriqueMapData> {
+  const res = await fetch(`${API}/api/projects/history-map`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -359,6 +360,31 @@ export async function createProjectFromParcelles(
   return res.json();
 }
 
+export async function analyseFoncier(params: {
+  projet: File;
+  foncier: File;
+  name?: string;
+  occupationSol: boolean;
+  hydro: boolean;
+  faunaSpecies: string[];
+  flora: { taxon_key: string; label: string }[];
+}): Promise<{ project_id: string; run_id: string; count: number }> {
+  const form = new FormData();
+  form.append("projet", params.projet);
+  form.append("foncier", params.foncier);
+  form.append("name", params.name ?? "Analyse de foncier");
+  form.append("occupation_sol", params.occupationSol ? "true" : "false");
+  form.append("hydro", params.hydro ? "true" : "false");
+  form.append("fauna_species", JSON.stringify(params.faunaSpecies));
+  form.append(
+    "flora_criteria",
+    JSON.stringify(params.flora.map((item) => ({ taxon_key: item.taxon_key, label: item.label }))),
+  );
+  const res = await fetch(`${API}/api/analyse-foncier`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 export async function previewFoncierUpload(
   file: File,
   studyType?: StudyType,
@@ -440,6 +466,8 @@ export type FilterPipelineBody = {
   cesbio_libelles: string[];
   fauna_criteria: { species: string; dist_m: number }[];
   fauna_combine?: "or" | "and";
+  flora_criteria?: { taxon_key: string; label: string; dist_m: number }[];
+  flora_combine?: "or" | "and";
   zone_humide_mode?: "ignore" | "intersect" | "exclude";
   zones_humides_probables_mode?: "ignore" | "intersect" | "exclude";
   /** Surface min. (ha) de ZH établie intersectant la parcelle (mode intersect). */
@@ -454,6 +482,8 @@ export type FilterPipelineBody = {
   arrachage_vignes_types?: string[];
   /** false = ne calcule pas les unités foncières après le filtre. */
   include_unites_foncieres?: boolean;
+  /** true = calcule aussi les îlots agricoles RPG après le filtre. */
+  include_ilots_rpg?: boolean;
 };
 
 export async function fetchFilterPhases(): Promise<FilterPhaseInfo[]> {
@@ -772,6 +802,24 @@ export async function addParcellesToPoolRun(
   return res.json();
 }
 
+/** Fait passer des ajouts manuels du sas dans le classement. Le tag reste en base. */
+export async function integrateManualParcelles(
+  projectId: string,
+  runId: string,
+  idus: string[],
+): Promise<{ integrated: string[] }> {
+  const res = await fetch(
+    `${API}/api/projects/${projectId}/pool/runs/${runId}/parcelles/integrer`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idus }),
+    },
+  );
+  if (!res.ok) await throwHttpError(res);
+  return res.json();
+}
+
 export async function fetchUfResults(
   projectId: string,
   params?: {
@@ -803,10 +851,32 @@ export async function fetchUfResults(
   return res.json();
 }
 
+export async function fetchIlotsRpgResults(projectId: string): Promise<import("./types").IlotsRpgResponse> {
+  const res = await fetch(`${API}/api/projects/${projectId}/ilots-rpg`);
+  if (!res.ok) await throwHttpError(res);
+  return res.json();
+}
+
+export async function fetchIlotsRpgGeojson(
+  projectId: string,
+): Promise<FeatureCollection<Geometry, GeoJsonProperties>> {
+  const res = await fetch(`${API}/api/projects/${projectId}/geojson/ilots-rpg`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 export async function fetchUfSubsetsGeojson(
   projectId: string,
 ): Promise<FeatureCollection<Geometry, GeoJsonProperties>> {
   const res = await fetch(`${API}/api/projects/${projectId}/geojson/uf-subsets`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function fetchUfParcellesGeojson(
+  projectId: string,
+): Promise<FeatureCollection<Geometry, GeoJsonProperties>> {
+  const res = await fetch(`${API}/api/projects/${projectId}/geojson/uf-parcelles`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -881,6 +951,7 @@ export async function fetchProjectStoredResults(projectId: string): Promise<{
   last_filter: unknown;
   last_results_uf: unknown;
   last_filter_uf: unknown;
+  last_results_ilots_rpg: unknown;
   buffer_km: number | null;
 }> {
   const res = await fetch(`${API}/api/projects/${projectId}/results`);
@@ -895,6 +966,7 @@ export async function fetchProjectStoredResults(projectId: string): Promise<{
     last_filter?: unknown;
     last_results_uf?: unknown;
     last_filter_uf?: unknown;
+    last_results_ilots_rpg?: unknown;
     buffer_km?: number | null;
   };
   return {
@@ -903,6 +975,7 @@ export async function fetchProjectStoredResults(projectId: string): Promise<{
     last_filter: data.last_filter ?? null,
     last_results_uf: data.last_results_uf ?? null,
     last_filter_uf: data.last_filter_uf ?? null,
+    last_results_ilots_rpg: data.last_results_ilots_rpg ?? null,
     buffer_km: typeof data.buffer_km === "number" ? data.buffer_km : null,
   };
 }
@@ -968,6 +1041,49 @@ export async function exportShp(
   a.href = url;
   const prefix = scope === "uf" ? "uf" : "parcelles";
   a.download = `${prefix}_${projectId.slice(0, 8)}.zip`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  window.URL.revokeObjectURL(url);
+}
+
+export async function exportFicheFiltragePdf(projectId: string): Promise<void> {
+  const res = await fetch(`${API}/api/projects/${projectId}/export/fiche-filtrage.pdf`);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "Erreur lors de l'export de la fiche de filtrage");
+  }
+  const blob = await res.blob();
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `fiche_filtrage_${projectId.slice(0, 8)}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  window.URL.revokeObjectURL(url);
+}
+
+export type EtudeExportLayer = "parcelles" | "uf" | "ilots";
+
+/** Un GeoPackage : les couches demandées + zone projet + aire d'étude. */
+export async function exportEtudeGpkg(
+  projectId: string,
+  layers: EtudeExportLayer[],
+  poolRunId?: string | null,
+): Promise<void> {
+  const q = new URLSearchParams({ layers: layers.join(",") });
+  if (poolRunId) q.set("run_id", poolRunId);
+  const res = await fetch(`${API}/api/projects/${projectId}/export/etude.gpkg?${q}`);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "Erreur lors de l'export GeoPackage");
+  }
+  const blob = await res.blob();
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `etude_${projectId.slice(0, 8)}.gpkg`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);

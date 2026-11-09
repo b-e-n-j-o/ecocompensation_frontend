@@ -1,7 +1,23 @@
 /* ─── Onglet Paramètres de filtrage ─────────────────────────────────────────
    Utilise les variables du thème si elles existent, avec fallbacks. */
    .fparams-tab { display: flex; flex-direction: column; min-width: 0; }
-  .fparams-title { margin: 0 0 12px; font-size: 15px; font-weight: 600; }
+  .fparams-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; }
+  .fparams-title { margin: 0; font-size: 15px; font-weight: 600; }
+  .fparams-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .fparams-copy {
+    border: 1px solid #bfdbfe; background: #eff6ff; color: #1d4ed8;
+    border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 12px; font-weight: 650;
+    cursor: pointer; white-space: nowrap;
+  }
+  .fparams-copy:hover:not(:disabled) { background: #dbeafe; }
+  .fparams-copy:disabled { opacity: 0.55; cursor: not-allowed; }
+  .fparams-export {
+    border: 1px solid #1f7a00; background: #289f01; color: #fff;
+    border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 12px; font-weight: 650;
+    cursor: pointer; white-space: nowrap;
+  }
+  .fparams-export:hover:not(:disabled) { background: #218500; }
+  .fparams-export:disabled { opacity: 0.55; cursor: not-allowed; }
   
   .freport { --fr-accent: var(--accent, #2f7d5b); --fr-removed: var(--danger-soft, #d9826b);
     --fr-muted: var(--text-muted, #6b7280); --fr-border: var(--border, #e5e7eb);

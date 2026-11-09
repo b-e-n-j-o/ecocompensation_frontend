@@ -1,6 +1,6 @@
 // ─── RankingTable ─────────────────────────────────────────────────────────────
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { exportCsv, exportRapportPdf, exportShp } from "../../../api";
+import { ExportEtudeMenu } from "./ExportEtudeMenu";
 import type { ParcelleResult, ParcelPoolMetricRow, RankingSortKey } from "../../../types";
 import {
   type FaunaTableEntry,
@@ -10,6 +10,7 @@ import {
   getCompositeScoreMetric,
   getDureteFonciereMetric,
   getFaunaTableEntries,
+  getFloraTableEntries,
   getPersonnesMoralesMetric,
 } from "../../../utils/poolMetrics";
 import { AppDialog } from "./AppDialog";
@@ -89,6 +90,8 @@ interface RankingTableProps {
   showDistHydroColumn?: boolean;
   /** Affiche les colonnes surface / distance surfaces hydro. */
   showSurfaceHydroColumn?: boolean;
+  /** Colonne distance flore, seulement si le critère flore est actif. */
+  showFloraColumn?: boolean;
   /** Curseurs front : distance au projet / surface min. (filtrage à la volée du pool). */
   poolFilters?: {
     hideDistanceFilter: boolean;
@@ -227,15 +230,12 @@ export function RankingTable({
   showZoneHumideColumn = false,
   showDistHydroColumn = false,
   showSurfaceHydroColumn = false,
+  showFloraColumn = false,
   poolFilters,
 }: RankingTableProps) {
   const [hoveredIdu, setHoveredIdu] = useState<string | null>(null);
   const [expandedIdus, setExpandedIdus] = useState<Set<string>>(() => new Set());
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-  const [exporting, setExporting] = useState(false);
-  const [exportingPdf, setExportingPdf] = useState(false);
-  const [lastPdfRssDeltaMb, setLastPdfRssDeltaMb] = useState<number | null>(null);
-  const [toolsOpen, setToolsOpen] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
   const [scoringsOpen, setScoringsOpen] = useState(false);
@@ -247,8 +247,6 @@ export function RankingTable({
   const [dureteMenuOpen, setDureteMenuOpen] = useState(false);
   const [urbaMenuOpen, setUrbaMenuOpen] = useState(false);
   const [pendingPoolRun, setPendingPoolRun] = useState<"durete" | "urbanisme" | null>(null);
-  const [exportMenuOpen, setExportMenuOpen] = useState(false);
-
   const selectionMode = selectionIntent != null;
   const manualSelectionEnabled = !!(onBatchMarkIndesirable && poolRunId && projectId);
   const pmIdus = useMemo(() => {
@@ -274,7 +272,6 @@ export function RankingTable({
     setAddPanelOpen(false);
     setDureteMenuOpen(false);
     setUrbaMenuOpen(false);
-    setExportMenuOpen(false);
     setPendingPoolRun(null);
   }, [parcellesIdentity]);
 
@@ -330,6 +327,7 @@ export function RankingTable({
   }
 
   function toggleChecked(idu: string, checked: boolean) {
+    if (selectionIntent === "durete" && !pmIdus.has(idu)) return;
     setCheckedIdus((prev) => {
       const next = new Set(prev);
       if (checked) next.add(idu);
@@ -346,40 +344,11 @@ export function RankingTable({
   function enterSelection(intent: "indesirables" | "durete" | "urbanisme") {
     setSelectionIntent(intent);
     setCheckedIdus(new Set());
-    setToolsOpen(false);
     setAddPanelOpen(false);
     setDureteMenuOpen(false);
     setUrbaMenuOpen(false);
-    setExportMenuOpen(false);
-  }
-
-  async function handleExport(kind: "csv" | "shp") {
-    if (!projectId) return;
-    setExporting(true);
-    try {
-      if (kind === "csv") await exportCsv(projectId, "parcelles", exportPoolRunId ?? null);
-      else await exportShp(projectId, "parcelles", exportPoolRunId ?? null);
-    } catch (err) {
-      console.error("Export classement:", err);
-      alert(err instanceof Error ? err.message : "Erreur lors de l'export. Voir la console.");
-    } finally {
-      setExporting(false);
-    }
-  }
-
-  async function handlePdf() {
-    if (!projectId) return;
-    setExportingPdf(true);
-    setLastPdfRssDeltaMb(null);
-    try {
-      const { rssDeltaMb } = await exportRapportPdf(projectId, exportPoolRunId ?? null);
-      setLastPdfRssDeltaMb(rssDeltaMb);
-    } catch (err) {
-      console.error("Rapport PDF:", err);
-      alert(err instanceof Error ? err.message : "Erreur lors de la génération du rapport PDF.");
-    } finally {
-      setExportingPdf(false);
-    }
+    setOptionsOpen(false);
+    setScoringsOpen(false);
   }
 
   async function handleKeepSelectedOnly() {
@@ -441,7 +410,7 @@ export function RankingTable({
   }
 
   function handleDureteAll() {
-    if (!onRunDureteFonciere) return;
+    if (!onRunDureteFonciere || pmIdus.size === 0) return;
     setDureteMenuOpen(false);
     setPendingPoolRun("durete");
   }
@@ -450,7 +419,7 @@ export function RankingTable({
     const kind = pendingPoolRun;
     setPendingPoolRun(null);
     if (kind === "urbanisme") void onRunUrbanisme?.();
-    if (kind === "durete") void onRunDureteFonciere?.();
+    if (kind === "durete") void onRunDureteFonciere?.([...pmIdus]);
   }
 
   async function handleAddParcellesSubmit() {
@@ -487,6 +456,7 @@ export function RankingTable({
     (showZoneHumideColumn ? 1 : 0) +
     (showDistHydroColumn ? 1 : 0) +
     (showSurfaceHydroColumn ? 2 : 0) +
+    (showFloraColumn ? 1 : 0) +
     (selectionMode ? 1 : 0) +
     (showTrashColumn ? 1 : 0);
 
@@ -502,8 +472,7 @@ export function RankingTable({
   const hasExport = !!projectId;
   const hasDurete = !!(onRunDureteFonciere && poolRunId && projectId);
   const hasUrba = !!(onRunUrbanisme && poolRunId && projectId);
-  const hasActions = hasDurete || hasUrba || manualSelectionEnabled || hasExport || hasAdd;
-  const showTools = hasPoolFilters || hasActions;
+  const showToolsPanel = optionsOpen || scoringsOpen || addPanelOpen;
 
   const filterChoices: { id: RankingSortKey; label: string }[] = [
     { id: "rank", label: "Score éco" },
@@ -516,18 +485,20 @@ export function RankingTable({
   return (
     <>
     <div className="ranking-wrap">
-      <div className={`ranking-chrome${toolsOpen ? " is-open" : ""}`}>
+      <div className={`ranking-chrome${showToolsPanel ? " is-open" : ""}`}>
         <div className="ranking-chrome__bar">
           <div className="ranking-filter">
             <button
               type="button"
               className={`ranking-btn-filter${filterMenuOpen ? " is-on" : ""}`}
               aria-expanded={filterMenuOpen}
-              title={`Filtre : ${activeFilter}`}
+              aria-label={`Filtrer par ${activeFilter}`}
+              title={`Filtrer (${activeFilter})`}
               onClick={() => {
                 setFilterMenuOpen((v) => !v);
                 setScoringsOpen(false);
-                setToolsOpen(false);
+                setOptionsOpen(false);
+                setAddPanelOpen(false);
               }}
             >
               <svg className="ranking-btn__icon" viewBox="0 0 16 16" aria-hidden>
@@ -535,7 +506,6 @@ export function RankingTable({
               </svg>
               Filtrer
             </button>
-            <span className="ranking-filter__current">{activeFilter}</span>
             {filterMenuOpen && (
               <div className="ranking-menu" role="menu">
                 {filterChoices.map((choice) => (
@@ -574,9 +544,6 @@ export function RankingTable({
           {addParcellesLoading && (
             <span className="ranking-chrome__status">Ajout…</span>
           )}
-          {exportingPdf && (
-            <span className="ranking-chrome__status">Rapport…</span>
-          )}
           {poolMetricsLoading && (
             <span className="ranking-chrome__status">Métriques…</span>
           )}
@@ -586,7 +553,12 @@ export function RankingTable({
               className={`ranking-btn-options${optionsOpen ? " is-on" : ""}`}
               aria-expanded={optionsOpen}
               title="Distance au projet et surface minimale"
-              onClick={() => setOptionsOpen((v) => !v)}
+              onClick={() => {
+                setOptionsOpen((v) => !v);
+                setScoringsOpen(false);
+                setFilterMenuOpen(false);
+                setAddPanelOpen(false);
+              }}
             >
               <svg className="ranking-btn__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                 <circle cx="12" cy="12" r="3" />
@@ -602,8 +574,9 @@ export function RankingTable({
               aria-expanded={scoringsOpen}
               onClick={() => {
                 setScoringsOpen((v) => !v);
-                setToolsOpen(false);
                 setFilterMenuOpen(false);
+                setOptionsOpen(false);
+                setAddPanelOpen(false);
                 setDureteMenuOpen(false);
                 setUrbaMenuOpen(false);
               }}
@@ -614,29 +587,46 @@ export function RankingTable({
               Scorings
             </button>
           )}
-          {hasActions && (
+          {manualSelectionEnabled && !selectionMode && (
             <button
               type="button"
-              className={`ranking-btn-tools${toolsOpen ? " is-on" : ""}`}
-              aria-expanded={toolsOpen}
+              className="ranking-btn-select-mode"
+              onClick={() => enterSelection("indesirables")}
+              title="Cocher les parcelles à conserver, les autres iront dans les indésirables"
+            >
+              Sélectionner
+            </button>
+          )}
+          {hasAdd && (
+            <button
+              type="button"
+              className={`ranking-btn-add-pool${addPanelOpen ? " is-on" : ""}`}
+              disabled={addParcellesLoading || selectionMode}
+              title="Ajouter une parcelle au pool (IDU)"
               onClick={() => {
-                setToolsOpen((v) => !v);
+                setAddPanelOpen((v) => !v);
+                setOptionsOpen(false);
                 setScoringsOpen(false);
                 setFilterMenuOpen(false);
               }}
             >
-              <svg className="ranking-btn__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-              </svg>
-              Outils
+              {addParcellesLoading ? "Ajout…" : "Ajouter"}
             </button>
+          )}
+          {hasExport && (
+            <ExportEtudeMenu
+              projectId={projectId}
+              poolRunId={exportPoolRunId ?? null}
+              page="parcelles"
+              disabled={selectionMode}
+            />
           )}
           <span className="ranking-count mono">
             {visibleParcelles.length} / {parcelles.length}
           </span>
         </div>
 
-        {(optionsOpen || scoringsOpen || toolsOpen) && showTools && (
+        {showToolsPanel && (
           <div className="ranking-tools" role="region" aria-label="Outils du classement">
             {optionsOpen && hasPoolFilters && (
               <div className="ranking-tools__block">
@@ -718,8 +708,14 @@ export function RankingTable({
                 </div>
                 {hasDurete && dureteMenuOpen && (
                   <div className="ranking-tools__reveal">
-                    <button type="button" className="ranking-btn-durete" disabled={dureteFonciereLoading || poolMetricsLoading} onClick={handleDureteAll}>
-                      Tout le pool
+                    <button
+                      type="button"
+                      className="ranking-btn-durete"
+                      disabled={dureteFonciereLoading || poolMetricsLoading || pmIdus.size === 0}
+                      title={pmIdus.size === 0 ? "Aucune parcelle personne morale dans le classement" : `${pmIdus.size} parcelle(s) personne morale`}
+                      onClick={handleDureteAll}
+                    >
+                      Tout le pool PM ({pmIdus.size})
                     </button>
                     <button
                       type="button"
@@ -744,118 +740,34 @@ export function RankingTable({
               </div>
             )}
 
-            {toolsOpen && hasActions && (
+            {addPanelOpen && hasAdd && (
               <div className="ranking-tools__block">
-                <div className="ranking-tools__label">Outils</div>
-                <div className="ranking-tools__actions">
-                  {hasAdd && (
-                    <button
-                      type="button"
-                      className={`ranking-btn-add-pool${addPanelOpen ? " is-on" : ""}`}
-                      disabled={addParcellesLoading || selectionMode}
-                      title="Ajouter une parcelle au pool (IDU)"
-                      onClick={() => {
-                        setAddPanelOpen((v) => !v);
-                        setDureteMenuOpen(false);
-                        setExportMenuOpen(false);
-                      }}
-                    >
-                      {addParcellesLoading ? "Ajout…" : "Ajouter une parcelle"}
-                    </button>
-                  )}
-                  {manualSelectionEnabled && !selectionMode && (
-                    <button
-                      type="button"
-                      className="ranking-btn-select-mode"
-                      onClick={() => enterSelection("indesirables")}
-                      title="Cocher les parcelles à conserver, les autres iront dans les indésirables"
-                    >
-                      Sélectionner des parcelles
-                    </button>
-                  )}
-                  {hasExport && (
-                    <>
-                      <button
-                        type="button"
-                        className="ranking-btn-pdf"
-                        disabled={exporting || exportingPdf}
-                        title="Rapport PDF du pool (même périmètre que CSV / GPKG)"
-                        onClick={() => void handlePdf()}
-                      >
-                        {exportingPdf ? "Rapport…" : "Générer rapport PDF"}
-                      </button>
-                      <button
-                        type="button"
-                        className={`ranking-btn-export${exportMenuOpen ? " is-on" : ""}`}
-                        disabled={exporting || exportingPdf || selectionMode}
-                        title="Exporter le classement"
-                        onClick={() => {
-                          setExportMenuOpen((v) => !v);
-                          setDureteMenuOpen(false);
-                          setAddPanelOpen(false);
-                        }}
-                      >
-                        {exporting ? "Export…" : "Exporter les données SIG"}
-                      </button>
-                    </>
-                  )}
-                  {lastPdfRssDeltaMb != null && Number.isFinite(lastPdfRssDeltaMb) && (
-                    <span
-                      className="ranking-pdf-rss-hint mono"
-                      title="Δ RSS processus serveur pendant export SHP + PDF"
-                    >
-                      Δ RAM ~{lastPdfRssDeltaMb.toFixed(1)} Mo
-                    </span>
-                  )}
-                </div>
-                {hasExport && exportMenuOpen && (
-                  <div className="ranking-tools__reveal">
-                    <button
-                      type="button"
-                      className="ranking-btn-export"
-                      disabled={exporting || exportingPdf}
-                      onClick={() => void handleExport("csv")}
-                    >
-                      {exporting ? "Export…" : "CSV"}
-                    </button>
-                    <button
-                      type="button"
-                      className="ranking-btn-export"
-                      disabled={exporting || exportingPdf}
-                      title="GeoPackage : parcelles + zone projet + aire d'étude. occ_sol = répartition d'occupation du sol (végétation hybride), occ_json = parts 0–1. zh / zh_int / zh_pct / zh_m2 = intersection zone humide. Un shapefile tronqué (254 c.) est aussi dans le zip."
-                      onClick={() => void handleExport("shp")}
-                    >
-                      GPKG
-                    </button>
-                  </div>
-                )}
-                {hasAdd && addPanelOpen && (
-                  <form
-                    className="ranking-tools__reveal ranking-add-pool"
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      void handleAddParcellesSubmit();
-                    }}
+                <div className="ranking-tools__label">Ajouter une parcelle</div>
+                <form
+                  className="ranking-tools__reveal ranking-add-pool"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void handleAddParcellesSubmit();
+                  }}
+                >
+                  <input
+                    className="ranking-add-pool__input"
+                    value={addDraft}
+                    onChange={(e) => setAddDraft(e.target.value)}
+                    disabled={addParcellesLoading}
+                    placeholder="IDU — ex. 330770000E0121"
+                    spellCheck={false}
+                    autoFocus
+                    aria-label="IDU de la parcelle"
+                  />
+                  <button
+                    type="submit"
+                    className="ranking-btn-add-pool"
+                    disabled={addParcellesLoading || !addDraft.trim()}
                   >
-                    <input
-                      className="ranking-add-pool__input"
-                      value={addDraft}
-                      onChange={(e) => setAddDraft(e.target.value)}
-                      disabled={addParcellesLoading}
-                      placeholder="IDU — ex. 330770000E0121"
-                      spellCheck={false}
-                      autoFocus
-                      aria-label="IDU de la parcelle"
-                    />
-                    <button
-                      type="submit"
-                      className="ranking-btn-add-pool"
-                      disabled={addParcellesLoading || !addDraft.trim()}
-                    >
-                      {addParcellesLoading ? "Ajout…" : "Ajouter"}
-                    </button>
-                  </form>
-                )}
+                    {addParcellesLoading ? "Ajout…" : "Ajouter"}
+                  </button>
+                </form>
               </div>
             )}
           </div>
@@ -970,6 +882,7 @@ export function RankingTable({
               )}
               <th className="col-dist-espece">Dist espèce</th>
               <th className="col-espece">Espèce</th>
+              {showFloraColumn && <th className="col-dist-espece">Flore — distance</th>}
               <SortTh label="Dist projet" sortKey="distance" activeKey={rankingSortKey} dir={rankingSortDir} onSort={onRankingSortChange} className="col-dist" />
               <SortTh label="Personnes morales" sortKey="pm_personne_morale" activeKey={rankingSortKey} dir={rankingSortDir} onSort={onRankingSortChange} className="col-pm" />
               <SortTh label="Déjà compensé ?" sortKey="pm_compensation" activeKey={rankingSortKey} dir={rankingSortDir} onSort={onRankingSortChange} className="col-prospect" />
@@ -985,7 +898,7 @@ export function RankingTable({
               <tr>
                 <td colSpan={rankingColCount} className="ranking-empty">
                   {hasAdd
-                    ? "Aucune parcelle dans le classement. Ajoutez un IDU via Outils."
+                    ? "Aucune parcelle dans le classement. Ajoutez un IDU via Ajouter."
                     : "Aucune parcelle dans le classement."}
                 </td>
               </tr>
@@ -1001,6 +914,7 @@ export function RankingTable({
               const compositeMetric = getCompositeScoreMetric(poolMetricsByIdu?.[p.idu]);
               const compositeStyle = compositeBadgeStyle(compositeMetric?.score_composite);
               const faunaEntries = getFaunaTableEntries(poolMetricsByIdu?.[p.idu]);
+              const floraEntries = showFloraColumn ? getFloraTableEntries(poolMetricsByIdu?.[p.idu]) : [];
               const pmMetric = getPersonnesMoralesMetric(poolMetricsByIdu?.[p.idu]);
               const pmStyle = pmBadgeStyle(
                 pmMetric == null ? null : pmMetric.intersects_pm_database,
@@ -1015,7 +929,7 @@ export function RankingTable({
                 <Fragment key={p.idu}>
                   <tr
                     id={`row-parcelle-${p.idu}`}
-                    className={`ranking-row ${isHovered ? "hovered" : ""} ${isSelected ? "selected" : ""} ${selectionMode && isChecked ? "ranking-row--checked" : ""}`}
+                    className={`ranking-row ${isHovered ? "hovered" : ""} ${isSelected ? "selected" : ""} ${selectionMode && isChecked ? "ranking-row--checked" : ""}${selectionIntent === "durete" && !pmIdus.has(p.idu) ? " ranking-row--durete-locked" : ""}`}
                     onMouseEnter={() => handleHover(p.idu)}
                     onMouseLeave={() => handleHover(null)}
                     onClick={() => handleClick(p.idu)}
@@ -1043,6 +957,11 @@ export function RankingTable({
                     )}
                     <td className="col-rank">
                       <span className="rank-badge mono">{idx + 1}</span>
+                      {poolMetricsByIdu?.[p.idu]?.some(
+                        (r) => r.metric_key === "pool_origin"
+                          && r.metric_value_jsonb?.source === "manual_idu"
+                          && r.metric_value_jsonb?.in_classement === true,
+                      ) && <span className="ajout-manuel-tag">Ajout manuel</span>}
                     </td>
                     <td className="col-eco">
                       <span
@@ -1217,6 +1136,11 @@ export function RankingTable({
                     <td className="col-espece">
                       <FaunaSpeciesStack entries={faunaEntries} />
                     </td>
+                    {showFloraColumn && (
+                      <td className="col-dist-espece">
+                        <FaunaDistanceStack entries={floraEntries} />
+                      </td>
+                    )}
                     <td className="col-dist mono">
                       {p.distance_km.toFixed(1)}<span className="unit"> km</span>
                     </td>
@@ -1361,8 +1285,9 @@ export function RankingTable({
         onClose={() => setPendingPoolRun(null)}
       >
         <p>
-          Calculer la dureté foncière pour les {parcelles.length} parcelle
-          {parcelles.length > 1 ? "s" : ""} du classement (hors indésirables).
+          Calculer la dureté foncière pour {pmIdus.size} parcelle
+          {pmIdus.size > 1 ? "s" : ""} identifiée{pmIdus.size > 1 ? "s" : ""} comme
+          personne morale. Les autres parcelles du classement sont ignorées.
           Le tableau reste utilisable : les scores apparaissent au fur et à mesure.
         </p>
       </AppDialog>

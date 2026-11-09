@@ -5,6 +5,7 @@ import type { Feature, FeatureCollection } from "geojson";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 import { geometryFilesToLayers } from "../../geo/importFichiers";
+import { FloreDock } from "./Flore/FloreDock";
 import FaunaQueryPanel from "../FaunaMap/FaunaQueryPanel";
 import { useFaunaQuery } from "../FaunaMap/useFaunaQuery";
 import { FAUNA_POINTS_SOURCE, raiseFaunaLayers } from "../FaunaMap/faunaMapShared";
@@ -536,14 +537,16 @@ function ensureLayerOnMap(map: MapLibreMap, layer: InternalLayerInfo) {
           minzoom: minZ,
           paint: { "fill-color": fillColor, "fill-opacity": hoverOp },
         });
-        map.addLayer({
-          id: `${sid}-line`,
-          type: "line",
-          source: sid,
-          "source-layer": MVT_SOURCE_LAYER,
-          minzoom: minZ,
-          paint: { "line-color": fillColor, "line-width": hoverW, "line-opacity": 0.85 },
-        });
+        if (layer.key !== "vegetation_cesbio") {
+          map.addLayer({
+            id: `${sid}-line`,
+            type: "line",
+            source: sid,
+            "source-layer": MVT_SOURCE_LAYER,
+            minzoom: minZ,
+            paint: { "line-color": fillColor, "line-width": hoverW, "line-opacity": 0.85 },
+          });
+        }
       } else if (layer.geometry_type === "line") {
         map.addLayer({
           id: `${sid}-line`,
@@ -595,16 +598,18 @@ function ensureLayerOnMap(map: MapLibreMap, layer: InternalLayerInfo) {
         source: sid,
         paint: { "fill-color": fillColor, "fill-opacity": hoverOp },
       });
-      map.addLayer({
-        id: `${sid}-line`,
-        type: "line",
-        source: sid,
-        paint: {
-          "line-color": fillColor,
-          "line-width": hoverW,
-          "line-opacity": 0.95,
-        },
-      });
+      if (layer.key !== "vegetation_cesbio") {
+        map.addLayer({
+          id: `${sid}-line`,
+          type: "line",
+          source: sid,
+          paint: {
+            "line-color": fillColor,
+            "line-width": hoverW,
+            "line-opacity": 0.95,
+          },
+        });
+      }
     } else if (layer.geometry_type === "line") {
       map.addLayer({
         id: `${sid}-line`,
@@ -938,6 +943,9 @@ export default function DonneesInternesPage() {
   inspectRef.current = setInspect;
 
   const [openTool, setOpenTool] = useState<Record<string, boolean>>({ fauna: false });
+  const [floreVisible, setFloreVisible] = useState(true);
+  const [floreCount, setFloreCount] = useState<number | null>(null);
+  const [floreTruncated, setFloreTruncated] = useState(false);
   const fauna = useFaunaQuery({
     mapRef,
     mapReady,
@@ -1855,11 +1863,40 @@ export default function DonneesInternesPage() {
       onDrop={onFilesDrop}
     >
       <div className="di-left">
-        <aside className="di-sidebar" aria-label="Outils">
+        <aside className="di-sidebar" aria-label="Ajouter des données">
+          <p className="di-kicker">Ajouter des données</p>
+          <ul className="di-list">
+            <li className="di-fam">
+              <Link to="/reserve-fonciere/ajout" className="di-fam-btn" style={{ textDecoration: "none" }}>
+                <span className="di-tool-plus" aria-hidden>+</span>
+                <span className="di-fam-label">Ajouter du foncier</span>
+              </Link>
+            </li>
+            <li className="di-fam">
+              <button
+                type="button"
+                className={`di-fam-btn${openTool.flore ? " is-open" : ""}`}
+                aria-expanded={Boolean(openTool.flore)}
+                onClick={() => toggleTool("flore")}
+              >
+                <span className="di-tool-plus" aria-hidden>+</span>
+                <span className="di-fam-label">Ajouter des observations flore</span>
+              </button>
+              <FloreDock
+                map={mapReady ? mapRef.current : null}
+                open={Boolean(openTool.flore)}
+                visible={floreVisible}
+                onStats={(n, truncated) => {
+                  setFloreCount(n);
+                  setFloreTruncated(truncated);
+                }}
+              />
+            </li>
+          </ul>
+        </aside>
+
+        <aside className="di-sidebar di-sidebar--tools" aria-label="Outils">
           <p className="di-kicker">Outils</p>
-          <Link to="/reserve-fonciere/ajout" className="di-fam-btn" style={{ textDecoration: "none" }}>
-            <span className="di-fam-label">Ajouter du foncier</span>
-          </Link>
           <ul className="di-list">
             <li className="di-fam">
               <button
@@ -1871,7 +1908,7 @@ export default function DonneesInternesPage() {
                 <svg className="di-fam-caret" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden>
                   <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
-                <span className="di-fam-label">Faune</span>
+                <span className="di-fam-label">Requête FAUNA</span>
                 <span className="di-fam-meta">
                   {fauna.lastResultCount > 0 ? fauna.lastResultCount.toLocaleString("fr-FR") : ""}
                 </span>
@@ -2156,6 +2193,32 @@ export default function DonneesInternesPage() {
           </ul>
         </aside>
         ))}
+
+        <aside className="di-legend" aria-label="Observations flore">
+          <p className="di-kicker">Observations</p>
+          <ul className="di-list">
+            <li className="di-fam">
+              <div className="di-fam-head">
+                <button
+                  type="button"
+                  className={`di-fam-btn${floreVisible ? " is-on" : ""}`}
+                  onClick={() => setFloreVisible((v) => !v)}
+                >
+                  <span className="di-swatch" style={{ background: "#2f7d5b", borderColor: "#2f7d5b" }} />
+                  <span className="di-fam-label">Observations flore</span>
+                  <span className="di-fam-meta">
+                    {floreCount == null ? "" : floreTruncated ? `${floreCount.toLocaleString("fr-FR")}+` : floreCount.toLocaleString("fr-FR")}
+                  </span>
+                </button>
+                <VisibilityBtn
+                  label="Observations flore"
+                  visible={floreVisible}
+                  onClick={() => setFloreVisible((v) => !v)}
+                />
+              </div>
+            </li>
+          </ul>
+        </aside>
 
         <aside className="di-files" aria-label="Fichiers">
           <p className="di-kicker">Fichiers</p>

@@ -11,6 +11,8 @@ interface FauneSectionProps {
   projectId: string | null;
   value: FauneCriterion[];
   onChange: (v: FauneCriterion[]) => void;
+  combine?: "or" | "and";
+  onCombineChange?: (v: "or" | "and") => void;
 }
 
 const FAUNE_OPTIONS: { value: FauneMode; label: string }[] = [
@@ -35,7 +37,13 @@ function normalizeSources(sources: FauneCriterion["sources"]): FauneObservationS
   return next.length > 0 ? next : DEFAULT_SOURCES;
 }
 
-export function FauneSection({ projectId, value, onChange }: FauneSectionProps) {
+export function FauneSection({
+  projectId,
+  value,
+  onChange,
+  combine = "or",
+  onCombineChange,
+}: FauneSectionProps) {
   const [taxa, setTaxa] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -144,6 +152,21 @@ export function FauneSection({ projectId, value, onChange }: FauneSectionProps) 
 
       {value.length === 0 && !loading && (
         <p style={{ margin: 0, fontSize: 11, color: filterTheme.muted }}>Aucune espèce sélectionnée : ce filtre est ignoré.</p>
+      )}
+
+      {onCombineChange && (
+        <div style={{ opacity: value.length < 2 ? 0.55 : 1 }}>
+          <div style={{ fontSize: 11, color: filterTheme.muted, marginBottom: 6 }}>Combinaison des espèces</div>
+          <RadioRow
+            name="fauna-combine-panel"
+            value={combine}
+            options={[
+              { value: "or", label: "OU — au moins une" },
+              { value: "and", label: "ET — toutes" },
+            ]}
+            onChange={(v) => onCombineChange(v === "and" ? "and" : "or")}
+          />
+        </div>
       )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>

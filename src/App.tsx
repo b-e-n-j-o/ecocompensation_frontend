@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Routes, Route, NavLink, Navigate, useNavigate, useParams, useLocation } from "react-router-dom";
 
 import { CreateAoiPage } from "./pages/FiltreEcologique/CreateAoiPage";
 import { EtudeResultats } from "./pages/Etude/EtudeResultats";
+import { HistoriquePage } from "./pages/Historique/HistoriquePage";
 import FaunaMapPage from "./pages/FaunaMap/FaunaMapPage";
 import DonneesInternesPage from "./pages/DonneesInternes/DonneesInternesPage";
 import AjoutFoncierPage from "./pages/DonneesInternes/AjoutFoncier/AjoutFoncierPage";
@@ -12,15 +13,23 @@ import "./App.css";
 const ROUTE_ECOCOMPENSATION = "/ecocompensation";
 const ROUTE_RESERVE = "/reserve-fonciere";
 const ROUTE_AJOUT_FONCIER = "/reserve-fonciere/ajout";
-const RAIL_COLLAPSED_KEY = "kerelia-rail-collapsed";
+const RAIL_COLLAPSED_KEY = "kerelia-rail-collapsed-v2";
+
+function persistRailCollapsed(next: boolean) {
+  try {
+    localStorage.setItem(RAIL_COLLAPSED_KEY, next ? "1" : "0");
+  } catch {
+    /* stockage indisponible */
+  }
+}
 
 function readRailCollapsed(): boolean {
   try {
     const stored = localStorage.getItem(RAIL_COLLAPSED_KEY);
-    if (stored === null) return true;
+    if (stored === null) return false;
     return stored === "1";
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -66,28 +75,24 @@ function ProjectRunRoutePage() {
 }
 
 function StudyHomeRoutePage() {
-  const navigate = useNavigate();
-  return <EtudeResultats onNavigateToCreate={() => navigate(ROUTE_ECOCOMPENSATION)} />;
+  return <HistoriquePage />;
 }
 
 export default function App() {
   const [railCollapsed, setRailCollapsed] = useState(readRailCollapsed);
 
-  function toggleRail() {
-    setRailCollapsed((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem(RAIL_COLLAPSED_KEY, next ? "1" : "0");
-      } catch {
-        /* stockage indisponible */
-      }
-      return next;
-    });
+  function setRailOpen(nextCollapsed: boolean) {
+    persistRailCollapsed(nextCollapsed);
+    setRailCollapsed(nextCollapsed);
   }
 
   return (
     <div className={`kerelia-app${railCollapsed ? " kerelia-app--rail-collapsed" : ""}`}>
-      <AppRail collapsed={railCollapsed} onToggle={toggleRail} />
+      <AppRail
+        collapsed={railCollapsed}
+        onCollapse={() => setRailOpen(true)}
+        onExpand={() => setRailOpen(false)}
+      />
       <div className="kerelia-app__body">
         <AppHeader />
 
@@ -120,7 +125,7 @@ export default function App() {
 const RAIL_ITEMS = [
   {
     to: ROUTE_ECOCOMPENSATION,
-    label: "Ecocompensation",
+    label: "Recherche",
     isActive: (path: string) => path === "/" || path.startsWith(ROUTE_ECOCOMPENSATION),
     icon: (
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden>
@@ -132,7 +137,7 @@ const RAIL_ITEMS = [
   },
   {
     to: "/etude",
-    label: "Étude",
+    label: "Historique",
     isActive: (path: string) =>
       path === "/etude" || path === "/etudes" || path.startsWith("/projects/"),
     icon: (
@@ -156,11 +161,54 @@ const RAIL_ITEMS = [
   },
 ] as const;
 
-function AppRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+function AppRail({
+  collapsed,
+  onCollapse,
+  onExpand,
+}: {
+  collapsed: boolean;
+  onCollapse: () => void;
+  onExpand: () => void;
+}) {
   const { pathname } = useLocation();
+  const ignoreHoverExpand = useRef(false);
 
   return (
-    <nav className="kerelia-rail" aria-label="Navigation principale">
+    <nav
+      className="kerelia-rail"
+      aria-label="Navigation principale"
+      onMouseEnter={() => {
+        if (ignoreHoverExpand.current) return;
+        if (collapsed) onExpand();
+      }}
+      onMouseLeave={() => {
+        ignoreHoverExpand.current = false;
+      }}
+    >
+      <button
+        type="button"
+        className="kerelia-rail__toggle"
+        onClick={() => {
+          if (collapsed) {
+            ignoreHoverExpand.current = false;
+            onExpand();
+            return;
+          }
+          ignoreHoverExpand.current = true;
+          onCollapse();
+        }}
+        aria-expanded={!collapsed}
+        aria-label={collapsed ? "Déplier le menu" : "Replier le menu"}
+        title={collapsed ? "Déplier le menu" : "Replier le menu"}
+      >
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+          {collapsed ? (
+            <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+          ) : (
+            <path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" />
+          )}
+        </svg>
+      </button>
       {RAIL_ITEMS.map((item) => (
         <NavLink
           key={item.to}
@@ -172,23 +220,6 @@ function AppRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
           <span>{item.label}</span>
         </NavLink>
       ))}
-      <button
-        type="button"
-        className="kerelia-rail__toggle"
-        onClick={onToggle}
-        aria-expanded={!collapsed}
-        aria-label={collapsed ? "Déplier le menu" : "Replier le menu"}
-        title={collapsed ? "Déplier le menu" : "Replier le menu"}
-      >
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden>
-          {collapsed ? (
-            <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-          ) : (
-            <path d="M15 6l-6 6 6 6" strokeLinecap="round" strokeLinejoin="round" />
-          )}
-        </svg>
-        <span>Replier</span>
-      </button>
     </nav>
   );
 }

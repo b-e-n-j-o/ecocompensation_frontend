@@ -1,6 +1,7 @@
 import { CESBIO_LIBELLES, CESBIO_LIBELLE_COLORS } from "../../types";
 import type { CesbioLibelle, ZoneHumideMode } from "../../types";
 import { FaunaSpeciesPicker } from "../../components/FilterPanel/FaunaSpeciesPicker";
+import { FloraTaxonPicker, type FloraPick } from "./FloraTaxonPicker";
 import { SelectNationalExclusions } from "./SelectNationalExclusions";
 
 const ZH_MODE_OPTIONS: { value: ZoneHumideMode; label: string }[] = [
@@ -27,10 +28,14 @@ type Props = {
   onFaunaEnabledChange: (v: boolean) => void;
   faunaSpecies: string[];
   onFaunaSpeciesChange: (v: string[]) => void;
-  faunaDistM: number;
-  onFaunaDistMChange: (v: number) => void;
+  faunaDistBySpecies: Record<string, number>;
+  onFaunaDistChange: (species: string, distM: number) => void;
   faunaCombine: "or" | "and";
   onFaunaCombineChange: (v: "or" | "and") => void;
+  floraCriteria?: FloraPick[];
+  onFloraCriteriaChange?: (v: FloraPick[]) => void;
+  floraCombine?: "or" | "and";
+  onFloraCombineChange?: (v: "or" | "and") => void;
   zoneHumideMode: ZoneHumideMode;
   onZoneHumideModeChange: (v: ZoneHumideMode) => void;
   minZoneHumideHa: number;
@@ -75,10 +80,14 @@ export function SelectFilterCriteria({
   onFaunaEnabledChange,
   faunaSpecies,
   onFaunaSpeciesChange,
-  faunaDistM,
-  onFaunaDistMChange,
+  faunaDistBySpecies,
+  onFaunaDistChange,
   faunaCombine,
   onFaunaCombineChange,
+  floraCriteria = [],
+  onFloraCriteriaChange,
+  floraCombine = "or",
+  onFloraCombineChange,
   zoneHumideMode,
   onZoneHumideModeChange,
   minZoneHumideHa,
@@ -121,17 +130,19 @@ export function SelectFilterCriteria({
             onFaunaSpeciesChange(next);
             onFaunaEnabledChange(next.length > 0);
           }}
+          distances={faunaDistBySpecies}
+          onDistanceChange={onFaunaDistChange}
           disabled={disabled}
           compact
         />
-        {faunaSpecies.length > 1 && (
-          <div className="eco-zh-modes" style={{ marginTop: "0.55rem" }} role="group" aria-label="Combinaison des espèces">
+        <fieldset className="eco-zh-fieldset" disabled={disabled || faunaSpecies.length < 2} style={{ marginTop: "0.65rem" }}>
+          <legend className="eco-aoi-label">Combinaison des espèces</legend>
+          <div className="eco-zh-modes eco-zh-modes--row">
             <label className="eco-zh-mode">
               <input
                 type="radio"
                 name="fauna-combine"
                 checked={faunaCombine === "or"}
-                disabled={disabled}
                 onChange={() => onFaunaCombineChange("or")}
               />
               OU — au moins une
@@ -141,34 +152,48 @@ export function SelectFilterCriteria({
                 type="radio"
                 name="fauna-combine"
                 checked={faunaCombine === "and"}
-                disabled={disabled}
                 onChange={() => onFaunaCombineChange("and")}
               />
               ET — toutes
             </label>
           </div>
-        )}
-        <div
-          className={`eco-aoi-slider${faunaSpecies.length === 0 ? " is-muted" : ""}`}
-          style={{ marginTop: "0.65rem" }}
-        >
-          <div className="eco-aoi-slider-head">
-            <span className="eco-aoi-label">Distance</span>
-            <span className="eco-aoi-slider-value">{faunaDistM.toFixed(0)} m</span>
-          </div>
-          <input
-            type="range"
-            min={100}
-            max={5000}
-            step={100}
-            value={faunaDistM}
-            disabled={disabled || faunaSpecies.length === 0}
-            onChange={(e) => onFaunaDistMChange(Number(e.target.value))}
-          />
           <p className="eco-aoi-slider-caption">
-            Distance maximale entre une observation et une parcelle retenue par le filtre.
+            {faunaSpecies.length < 2
+              ? "Ajoutez au moins deux espèces pour choisir ET ou OU."
+              : faunaCombine === "and"
+                ? "La parcelle doit être proche d’une observation de chaque espèce."
+                : "La parcelle est retenue dès qu’une des espèces est à distance."}
           </p>
-        </div>
+        </fieldset>
+      </div>
+
+      <div className="eco-filter-block">
+        <h3 className="eco-filter-block-title">Présence de flore</h3>
+        <FloraTaxonPicker
+          selected={floraCriteria}
+          onChange={(next) => onFloraCriteriaChange?.(next)}
+          disabled={disabled}
+        />
+        <fieldset className="eco-zh-fieldset" disabled={disabled || floraCriteria.length < 2} style={{ marginTop: "0.65rem" }}>
+          <legend className="eco-aoi-label">Combinaison des taxons</legend>
+          <div className="eco-zh-modes eco-zh-modes--row">
+            <label className="eco-zh-mode">
+              <input type="radio" name="flora-combine" checked={floraCombine === "or"} onChange={() => onFloraCombineChange?.("or")} />
+              OU — au moins un
+            </label>
+            <label className="eco-zh-mode">
+              <input type="radio" name="flora-combine" checked={floraCombine === "and"} onChange={() => onFloraCombineChange?.("and")} />
+              ET — tous
+            </label>
+          </div>
+          <p className="eco-aoi-slider-caption">
+            {floraCriteria.length < 2
+              ? "Ajoutez au moins deux taxons pour choisir ET ou OU."
+              : floraCombine === "and"
+                ? "La parcelle doit être proche d’une observation de chaque taxon."
+                : "La parcelle est retenue dès qu’un des taxons est à distance."}
+          </p>
+        </fieldset>
       </div>
 
       <div className="eco-filter-block">

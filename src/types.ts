@@ -242,6 +242,8 @@ export interface FilterOptions {
 
   // Faune
   faune_criteria: FauneCriterion[];
+  /** Combinaison entre espèces : or = au moins une, and = toutes. */
+  fauna_combine?: "or" | "and";
 
   // Géométrie
   miller_threshold: number;
@@ -271,6 +273,7 @@ export const DEFAULT_FILTER: FilterOptions = {
   surface_hydro_mode: "none",
   surface_hydro_radius_m: 500,
   faune_criteria: [],
+  fauna_combine: "or",
   miller_threshold: 0.4,
   min_area_ha: 1,
   radius_start_km: 10,
@@ -375,7 +378,10 @@ export interface ParcelPoolMetricRow {
  * classe (recouvrements possibles) ; `total_intersection_area_m2` = surface parcelle (référence).
  */
 export interface VegetationHybridePoolMetricPayload {
-  ratios: Record<string, number>;
+  /** Pourcentage 0–100 de l'intersection, par classe. */
+  pct?: Record<string, number>;
+  /** Ancien contrat 0–1, encore lu s'il n'y a pas de `pct`. */
+  ratios?: Record<string, number>;
   total_intersection_area_m2: number;
 }
 
@@ -435,6 +441,7 @@ export interface SousEnsembleResult {
   denomination?: string | null;
   siren?: string | null;
   veg_libelles?: string[];
+  veg_profile?: Record<string, { area_m2?: number; pct?: number }>;
   fauna_distances?: Record<string, number>;
   dist_fauna_m?: number | null;
   score_eco?: ScoreEcoPayload;
@@ -469,4 +476,44 @@ export interface UfFilterResponse {
   unites_foncieres: UniteFoncieresResult[];
   funnel?: FunnelStep[];
   memory?: unknown;
+}
+
+export interface IlotRpgScoreEco {
+  total_score: number;
+  max_score: number;
+  breakdown?: Record<string, unknown>;
+}
+
+export interface IlotRpgResult {
+  rang: number;
+  num_ilot: string;
+  idus: string[];
+  nb_parcelles: number;
+  surface_ha: number;
+  miller: number;
+  distance_centre_km: number;
+  cat_dominante: string | null;
+  code_group_dominant: number | null;
+  code_cultu_dominant: string | null;
+  part_pp: number;
+  part_jachere: number;
+  part_vigne: number;
+  nb_pm: number;
+  pm_dominant: string | null;
+  pm_unique: boolean;
+  veg_libelles: string[];
+  veg_profile?: Record<string, { area_m2?: number; pct?: number }>;
+  fauna_distances: Record<string, number>;
+  dist_fauna_m: number | null;
+  zone_humide_ha: number;
+  score_eco?: IlotRpgScoreEco;
+  pm_prospect?: UniteFoncieresResult["pm_prospect"] | null;
+}
+
+export interface IlotsRpgResponse {
+  source: "rpg_ilots";
+  millesime: string;
+  total_candidats: number;
+  total_ilots: number;
+  ilots: IlotRpgResult[];
 }

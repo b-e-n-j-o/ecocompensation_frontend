@@ -91,6 +91,34 @@
   cursor: not-allowed;
 }
 
+.fauna-species-picker__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.fauna-species-picker__row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.5rem 0.65rem 0.65rem;
+  border: 1px solid var(--eco-border, #e8e8e8);
+  border-radius: 0.55rem;
+  background: var(--eco-surface-alt, #f7f8f7);
+}
+
+.fauna-species-picker__row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.fauna-species-picker__row-head .fauna-species-picker__chip-label {
+  font-weight: 600;
+  font-size: 0.82rem;
+}
+
 .fauna-species-picker__hint {
   margin: 0;
   font-size: 0.75rem;

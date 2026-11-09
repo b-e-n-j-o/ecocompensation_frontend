@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchProjectStoredResults } from "../api";
 import { getWsBaseUrl } from "../config/apiBase";
-import type { UfFilterResponse } from "../types";
+import type { IlotsRpgResponse, UfFilterResponse } from "../types";
 import {
   applyWsToPipelineProgress,
   completedPipelineProgress,
@@ -27,6 +27,13 @@ function countUf(lastResultsUf: unknown): number {
   return Array.isArray(uf.unites_foncieres) ? uf.unites_foncieres.length : 0;
 }
 
+function countIlots(raw: unknown): number {
+  if (!raw || typeof raw !== "object") return 0;
+  const il = raw as IlotsRpgResponse;
+  if (typeof il.total_ilots === "number") return il.total_ilots;
+  return Array.isArray(il.ilots) ? il.ilots.length : 0;
+}
+
 function isNotFound(err: unknown): boolean {
   return typeof err === "object" && err !== null && "status" in err && (err as { status?: number }).status === 404;
 }
@@ -36,6 +43,8 @@ export function useFetchProgress(projectId: string | null) {
   const [progress, setProgress] = useState<FetchProgressEvent | null>(null);
   const [parcellesReady, setParcellesReady] = useState(false);
   const [ufReady, setUfReady] = useState(false);
+  const [ilotsRpgReady, setIlotsRpgReady] = useState(false);
+  const [ilotsRpgError, setIlotsRpgError] = useState<string | null>(null);
   const [pipelineProgress, setPipelineProgress] = useState<PipelineProgress>(INITIAL_PIPELINE_PROGRESS);
   const socketRef = useRef<WebSocket | null>(null);
   const ufReadyRef = useRef(false);
@@ -45,6 +54,8 @@ export function useFetchProgress(projectId: string | null) {
   const resetFetchPhases = useCallback(() => {
     setParcellesReady(false);
     setUfReady(false);
+    setIlotsRpgReady(false);
+    setIlotsRpgError(null);
     ufReadyRef.current = false;
     setPipelineProgress(INITIAL_PIPELINE_PROGRESS);
   }, []);
@@ -61,6 +72,7 @@ export function useFetchProgress(projectId: string | null) {
       const parsed = parseStoredFilterResponse(stored.last_results);
       const nParc = parsed?.total ?? 0;
       const nUf = countUf(stored.last_results_uf);
+      const nIlots = countIlots(stored.last_results_ilots_rpg);
 
       if (parsed != null) {
         setParcellesReady(true);
@@ -70,12 +82,13 @@ export function useFetchProgress(projectId: string | null) {
         ufReadyRef.current = true;
         stopPollRef.current = true;
       }
+      if (nIlots > 0) setIlotsRpgReady(true);
       if (nParc > 0 && nUf === 0) {
         stopPollRef.current = true;
       }
 
-      if (nParc > 0 || nUf > 0) {
-        setPipelineProgress(completedPipelineProgress(nParc || undefined, nUf || undefined));
+      if (nParc > 0 || nUf > 0 || nIlots > 0) {
+        setPipelineProgress(completedPipelineProgress(nParc || undefined, nUf || undefined, nIlots || undefined));
       }
       return { nParc, nUf, stored, missing: false };
     } catch (err) {
@@ -125,6 +138,12 @@ export function useFetchProgress(projectId: string | null) {
           ufReadyRef.current = true;
           stopPollRef.current = true;
           void syncFromStored(pid);
+        } else if (ev === "phase:ilots_rpg_ready") {
+          setIlotsRpgReady(true);
+          setIlotsRpgError(null);
+          void syncFromStored(pid);
+        } else if (ev === "error" && data.layer_key === "ilots_rpg") {
+          setIlotsRpgError(typeof data.message === "string" ? data.message : "Erreur îlots agricoles");
         }
 
         if (ev && ev !== "connected" && ev !== "ping") {
@@ -164,6 +183,8 @@ export function useFetchProgress(projectId: string | null) {
     progress,
     parcellesReady,
     ufReady,
+    ilotsRpgReady,
+    ilotsRpgError,
     pipelineProgress,
     resetFetchPhases,
     syncFromStored,

@@ -13,6 +13,12 @@ export interface FaunaCriterion {
   dist_m: number;
 }
 
+export interface FloraCriterion {
+  taxon_key: string;
+  label: string;
+  dist_m: number;
+}
+
 export interface FilterConfig {
   /** Tampon AOI (km) autour du foncier déposé. 0 = recherche dans le périmètre seulement. */
   buffer_km?: number | null;
@@ -21,6 +27,8 @@ export interface FilterConfig {
   cesbio_libelles?: string[];
   fauna_criteria?: FaunaCriterion[];
   fauna_combine?: "or" | "and";
+  flora_criteria?: FloraCriterion[];
+  flora_combine?: "or" | "and";
   search_mode?: SearchMode;
   zone_humide_mode?: ZhMode;
   min_zone_humide_ha?: number;
@@ -33,6 +41,7 @@ export interface FilterConfig {
   arrachage_vignes?: boolean;
   arrachage_vignes_types?: string[];
   include_unites_foncieres?: boolean;
+  include_ilots_rpg?: boolean;
 }
 
 // ── Thèmes ───────────────────────────────────────────────────────────────────
@@ -56,6 +65,7 @@ export const HIDDEN_FROM_REPORT = new Set(["search_mode"]);
 
 export const UI_CRITERION_ORDER: string[] = [
   "fauna_criteria",
+  "flora_criteria",
   "min_area_ha",
   "miller_thresh",
   "cesbio_libelles",
@@ -265,6 +275,33 @@ export function buildCriteria(config: FilterConfig | null | undefined): Criterio
     applied: ap(fauna.length > 0),
   });
 
+  const flora = c?.flora_criteria ?? [];
+  const floraAnd = c?.flora_combine === "and";
+  specs.push({
+    key: "flora_criteria",
+    theme: "ecologie",
+    name: "Présence de flore",
+    label:
+      flora.length === 1
+        ? `Présence : ${flora[0].label} (≤ ${fmtDist(flora[0].dist_m)})`
+        : flora.length > 1
+          ? floraAnd
+            ? `Présence de tous les taxons cibles (${flora.length})`
+            : `Présence d'au moins un taxon cible (${flora.length})`
+          : "Présence de flore",
+    description:
+      flora.length > 1
+        ? floraAnd
+          ? "Conserve les parcelles proches d'une observation de chacun des taxons (ET)."
+          : "Conserve les parcelles proches d'une observation d'au moins un des taxons (OU)."
+        : "Conserve les parcelles proches d'une observation du taxon cible.",
+    details: [
+      ...(flora.length > 1 ? [{ label: "Combinaison", value: floraAnd ? "ET (tous)" : "OU (au moins un)" }] : []),
+      ...flora.map((f) => ({ label: f.label, value: `observation à ≤ ${fmtDist(f.dist_m)}` })),
+    ],
+    applied: ap(flora.length > 0),
+  });
+
   // Zones humides établies
   const zh = c?.zone_humide_mode ?? null;
   const zhMin = c?.min_zone_humide_ha ?? 0;
@@ -383,6 +420,7 @@ const STEP_MATCHERS: Array<[string, RegExp]> = [
   ["ens", /\bens\b|espaces?\s+naturels?\s+sensibles/i],
   ["miller_thresh", /miller|compacit/i],
   ["cesbio_libelles", /cesbio|occupation/i],
+  ["flora_criteria", /flore/i],
   ["fauna_criteria", /faune|esp[èe]ces?/i],
   ["search_mode", /emprise|source|within/i],
   ["min_area_ha", /candidats|surface/i],

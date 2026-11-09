@@ -13,6 +13,10 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { FeatureCollection, Geometry } from "geojson";
 import type * as GeoJSON from "geojson";
 import { fetchResultsLayerGeojson, fetchUrbaEntitesGeojson } from "../../../../api";
+import { getApiBaseUrl } from "../../../../config/apiBase";
+import { CadastreZoneControls } from "./cadastre/CadastreZoneControls";
+import { BaseMapToggle } from "./BaseMapToggle";
+import { RESULTS_BASEMAP_STYLE, applyBaseMapMode, type BaseMapMode } from "./resultsBasemap";
 import type { ParcelPoolMetricRow } from "../../../../types";
 import {
   RESULTS_LAYERS,
@@ -82,11 +86,15 @@ interface ParcellesMapProps {
   indesirableCount?: number;
   /** Incrémenté après un profil urbanisme pour recharger les entités. */
   urbaRevision?: number;
+  /** Ajout des parcelles cadastrales sélectionnées au pool du run courant. */
+  onAddToPool?: (idus: string[]) => Promise<void>;
 }
 
+const CADASTRE_API_BASE = `${getApiBaseUrl()}/api`;
+const POOL_LAYER_IDS = ["parcelles-fill", "parcelles-outline"];
+
 const EMPTY_URBA: UrbaFeatureCollection = { type: "FeatureCollection", features: [] };
-type BaseMapMode = "satellite" | "plan";
-type ScoreColorMode = "ecologique" | "foncier";
+type ScoreColorMode = "ecologique";
 
 // ─── Helpers MapLibre ─────────────────────────────────────────────────────────
 
@@ -124,29 +132,7 @@ function parcelFillColorExpression(mode: ScoreColorMode): maplibregl.ExpressionS
   ] as unknown as maplibregl.ExpressionSpecification;
 }
 
-const BASE_STYLE: maplibregl.StyleSpecification = {
-  version: 8,
-  sources: {
-    "esri-satellite": {
-      type: "raster",
-      tiles: ["https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
-      tileSize: 256,
-      attribution: "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics",
-    },
-    "osm-standard": {
-      type: "raster",
-      tiles: [
-        "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-      ],
-      tileSize: 256,
-      attribution: "© OpenStreetMap contributors",
-    },
-  },
-  layers: [
-    { id: "basemap-satellite", type: "raster", source: "esri-satellite", layout: { visibility: "visible" } },
-    { id: "basemap-plan", type: "raster", source: "osm-standard", layout: { visibility: "none" } },
-  ],
-};
+const BASE_STYLE = RESULTS_BASEMAP_STYLE;
 
 function emptyFC(): FeatureCollection { return { type: "FeatureCollection", features: [] }; }
 
@@ -232,6 +218,7 @@ export function ParcellesMap({
   thematicLayerKeys,
   indesirableCount = 0,
   urbaRevision = 0,
+  onAddToPool,
 }: ParcellesMapProps) {
   const activeLayers = useMemo(
     () =>
@@ -243,6 +230,15 @@ export function ParcellesMap({
 
   const mapContainer       = useRef<HTMLDivElement>(null);
   const map                = useRef<maplibregl.Map | null>(null);
+  const [mapInstance, setMapInstance] = useState<maplibregl.Map | null>(null);
+  const poolIdus = useMemo(() => {
+    const ids = new Set<string>();
+    for (const f of geojson?.features ?? []) {
+      const idu = f.properties?.idu;
+      if (idu) ids.add(String(idu));
+    }
+    return ids;
+  }, [geojson]);
   const onParcelleClickRef = useRef(onParcelleClick);
   onParcelleClickRef.current = onParcelleClick;
   const onParcelleHoverRef = useRef(onParcelleHover);
@@ -259,8 +255,9 @@ export function ParcellesMap({
     buildInitialThematic(thematicLayerKeys),
   );
   const [parcellesVisible, setParcellesVisible] = useState(true);
+  const [floreVisible, setFloreVisible] = useState(false);
   const [baseMapMode, setBaseMapMode] = useState<BaseMapMode>("satellite");
-  const [scoreColorMode, setScoreColorMode] = useState<ScoreColorMode>("ecologique");
+  const scoreColorMode: ScoreColorMode = "ecologique";
   const [mapReady, setMapReady] = useState(false);
   const [urbaData, setUrbaData] = useState<UrbaFeatureCollection>(EMPTY_URBA);
   const [urbaHidden, setUrbaHidden] = useState<Set<string>>(() => new Set());
@@ -304,18 +301,6 @@ export function ParcellesMap({
       }),
     };
   }, [geojson, poolMetricsByIdu]);
-
-  const foncierCoverage = useMemo(() => {
-    const features = geojsonWithScoreRatio?.features ?? [];
-    const total = features.length;
-    if (total === 0) return { withFoncier: 0, total: 0 };
-    let withFoncier = 0;
-    for (const f of features) {
-      const val = (f.properties as Record<string, unknown> | undefined)?.foncier_score;
-      if (typeof val === "number" && Number.isFinite(val) && val >= 0) withFoncier += 1;
-    }
-    return { withFoncier, total };
-  }, [geojsonWithScoreRatio]);
 
   // Reset au changement de projet ou de run pool (critères CESBIO / faune)
   useEffect(() => {
@@ -370,6 +355,7 @@ export function ParcellesMap({
       center: [0, 47],
       zoom: 8,
     });
+    setMapInstance(map.current);
     return () => {
       parcelHandlersBoundRef.current = false;
       if (hoveredParcelRef.current) {
@@ -378,6 +364,7 @@ export function ParcellesMap({
       }
       map.current?.remove();
       map.current = null;
+      setMapInstance(null);
     };
   }, []);
 
@@ -661,18 +648,71 @@ export function ParcellesMap({
     else current.once("load", zoom);
   }, [mapReady, focusIdu, focusZoomNonce, geojsonWithScoreRatio]);
 
-  // ── Fond de carte (satellite/plan) ────────────────────────────────────────
   useEffect(() => {
-    if (!map.current || !map.current.isStyleLoaded()) return;
-    const satVis = baseMapMode === "satellite" ? "visible" : "none";
-    const planVis = baseMapMode === "plan" ? "visible" : "none";
-    try {
-      map.current.setLayoutProperty("basemap-satellite", "visibility", satVis);
-      map.current.setLayoutProperty("basemap-plan", "visibility", planVis);
-    } catch {
-      /* layers pas encore montées */
-    }
+    applyBaseMapMode(map.current, baseMapMode);
   }, [baseMapMode]);
+
+  useEffect(() => {
+    const map = mapInstance;
+    if (!map) return;
+    const ensure = () => {
+      if (!map.getSource("flore-obs")) {
+        map.addSource("flore-obs", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+        const before = map.getLayer("parcelles-fill") ? "parcelles-fill" : undefined;
+        map.addLayer({
+          id: "flore-obs-fill",
+          type: "fill",
+          source: "flore-obs",
+          filter: ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]],
+          paint: { "fill-color": "#2f7d5b", "fill-opacity": 0.25 },
+          layout: { visibility: "none" },
+        }, before);
+        map.addLayer({
+          id: "flore-obs-line",
+          type: "line",
+          source: "flore-obs",
+          filter: ["in", ["geometry-type"], ["literal", ["LineString", "MultiLineString", "Polygon", "MultiPolygon"]]],
+          paint: { "line-color": "#2f7d5b", "line-width": 1.5 },
+          layout: { visibility: "none" },
+        }, before);
+        map.addLayer({
+          id: "flore-obs-circle",
+          type: "circle",
+          source: "flore-obs",
+          filter: ["in", ["geometry-type"], ["literal", ["Point", "MultiPoint"]]],
+          paint: { "circle-color": "#2f7d5b", "circle-radius": 4, "circle-stroke-width": 1, "circle-stroke-color": "#fff" },
+          layout: { visibility: "none" },
+        }, before);
+      }
+      const vis = floreVisible ? "visible" : "none";
+      for (const id of ["flore-obs-fill", "flore-obs-line", "flore-obs-circle"]) {
+        if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", vis);
+      }
+    };
+    if (map.isStyleLoaded()) ensure();
+    else map.once("load", ensure);
+
+    if (!floreVisible) return;
+    let cancelled = false;
+    const load = () => {
+      const b = map.getBounds();
+      const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].join(",");
+      fetch(`${getApiBaseUrl()}/api/reserve-fonciere/flore/observations?bbox=${encodeURIComponent(bbox)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (cancelled || !data) return;
+          const src = map.getSource("flore-obs") as maplibregl.GeoJSONSource | undefined;
+          src?.setData(data as FeatureCollection);
+        })
+        .catch(() => undefined);
+    };
+    load();
+    map.on("moveend", load);
+    return () => {
+      cancelled = true;
+      map.off("moveend", load);
+    };
+  }, [mapInstance, floreVisible]);
 
   // ── Visibilité parcelles (toggle légende) ────────────────────────────────
   useEffect(() => {
@@ -789,112 +829,22 @@ export function ParcellesMap({
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
-      <div
-        style={{
-          position: "absolute",
-          top: 10,
-          left: 10,
-          zIndex: 5,
-          display: "flex",
-          gap: 6,
-          background: "rgba(15, 23, 42, 0.78)",
-          border: "1px solid #334155",
-          borderRadius: 6,
-          padding: 4,
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => setBaseMapMode("satellite")}
-          style={{
-            border: "1px solid #475569",
-            background: baseMapMode === "satellite" ? "#1d4ed8" : "#1f2937",
-            color: "#e2e8f0",
-            borderRadius: 4,
-            padding: "4px 8px",
-            fontSize: 11,
-            cursor: "pointer",
-          }}
-        >
-          Satellite
-        </button>
-        <button
-          type="button"
-          onClick={() => setBaseMapMode("plan")}
-          style={{
-            border: "1px solid #475569",
-            background: baseMapMode === "plan" ? "#1d4ed8" : "#1f2937",
-            color: "#e2e8f0",
-            borderRadius: 4,
-            padding: "4px 8px",
-            fontSize: 11,
-            cursor: "pointer",
-          }}
-        >
-          Plan
-        </button>
-        <div
-          style={{
-            width: 1,
-            background: "#334155",
-            margin: "0 2px",
-          }}
-        />
-        <button
-          type="button"
-          onClick={() => setScoreColorMode("ecologique")}
-          style={{
-            border: "1px solid #475569",
-            background: scoreColorMode === "ecologique" ? "#1d4ed8" : "#1f2937",
-            color: "#e2e8f0",
-            borderRadius: 4,
-            padding: "4px 8px",
-            fontSize: 11,
-            cursor: "pointer",
-          }}
-          title="Coloration des parcelles par score écologique (ratio score/max)"
-        >
-          Score éco
-        </button>
-        <button
-          type="button"
-          onClick={() => setScoreColorMode("foncier")}
-          style={{
-            border: "1px solid #475569",
-            background: scoreColorMode === "foncier" ? "#1d4ed8" : "#1f2937",
-            color: "#e2e8f0",
-            borderRadius: 4,
-            padding: "4px 8px",
-            fontSize: 11,
-            cursor: "pointer",
-          }}
-          title="Coloration des parcelles par score de dureté foncière"
-        >
-          Score foncier
-        </button>
-        {scoreColorMode === "foncier" && (
-          <span
-            title="Parcelles avec un score foncier disponible"
-            style={{
-              marginLeft: 4,
-              padding: "4px 6px",
-              borderRadius: 4,
-              border: "1px solid #475569",
-              background: "rgba(15, 23, 42, 0.55)",
-              color: "#cbd5e1",
-              fontSize: 11,
-              whiteSpace: "nowrap",
-            }}
-          >
-            Foncier dispo: {foncierCoverage.withFoncier}/{foncierCoverage.total}
-          </span>
-        )}
-      </div>
+      <BaseMapToggle
+        mode={baseMapMode}
+        onToggle={() => setBaseMapMode((m) => (m === "satellite" ? "plan" : "satellite"))}
+      />
       <div
         ref={mapContainer}
         className={`parcelles-map${loadingMessage ? " parcelles-map--loading" : ""}`}
         style={{ width: "100%", height: "100%" }}
         title="Double-cliquez sur une parcelle pour afficher sa ligne dans le classement"
+      />
+      <CadastreZoneControls
+        map={mapInstance}
+        apiBase={CADASTRE_API_BASE}
+        poolIdus={poolIdus}
+        poolLayerIds={POOL_LAYER_IDS}
+        onAddToPool={onAddToPool}
       />
       {loadingMessage && (
         <div className="parcelles-map-loading-overlay" aria-live="polite">
@@ -938,6 +888,12 @@ export function ParcellesMap({
                       </span>
                     ) : undefined,
                 }}
+                extraLayers={[{
+                  label: "Observations flore",
+                  visible: floreVisible,
+                  color: "#2f7d5b",
+                  onToggle: () => setFloreVisible((v) => !v),
+                }]}
                 bulkLoading={thematicPreloadLoading}
                 onToggleValue={toggleDiscriminantValue}
               />

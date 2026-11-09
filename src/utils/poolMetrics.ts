@@ -2,7 +2,10 @@ import type { ParcelPoolMetricRow, VegetationHybrideValue } from "../types";
 
 export type FilterEnrichPayload = {
   veg_libelles?: string[];
+  /** Profil CESBIO {libelle: {area_m2, pct}} — même forme que la métrique parcelle `cesbio_profile`. */
+  veg_profile?: Record<string, { area_m2?: number; pct?: number }>;
   fauna_distances?: Record<string, number>;
+  flora_distances?: Record<string, number>;
   zone_humide_ha?: number;
   zone_humide_m2?: number;
   zone_humide_pct?: number;
@@ -106,6 +109,20 @@ export type FaunaTableEntry = {
 };
 
 /** Liste espèce + distance (filter_v2 ou legacy) pour affichage tableau empilé. */
+export function getFloraTableEntries(
+  metrics: ParcelPoolMetricRow[] | undefined,
+): FaunaTableEntry[] {
+  const fd = getFilterEnrich(metrics)?.flora_distances;
+  if (!fd || typeof fd !== "object") return [];
+  return Object.entries(fd)
+    .map(([species, distRaw]) => {
+      const dist = typeof distRaw === "number" ? distRaw : Number(distRaw);
+      return { species: species.trim(), distanceM: dist };
+    })
+    .filter((e) => e.species && Number.isFinite(e.distanceM) && e.distanceM >= 0)
+    .sort((a, b) => a.distanceM - b.distanceM || a.species.localeCompare(b.species, "fr"));
+}
+
 export function getFaunaTableEntries(
   metrics: ParcelPoolMetricRow[] | undefined,
 ): FaunaTableEntry[] {
@@ -763,10 +780,18 @@ export type OccupationSolSource = "vegetation_hybride_ratio" | "cesbio_profile";
 
 export type OccupationSolShare = {
   label: string;
-  /** Part 0–1 (parcelle pour CESBIO, intersection pour zonage hybride). */
-  ratio: number;
+  /** Pourcentage 0–100 de la surface de référence (parcelle ou union). */
+  pct: number;
   areaM2: number | null;
+  /** BD TOPO ou CESBIO, quand le profil la porte. */
+  vegSource?: string | null;
 };
+
+/** Affiche un pourcentage déjà stocké en 0–100. */
+export function formatOccSolPct(pct: number): string {
+  const digits = pct >= 10 || pct === 0 ? 0 : 1;
+  return `${pct.toLocaleString("fr-FR", { maximumFractionDigits: digits, minimumFractionDigits: 0 })} %`;
+}
 
 export type OccupationSolMetric = {
   source: OccupationSolSource;
@@ -777,70 +802,135 @@ export type OccupationSolMetric = {
 
 function parseHybridRatioMetric(
   metrics: ParcelPoolMetricRow[] | undefined,
-): { ratios: Record<string, number>; totalM2: number } | null {
+): { pcts: Record<string, number>; totalM2: number } | null {
   const row = metrics?.find((m) => m.metric_key === "vegetation_hybride_ratio");
   const payload = row?.metric_value_jsonb;
   if (!payload || typeof payload !== "object") return null;
-  const raw = (payload as { ratios?: unknown; total_intersection_area_m2?: unknown }).ratios;
-  const totalRaw = (payload as { total_intersection_area_m2?: unknown }).total_intersection_area_m2;
-  if (!raw || typeof raw !== "object") return null;
+  const body = payload as { pct?: unknown; ratios?: unknown; total_intersection_area_m2?: unknown };
+  const totalRaw = body.total_intersection_area_m2;
   const totalM2 =
     typeof totalRaw === "number" && Number.isFinite(totalRaw) && totalRaw >= 0 ? totalRaw : 0;
-  const out: Record<string, number> = {};
-  for (const [k, v] of Object.entries(raw)) {
-    if (typeof v === "number" && Number.isFinite(v) && v > 0) out[k] = v;
+  const pcts: Record<string, number> = {};
+  if (body.pct && typeof body.pct === "object") {
+    for (const [k, v] of Object.entries(body.pct)) {
+      if (typeof v === "number" && Number.isFinite(v) && v > 0) pcts[k] = v;
+    }
+  } else if (body.ratios && typeof body.ratios === "object") {
+    for (const [k, v] of Object.entries(body.ratios)) {
+      if (typeof v === "number" && Number.isFinite(v) && v > 0) pcts[k] = v * 100;
+    }
   }
-  if (!Object.keys(out).length) return null;
-  return { ratios: out, totalM2 };
+  if (!Object.keys(pcts).length) return null;
+  return { pcts, totalM2 };
 }
 
-function parseCesbioProfileMetric(
-  metrics: ParcelPoolMetricRow[] | undefined,
-): { ratios: Record<string, number>; totalM2: number } | null {
-  const row = metrics?.find((m) => m.metric_key === "cesbio_profile");
-  const payload = row?.metric_value_jsonb;
+function numOrNull(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim()) {
+    const n = Number(v.replace(",", "."));
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function formatVegSource(raw: unknown): string | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const s = raw.trim().toLowerCase();
+  if (s.includes("bdtopo") || s.includes("bd topo") || s.includes("bd_topo")) return "BD TOPO";
+  if (s.includes("cesbio")) return "CESBIO";
+  return raw.trim();
+}
+
+function parseCesbioProfilePayload(
+  payload: unknown,
+): { pcts: Record<string, number>; areas: Record<string, number>; sources: Record<string, string>; totalM2: number } | null {
   if (!payload || typeof payload !== "object") return null;
-  const ratios: Record<string, number> = {};
+  const pcts: Record<string, number> = {};
   const areas: Record<string, number> = {};
+  const sources: Record<string, string> = {};
   let areaSum = 0;
   let parcelM2 = 0;
-  for (const [label, raw] of Object.entries(payload)) {
+  for (const [label, raw] of Object.entries(payload as Record<string, unknown>)) {
     if (!label.trim() || !raw || typeof raw !== "object") continue;
     const rec = raw as Record<string, unknown>;
-    const area =
-      typeof rec.area_m2 === "number" && Number.isFinite(rec.area_m2) && rec.area_m2 > 0
-        ? rec.area_m2
-        : null;
-    const pct = typeof rec.pct === "number" && Number.isFinite(rec.pct) && rec.pct > 0 ? rec.pct : null;
+    const areaRaw = numOrNull(rec.area_m2);
+    const pctRaw = numOrNull(rec.pct);
+    const area = areaRaw != null && areaRaw > 0 ? areaRaw : null;
+    const pct = pctRaw != null && pctRaw > 0 ? pctRaw : null;
+    const vegSource = formatVegSource(rec.source);
+    if (vegSource) sources[label] = vegSource;
     if (area != null) {
       areas[label] = area;
       areaSum += area;
     }
     if (pct != null) {
-      const ratio = pct > 1 ? pct / 100 : pct;
-      if (ratio > 0) {
-        ratios[label] = ratio;
-        if (area != null && ratio > 0) {
-          parcelM2 = Math.max(parcelM2, area / ratio);
-        }
-      }
+      pcts[label] = pct;
+      if (area != null && pct > 0) parcelM2 = Math.max(parcelM2, area / (pct / 100));
     }
   }
-  if (!Object.keys(ratios).length && areaSum > 0) {
-    for (const [k, a] of Object.entries(areas)) {
-      ratios[k] = a / areaSum;
-    }
-    return { ratios, totalM2: areaSum };
+  if (!Object.keys(pcts).length && areaSum > 0) {
+    for (const [k, a] of Object.entries(areas)) pcts[k] = (a / areaSum) * 100;
+    return { pcts, areas, sources, totalM2: areaSum };
   }
-  if (!Object.keys(ratios).length) return null;
-  return { ratios, totalM2: parcelM2 > 0 ? parcelM2 : areaSum };
+  if (!Object.keys(pcts).length) return null;
+  return { pcts, areas, sources, totalM2: parcelM2 > 0 ? parcelM2 : areaSum };
 }
 
-/** Ratios + surface de référence (m²) — hybride ZH, sinon CESBIO faune. */
+function parseCesbioProfileMetric(
+  metrics: ParcelPoolMetricRow[] | undefined,
+): { pcts: Record<string, number>; areas: Record<string, number>; sources: Record<string, string>; totalM2: number } | null {
+  const row = metrics?.find((m) => m.metric_key === "cesbio_profile");
+  return parseCesbioProfilePayload(row?.metric_value_jsonb);
+}
+
+/** Profil CESBIO stocké sur UF / îlot RPG (`veg_profile`). */
+export function getOccupationSolFromVegProfile(
+  profile: unknown,
+): OccupationSolMetric | null {
+  const parsed = parseCesbioProfilePayload(profile);
+  if (!parsed) return null;
+  const shares = sharesFromPcts(parsed.pcts, parsed.areas, parsed.sources, parsed.totalM2);
+  if (!shares.length) return null;
+  return {
+    source: "cesbio_profile",
+    ratios: ratiosFromPcts(parsed.pcts),
+    totalM2: parsed.totalM2,
+    shares,
+  };
+}
+
+function ratiosFromPcts(pcts: Record<string, number>): Record<string, number> {
+  const ratios: Record<string, number> = {};
+  for (const [k, pct] of Object.entries(pcts)) ratios[k] = pct / 100;
+  return ratios;
+}
+
+function sharesFromPcts(
+  pcts: Record<string, number>,
+  areas: Record<string, number>,
+  sources: Record<string, string>,
+  totalM2: number,
+): OccupationSolShare[] {
+  return Object.entries(pcts)
+    .filter(([, pct]) => Number.isFinite(pct) && pct > 0)
+    .map(([label, pct]) => ({
+      label,
+      pct,
+      areaM2: areas[label] ?? (totalM2 > 0 ? (pct / 100) * totalM2 : null),
+      vegSource: sources[label] ?? null,
+    }))
+    .sort((a, b) => b.pct - a.pct);
+}
+
+/** Parts 0–1 pour le tri, dérivées du pourcentage 0–100. */
 function getVegetationHybridMetric(
   metrics: ParcelPoolMetricRow[] | undefined,
 ): { ratios: Record<string, number>; totalM2: number } | null {
-  return parseHybridRatioMetric(metrics) ?? parseCesbioProfileMetric(metrics);
+  const hybrid = parseHybridRatioMetric(metrics);
+  if (hybrid) return { ratios: ratiosFromPcts(hybrid.pcts), totalM2: hybrid.totalM2 };
+  const cesbio = parseCesbioProfileMetric(metrics);
+  if (!cesbio) return null;
+  return { ratios: ratiosFromPcts(cesbio.pcts), totalM2: cesbio.totalM2 };
 }
 
 /** Occupation du sol pour le détail de ligne (parts + source). */
@@ -848,21 +938,24 @@ export function getOccupationSolMetric(
   metrics: ParcelPoolMetricRow[] | undefined,
 ): OccupationSolMetric | null {
   const hybrid = parseHybridRatioMetric(metrics);
-  const parsed = hybrid ?? parseCesbioProfileMetric(metrics);
-  if (!parsed) return null;
-  const shares: OccupationSolShare[] = Object.entries(parsed.ratios)
-    .filter(([, ratio]) => Number.isFinite(ratio) && ratio > 0)
-    .map(([label, ratio]) => ({
-      label,
-      ratio,
-      areaM2: parsed.totalM2 > 0 ? ratio * parsed.totalM2 : null,
-    }))
-    .sort((a, b) => b.ratio - a.ratio);
+  if (hybrid) {
+    const shares = sharesFromPcts(hybrid.pcts, {}, {}, hybrid.totalM2);
+    if (!shares.length) return null;
+    return {
+      source: "vegetation_hybride_ratio",
+      ratios: ratiosFromPcts(hybrid.pcts),
+      totalM2: hybrid.totalM2,
+      shares,
+    };
+  }
+  const cesbio = parseCesbioProfileMetric(metrics);
+  if (!cesbio) return null;
+  const shares = sharesFromPcts(cesbio.pcts, cesbio.areas, cesbio.sources, cesbio.totalM2);
   if (!shares.length) return null;
   return {
-    source: hybrid ? "vegetation_hybride_ratio" : "cesbio_profile",
-    ratios: parsed.ratios,
-    totalM2: parsed.totalM2,
+    source: "cesbio_profile",
+    ratios: ratiosFromPcts(cesbio.pcts),
+    totalM2: cesbio.totalM2,
     shares,
   };
 }

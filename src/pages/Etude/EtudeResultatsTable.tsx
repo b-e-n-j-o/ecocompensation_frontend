@@ -1,3 +1,4 @@
+import { AjoutManuelTable } from "./ResultPanel/AjoutManuelTable";
 import { IndesirablesTable } from "./ResultPanel/IndesirablesTable";
 import { RankingTable } from "./ResultPanel/RankingTable";
 import { UnitesFoncieresTable } from "./ResultPanel/UnitesFoncieresTable";
@@ -20,6 +21,7 @@ type RankingShared = {
   showZoneHumideColumn: boolean;
   showDistHydroColumn: boolean;
   showSurfaceHydroColumn: boolean;
+  showFloraColumn?: boolean;
 };
 
 type ParcellesTableProps = RankingShared & {
@@ -45,6 +47,8 @@ type ParcellesTableProps = RankingShared & {
   indesirableParcelles: FilterResponse["parcelles"];
   indesirableMetricsByIdu: Record<string, ParcelPoolMetricRow[]>;
   onRestoreIndesirable: (idu: string) => void;
+  ajoutManuelParcelles: ParcelleResult[];
+  onIntegrateAjoutManuel: (idus: string[]) => Promise<void>;
 };
 
 type CombinedTableProps = Omit<RankingShared, "projectId"> & {
@@ -56,11 +60,14 @@ type UnitesTableProps = {
   projectId: string | null;
   selectedSubsetId: string | null;
   scrollToSubsetId: string | null;
+  scrollToUfId?: string | null;
   scrollTableNonce: number;
+  hoverParcelleIdu?: string | null;
   onSubsetActivate: (subsetId: string) => void;
   onUfActivate: (ufId: string) => void;
   onSubsetHover: (subsetId: string | null) => void;
   onUfHover: (ufId: string | null) => void;
+  onParcelleHover?: (idu: string | null) => void;
 };
 
 export function EtudeResultatsParcellesTable({
@@ -99,9 +106,12 @@ export function EtudeResultatsParcellesTable({
   showZoneHumideColumn,
   showDistHydroColumn,
   showSurfaceHydroColumn,
+  showFloraColumn = false,
   indesirableParcelles,
   indesirableMetricsByIdu,
   onRestoreIndesirable,
+  ajoutManuelParcelles,
+  onIntegrateAjoutManuel,
 }: ParcellesTableProps) {
   const metricsLoading = !!poolRunId && poolMetricsByIdu === null;
   return (
@@ -137,6 +147,7 @@ export function EtudeResultatsParcellesTable({
             showZoneHumideColumn={showZoneHumideColumn}
             showDistHydroColumn={showDistHydroColumn}
             showSurfaceHydroColumn={showSurfaceHydroColumn}
+            showFloraColumn={showFloraColumn}
             poolFilters={{
               hideDistanceFilter,
               distanceMaxKm,
@@ -156,6 +167,16 @@ export function EtudeResultatsParcellesTable({
             </div>
           )}
         </div>
+        {poolRunId && (
+          <AjoutManuelTable
+            parcelles={ajoutManuelParcelles}
+            onIntegrate={onIntegrateAjoutManuel}
+            onRowActivate={onRowActivate}
+            onHover={onHover}
+            hoverIdu={hoverIdu}
+            selectedIdu={selectedIdu}
+          />
+        )}
         {poolRunId && (
           <IndesirablesTable
             projectId={projectId}
@@ -229,11 +250,14 @@ export function EtudeResultatsUnitesTable({
   projectId,
   selectedSubsetId,
   scrollToSubsetId,
+  scrollToUfId = null,
   scrollTableNonce,
+  hoverParcelleIdu = null,
   onSubsetActivate,
   onUfActivate,
   onSubsetHover,
   onUfHover,
+  onParcelleHover,
 }: UnitesTableProps) {
   return (
     <div className="results-split__table-fill">
@@ -243,11 +267,14 @@ export function EtudeResultatsUnitesTable({
           projectId={projectId}
           selectedSubsetId={selectedSubsetId}
           scrollToSubsetId={scrollToSubsetId}
+          scrollToUfId={scrollToUfId}
           scrollTableNonce={scrollTableNonce}
+          hoverParcelleIdu={hoverParcelleIdu}
           onSubsetActivate={onSubsetActivate}
           onUfActivate={onUfActivate}
           onSubsetHover={onSubsetHover}
           onUfHover={onUfHover}
+          onParcelleHover={onParcelleHover}
         />
       </div>
     </div>

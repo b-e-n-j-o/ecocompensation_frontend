@@ -61,7 +61,7 @@ export interface ResultsLayerDef {
       fillColor: "#86efac",
       lineColor: "#15803d",
       fillOpacity: 0.22,
-      lineWidth: 1.5,
+      lineWidth: 0,
       discriminantField: "libelle_prio",
       popupFields: [
         { field: "libelle_prio", label: "Libellé prioritaire" },

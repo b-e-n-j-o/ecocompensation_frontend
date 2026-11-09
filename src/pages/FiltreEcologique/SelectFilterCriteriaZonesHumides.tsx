@@ -19,8 +19,8 @@ type Props = {
   onFaunaEnabledChange: (v: boolean) => void;
   faunaSpecies: string[];
   onFaunaSpeciesChange: (v: string[]) => void;
-  faunaDistM: number;
-  onFaunaDistMChange: (v: number) => void;
+  faunaDistBySpecies: Record<string, number>;
+  onFaunaDistChange: (species: string, distM: number) => void;
   faunaCombine: "or" | "and";
   onFaunaCombineChange: (v: "or" | "and") => void;
   tronconsHydroEnabled: boolean;
@@ -57,8 +57,8 @@ export function SelectFilterCriteriaZonesHumides({
   onFaunaEnabledChange,
   faunaSpecies,
   onFaunaSpeciesChange,
-  faunaDistM,
-  onFaunaDistMChange,
+  faunaDistBySpecies,
+  onFaunaDistChange,
   faunaCombine,
   onFaunaCombineChange,
   tronconsHydroEnabled,
@@ -81,17 +81,19 @@ export function SelectFilterCriteriaZonesHumides({
             onFaunaSpeciesChange(next);
             onFaunaEnabledChange(next.length > 0);
           }}
+          distances={faunaDistBySpecies}
+          onDistanceChange={onFaunaDistChange}
           disabled={disabled}
           compact
         />
-        {faunaSpecies.length > 1 && (
-          <div className="eco-zh-modes" style={{ marginTop: "0.55rem" }} role="group" aria-label="Combinaison des espèces">
+        <fieldset className="eco-zh-fieldset" disabled={disabled || faunaSpecies.length < 2} style={{ marginTop: "0.65rem" }}>
+          <legend className="eco-aoi-label">Combinaison des espèces</legend>
+          <div className="eco-zh-modes eco-zh-modes--row">
             <label className="eco-zh-mode">
               <input
                 type="radio"
                 name="fauna-combine-zh"
                 checked={faunaCombine === "or"}
-                disabled={disabled}
                 onChange={() => onFaunaCombineChange("or")}
               />
               OU — au moins une
@@ -101,34 +103,19 @@ export function SelectFilterCriteriaZonesHumides({
                 type="radio"
                 name="fauna-combine-zh"
                 checked={faunaCombine === "and"}
-                disabled={disabled}
                 onChange={() => onFaunaCombineChange("and")}
               />
               ET — toutes
             </label>
           </div>
-        )}
-        <div
-          className={`eco-aoi-slider${faunaSpecies.length === 0 ? " is-muted" : ""}`}
-          style={{ marginTop: "0.65rem" }}
-        >
-          <div className="eco-aoi-slider-head">
-            <span className="eco-aoi-label">Distance max observation–parcelle</span>
-            <span className="eco-aoi-slider-value">{faunaDistM.toFixed(0)} m</span>
-          </div>
-          <input
-            type="range"
-            min={100}
-            max={5000}
-            step={100}
-            value={faunaDistM}
-            disabled={disabled || faunaSpecies.length === 0}
-            onChange={(e) => onFaunaDistMChange(Number(e.target.value))}
-          />
           <p className="eco-aoi-slider-caption">
-            Distance max entre observation espèces et parcelle retenue.
+            {faunaSpecies.length < 2
+              ? "Ajoutez au moins deux espèces pour choisir ET ou OU."
+              : faunaCombine === "and"
+                ? "La parcelle doit être proche d’une observation de chaque espèce."
+                : "La parcelle est retenue dès qu’une des espèces est à distance."}
           </p>
-        </div>
+        </fieldset>
       </div>
 
       <div className="eco-filter-block">

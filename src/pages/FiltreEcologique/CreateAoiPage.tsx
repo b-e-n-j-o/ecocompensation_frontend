@@ -4,12 +4,11 @@ import {
   createProjectFromFoncierUpload,
   createProjectFromParcelle,
   fetchFilterPhases,
-  fetchProjects,
   previewFoncierUpload,
   startFilterPipeline,
   fetchProjectStoredResults,
 } from "../../api";
-import type { FilterPhaseInfo, FromParcelleBody, ParcelleRef, ProjectSummary } from "../../api";
+import type { FilterPhaseInfo, FromParcelleBody, ParcelleRef } from "../../api";
 import type { CesbioLibelle } from "../../types";
 import type { Feature, MultiPolygon, Polygon } from "geojson";
 import { CartoAoi } from "./CartoAoi";
@@ -18,6 +17,7 @@ import {
   EMPTY_TILES_OVERLAY,
 } from "./filterTilesOverlay";
 import { SelectFilterCriteria } from "./SelectFilterCriteria";
+import { AnalyseFoncierPanel } from "./AnalyseFoncierPanel";
 import { SelectFilterCriteriaZonesHumides } from "./SelectFilterCriteriaZonesHumides";
 import { PipelineProgressPanel } from "../../components/PipelineProgressPanel";
 import type { StudyType } from "../../types/studyTypes";
@@ -90,14 +90,26 @@ export function CreateAoiPage({
   const [faunaEnabled, setFaunaEnabled] = useState(false);
   const [faunaSpecies, setFaunaSpecies] = useState<string[]>([]);
   const [faunaCombine, setFaunaCombine] = useState<"or" | "and">("or");
-  const [faunaDistM, setFaunaDistM] = useState(1000);
+  const [floraCriteria, setFloraCriteria] = useState<{ taxon_key: string; label: string; dist_m: number }[]>([]);
+  const [floraCombine, setFloraCombine] = useState<"or" | "and">("or");
+  const [faunaDistBySpecies, setFaunaDistBySpecies] = useState<Record<string, number>>({});
+
+  function handleFaunaSpeciesChange(next: string[]) {
+    setFaunaSpecies(next);
+    setFaunaDistBySpecies((prev) => {
+      const out: Record<string, number> = {};
+      for (const s of next) {
+        out[s] = prev[s] ?? 1000;
+      }
+      return out;
+    });
+  }
+
+  function handleFaunaDistChange(species: string, distM: number) {
+    setFaunaDistBySpecies((prev) => ({ ...prev, [species]: distM }));
+  }
   const [ufParcelles, setUfParcelles] = useState<ParcelleRef[]>([]);
   const [nameTouched, setNameTouched] = useState(false);
-  const [historyProjects, setHistoryProjects] = useState<ProjectSummary[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(true);
-  const [historyError, setHistoryError] = useState<string | null>(null);
-  const [selectedExistingProjectId, setSelectedExistingProjectId] = useState<string>("");
-  const [projectTab, setProjectTab] = useState<"new" | "existing">("new");
   const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(editProjectId ? 3 : 1);
   const wsRef = useRef<WebSocket | null>(null);
   const onDoneRef = useRef(onDone);
@@ -121,7 +133,128 @@ export function CreateAoiPage({
   const [includeUnitesFoncieres, setIncludeUnitesFoncieres] = useState(false);
   const includeUfRef = useRef(includeUnitesFoncieres);
   includeUfRef.current = includeUnitesFoncieres;
+  const [includeIlotsRpg, setIncludeIlotsRpg] = useState(false);
+  const includeIlotsRef = useRef(includeIlotsRpg);
+  includeIlotsRef.current = includeIlotsRpg;
+  const [pasteText, setPasteText] = useState("");
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteMsg, setPasteMsg] = useState<string | null>(null);
+  const [workMode, setWorkMode] = useState<"recherche" | "analyse">("recherche");
   const editingExisting = !!editProjectId;
+
+  function applySnapshot(input: Record<string, unknown>) {
+    let raw = input;
+    const nested = input.filter_config;
+    if (nested && typeof nested === "object" && !Array.isArray(nested)) raw = nested as Record<string, unknown>;
+    const preset = input.kind === "kerfoncier.filter_preset.v1" ? input.options : input.options;
+    if (preset && typeof preset === "object" && ("faune_criteria" in (preset as object) || "vegetation_hybride" in (preset as object))) {
+      const o = preset as Record<string, unknown>;
+      const vh = (o.vegetation_hybride && typeof o.vegetation_hybride === "object")
+        ? o.vegetation_hybride as Record<string, unknown>
+        : {};
+      raw = {
+        ...o,
+        miller_thresh: o.miller_threshold ?? o.miller_thresh,
+        cesbio_libelles: vh.cesbio_libelles ?? o.cesbio_libelles,
+        fauna_criteria: o.fauna_criteria ?? o.faune_criteria,
+        fauna_combine: o.fauna_combine,
+      };
+    }
+    if (typeof raw.min_area_ha === "number") setMinAreaHa(raw.min_area_ha);
+    if (raw.miller_thresh == null && raw.miller_threshold == null) {
+      setMillerEnabled(false);
+    } else if (typeof raw.miller_thresh === "number") {
+      setMillerEnabled(true);
+      setMillerThresh(raw.miller_thresh);
+    } else if (typeof raw.miller_threshold === "number") {
+      setMillerEnabled(true);
+      setMillerThresh(raw.miller_threshold);
+    }
+    if (Array.isArray(raw.cesbio_libelles)) {
+      setCesbioLibelles(raw.cesbio_libelles.filter((x): x is CesbioLibelle => typeof x === "string"));
+    }
+    const faunaSrc = raw.fauna_criteria ?? raw.faune_criteria;
+    if (Array.isArray(faunaSrc)) {
+      const distBySpecies: Record<string, number> = {};
+      const species: string[] = [];
+      for (const item of faunaSrc) {
+        if (!item || typeof item !== "object") continue;
+        const row = item as { species?: string; tax_nom_val?: string; dist_m?: number; radius_m?: number };
+        const name = row.species ?? row.tax_nom_val ?? "";
+        if (!name) continue;
+        species.push(name);
+        const dist = row.dist_m ?? row.radius_m;
+        distBySpecies[name] = typeof dist === "number" ? dist : 1000;
+      }
+      setFaunaEnabled(species.length > 0);
+      setFaunaSpecies(species);
+      setFaunaDistBySpecies(distBySpecies);
+      setFaunaCombine(raw.fauna_combine === "and" ? "and" : "or");
+    }
+    if (Array.isArray(raw.flora_criteria)) {
+      const flora = raw.flora_criteria.flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const row = item as { taxon_key?: string; label?: string; dist_m?: number };
+        if (!row.taxon_key && !row.label) return [];
+        return [{
+          taxon_key: row.taxon_key || row.label || "",
+          label: row.label || row.taxon_key || "",
+          dist_m: typeof row.dist_m === "number" ? row.dist_m : 200,
+        }];
+      });
+      setFloraCriteria(flora);
+      setFloraCombine(raw.flora_combine === "and" ? "and" : "or");
+    }
+    if (raw.zone_humide_mode === "intersect" || raw.zone_humide_mode === "exclude" || raw.zone_humide_mode === "ignore") {
+      setFauneZoneHumideMode(raw.zone_humide_mode);
+    }
+    if (
+      raw.zones_humides_probables_mode === "intersect"
+      || raw.zones_humides_probables_mode === "exclude"
+      || raw.zones_humides_probables_mode === "ignore"
+    ) {
+      setZonesHumidesProbablesMode(raw.zones_humides_probables_mode);
+    }
+    if (typeof raw.min_zone_humide_ha === "number") setMinZoneHumideHa(raw.min_zone_humide_ha);
+    if (typeof raw.troncons_hydros_max_dist_m === "number") {
+      setTronconsHydroEnabled(true);
+      setTronconsHydroMaxDistM(raw.troncons_hydros_max_dist_m);
+    } else if (raw.troncons_hydros_max_dist_m === null) {
+      setTronconsHydroEnabled(false);
+    }
+    if (typeof raw.surfaces_hydros_max_dist_m === "number") {
+      setSurfacesHydroEnabled(true);
+      setSurfacesHydroMaxDistM(raw.surfaces_hydros_max_dist_m);
+    } else if (raw.surfaces_hydros_max_dist_m === null) {
+      setSurfacesHydroEnabled(false);
+    }
+    if (Array.isArray(raw.excluded_layers)) {
+      setExcludedLayers(raw.excluded_layers.filter((x): x is string => typeof x === "string"));
+    }
+    setSameBassinVersant(raw.same_bassin_versant === true);
+    setArrachageVignes(raw.arrachage_vignes === true || raw.arrachage_vignes_mode === "intersect");
+    if (Array.isArray(raw.arrachage_vignes_types)) {
+      setArrachageVignesTypes(raw.arrachage_vignes_types.filter((x): x is string => typeof x === "string"));
+    }
+    if (typeof raw.include_unites_foncieres === "boolean") {
+      setIncludeUnitesFoncieres(raw.include_unites_foncieres);
+    }
+    if (typeof raw.include_ilots_rpg === "boolean") setIncludeIlotsRpg(raw.include_ilots_rpg);
+  }
+
+  function applyPastedJson() {
+    try {
+      const parsed = JSON.parse(pasteText) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        setPasteMsg("JSON illisible.");
+        return;
+      }
+      applySnapshot(parsed as Record<string, unknown>);
+      setPasteMsg("Filtres cochés à partir du JSON.");
+    } catch {
+      setPasteMsg("JSON illisible.");
+    }
+  }
 
   useEffect(() => {
     if (!editProjectId) return;
@@ -134,66 +267,7 @@ export function CreateAoiPage({
         const lf = stored.last_filter;
         if (!lf || typeof lf !== "object") return;
         const raw = lf as Record<string, unknown>;
-        if (typeof raw.min_area_ha === "number") setMinAreaHa(raw.min_area_ha);
-        if (raw.miller_thresh == null) {
-          setMillerEnabled(false);
-        } else if (typeof raw.miller_thresh === "number") {
-          setMillerEnabled(true);
-          setMillerThresh(raw.miller_thresh);
-        }
-        if (Array.isArray(raw.cesbio_libelles)) {
-          setCesbioLibelles(raw.cesbio_libelles.filter((x): x is CesbioLibelle => typeof x === "string"));
-        }
-        if (Array.isArray(raw.fauna_criteria)) {
-          const species = raw.fauna_criteria
-            .map((item) => {
-              if (!item || typeof item !== "object") return "";
-              const row = item as { species?: string; tax_nom_val?: string };
-              return row.species ?? row.tax_nom_val ?? "";
-            })
-            .filter(Boolean);
-          setFaunaEnabled(species.length > 0);
-          setFaunaSpecies(species);
-          const first = raw.fauna_criteria[0];
-          if (first && typeof first === "object") {
-            const dist = (first as { dist_m?: number; radius_m?: number }).dist_m
-              ?? (first as { radius_m?: number }).radius_m;
-            if (typeof dist === "number") setFaunaDistM(dist);
-          }
-          setFaunaCombine(raw.fauna_combine === "and" ? "and" : "or");
-        }
-        if (raw.zone_humide_mode === "intersect" || raw.zone_humide_mode === "exclude" || raw.zone_humide_mode === "ignore") {
-          setFauneZoneHumideMode(raw.zone_humide_mode);
-        }
-        if (
-          raw.zones_humides_probables_mode === "intersect"
-          || raw.zones_humides_probables_mode === "exclude"
-          || raw.zones_humides_probables_mode === "ignore"
-        ) {
-          setZonesHumidesProbablesMode(raw.zones_humides_probables_mode);
-        }
-        if (typeof raw.min_zone_humide_ha === "number") setMinZoneHumideHa(raw.min_zone_humide_ha);
-        if (typeof raw.troncons_hydros_max_dist_m === "number") {
-          setTronconsHydroEnabled(true);
-          setTronconsHydroMaxDistM(raw.troncons_hydros_max_dist_m);
-        } else {
-          setTronconsHydroEnabled(false);
-        }
-        if (typeof raw.surfaces_hydros_max_dist_m === "number") {
-          setSurfacesHydroEnabled(true);
-          setSurfacesHydroMaxDistM(raw.surfaces_hydros_max_dist_m);
-        } else {
-          setSurfacesHydroEnabled(false);
-        }
-        if (Array.isArray(raw.excluded_layers)) {
-          setExcludedLayers(raw.excluded_layers.filter((x): x is string => typeof x === "string"));
-        }
-        setSameBassinVersant(raw.same_bassin_versant === true);
-        setArrachageVignes(raw.arrachage_vignes === true);
-        if (Array.isArray(raw.arrachage_vignes_types)) {
-          setArrachageVignesTypes(raw.arrachage_vignes_types.filter((x): x is string => typeof x === "string"));
-        }
-        setIncludeUnitesFoncieres(raw.include_unites_foncieres !== false);
+        applySnapshot(raw);
       })
       .catch(() => {
         if (!cancelled) setError("Impossible de recharger les critères de cette étude.");
@@ -217,28 +291,6 @@ export function CreateAoiPage({
             e instanceof Error ? e.message : "Impossible de charger les phases de filtrage",
           );
         }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    setHistoryLoading(true);
-    setHistoryError(null);
-    fetchProjects()
-      .then((projects) => {
-        if (cancelled) return;
-        setHistoryProjects(projects);
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setHistoryError(e instanceof Error ? e.message : "Impossible de charger les projets existants");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setHistoryLoading(false);
       });
     return () => {
       cancelled = true;
@@ -273,6 +325,7 @@ export function CreateAoiPage({
     const ws = new WebSocket(`${WS}/ws/projects/${projectId}/fetch-progress`);
     wsRef.current = ws;
 
+    const phaseFlags = { uf: false, ilots: false };
     ws.onopen = () => {};
 
     ws.onmessage = (event) => {
@@ -284,16 +337,17 @@ export function CreateAoiPage({
         if (ev === "connected" || ev === "ping") return;
         if (ev === "start") return;
 
-        if (ev === "uf_start") {
+        if (ev === "uf_start" || data.layer_key === "ilots_rpg") {
           setUfInProgress(true);
-          return;
         }
+
+        if (ev === "uf_start") return;
 
         if (ev === "uf_complete") return;
 
         if (ev === "phase:parcelles_ready") {
           setPipelineProgress((prev) => applyWsToPipelineProgress(prev, data));
-          setUfInProgress(includeUfRef.current);
+          setUfInProgress(includeUfRef.current || includeIlotsRef.current);
           if (projectId && !wentToResultsRef.current) {
             wentToResultsRef.current = true;
             onDoneRef.current(projectId);
@@ -301,10 +355,20 @@ export function CreateAoiPage({
           return;
         }
 
-        if (ev === "phase:uf_ready") {
-          setUfInProgress(false);
-          ws.close();
-          return;
+        if (ev === "phase:uf_ready") phaseFlags.uf = true;
+        if (ev === "phase:ilots_rpg_ready" || (ev === "error" && data.layer_key === "ilots_rpg")) {
+          phaseFlags.ilots = true;
+        }
+        if (phaseFlags.uf || phaseFlags.ilots) {
+          const ufFinished = !includeUfRef.current || phaseFlags.uf;
+          const ilotsFinished = !includeIlotsRef.current || phaseFlags.ilots;
+          if ((ev === "phase:uf_ready" || ev === "phase:ilots_rpg_ready" || data.layer_key === "ilots_rpg")
+            && ufFinished && ilotsFinished) {
+            setUfInProgress(false);
+            ws.close();
+            return;
+          }
+          if (ev === "phase:uf_ready" || ev === "phase:ilots_rpg_ready") return;
         }
 
         setPipelineProgress((prev) => applyWsToPipelineProgress(prev, data));
@@ -335,7 +399,7 @@ export function CreateAoiPage({
             return;
           }
           setStep("done");
-          setUfInProgress(includeUfRef.current);
+          setUfInProgress(includeUfRef.current || includeIlotsRef.current);
           if (projectId && !wentToResultsRef.current) {
             wentToResultsRef.current = true;
             onDoneRef.current(projectId);
@@ -383,9 +447,14 @@ export function CreateAoiPage({
       miller_thresh: millerEnabled ? millerThresh : null,
       cesbio_libelles: isZh ? [] : cesbioLibelles,
       fauna_criteria: faunaEnabled
-        ? faunaSpecies.map((species) => ({ species, dist_m: faunaDistM }))
+        ? faunaSpecies.map((species) => ({
+            species,
+            dist_m: faunaDistBySpecies[species] ?? 1000,
+          }))
         : [],
       fauna_combine: faunaEnabled && faunaSpecies.length > 1 ? faunaCombine : "or",
+      flora_criteria: floraCriteria,
+      flora_combine: floraCriteria.length > 1 ? floraCombine : "or",
       zone_humide_mode: isZh
         ? (minZoneHumideHa > 0 ? "intersect" as const : "ignore" as const)
         : fauneZoneHumideMode,
@@ -400,6 +469,7 @@ export function CreateAoiPage({
       arrachage_vignes: arrachageVignes,
       arrachage_vignes_types: arrachageVignes ? arrachageVignesTypes : [],
       include_unites_foncieres: includeUnitesFoncieres,
+      include_ilots_rpg: includeIlotsRpg,
     };
 
     if (editingExisting && editProjectId) {
@@ -513,7 +583,6 @@ export function CreateAoiPage({
           ? (ufParcelles.length > 0 || (!!codeInsee.trim() && !!section.trim() && !!numero.trim()))
           : !!uploadedFile)
     ));
-  const canLoadExistingProject = !!selectedExistingProjectId && step === "form";
   const parcelFormFilled =
     sourceMode === "parcelle"
       ? ufParcelles.length > 0 || (!!codeInsee.trim() && !!section.trim() && !!numero.trim())
@@ -880,6 +949,42 @@ export function CreateAoiPage({
   function renderDataStep() {
     return (
       <>
+        <div className="eco-paste">
+          <button
+            type="button"
+            className="eco-paste-toggle"
+            aria-expanded={pasteOpen}
+            disabled={isWizardLocked}
+            onClick={() => setPasteOpen((v) => !v)}
+          >
+            Coller un filtre existant
+            <span aria-hidden>{pasteOpen ? "▴" : "▾"}</span>
+          </button>
+          {pasteOpen && (
+            <div className="eco-paste-body">
+              <textarea
+                className="create-aoi-input eco-paste-json"
+                rows={4}
+                value={pasteText}
+                disabled={isWizardLocked}
+                placeholder="JSON copié depuis le compte rendu"
+                onChange={(e) => {
+                  setPasteText(e.target.value);
+                  setPasteMsg(null);
+                }}
+              />
+              <button
+                type="button"
+                className="eco-paste-apply"
+                disabled={isWizardLocked || !pasteText.trim()}
+                onClick={applyPastedJson}
+              >
+                Appliquer
+              </button>
+              {pasteMsg && <p className="eco-paste-msg">{pasteMsg}</p>}
+            </div>
+          )}
+        </div>
         {phasesLoadError && <div className="eco-aoi-error">Phases : {phasesLoadError}</div>}
         {isZh ? (
           <SelectFilterCriteriaZonesHumides
@@ -898,9 +1003,9 @@ export function CreateAoiPage({
             faunaEnabled={faunaEnabled}
             onFaunaEnabledChange={setFaunaEnabled}
             faunaSpecies={faunaSpecies}
-            onFaunaSpeciesChange={setFaunaSpecies}
-            faunaDistM={faunaDistM}
-            onFaunaDistMChange={setFaunaDistM}
+            onFaunaSpeciesChange={handleFaunaSpeciesChange}
+            faunaDistBySpecies={faunaDistBySpecies}
+            onFaunaDistChange={handleFaunaDistChange}
             faunaCombine={faunaCombine}
             onFaunaCombineChange={setFaunaCombine}
             tronconsHydroEnabled={tronconsHydroEnabled}
@@ -926,11 +1031,15 @@ export function CreateAoiPage({
             faunaEnabled={faunaEnabled}
             onFaunaEnabledChange={setFaunaEnabled}
             faunaSpecies={faunaSpecies}
-            onFaunaSpeciesChange={setFaunaSpecies}
-            faunaDistM={faunaDistM}
-            onFaunaDistMChange={setFaunaDistM}
+            onFaunaSpeciesChange={handleFaunaSpeciesChange}
+            faunaDistBySpecies={faunaDistBySpecies}
+            onFaunaDistChange={handleFaunaDistChange}
             faunaCombine={faunaCombine}
             onFaunaCombineChange={setFaunaCombine}
+            floraCriteria={floraCriteria}
+            onFloraCriteriaChange={setFloraCriteria}
+            floraCombine={floraCombine}
+            onFloraCombineChange={setFloraCombine}
             zoneHumideMode={fauneZoneHumideMode}
             onZoneHumideModeChange={setFauneZoneHumideMode}
             minZoneHumideHa={minZoneHumideHa}
@@ -979,6 +1088,17 @@ export function CreateAoiPage({
               Groupement de parcelles de personnes morales
             </label>
           </div>
+          <label className="eco-zh-mode" style={{ marginTop: 8 }}>
+            <input
+              type="checkbox"
+              checked={includeIlotsRpg}
+              onChange={(e) => setIncludeIlotsRpg(e.target.checked)}
+            />
+            Inclure les îlots agricoles (RPG)
+          </label>
+          <p className="eco-aoi-slider-caption">
+            Regroupe les parcelles cadastrales exploitées ensemble par un même agriculteur (îlots de la PAC 2025).
+          </p>
         </fieldset>
         </div>
         <button type="submit" className="eco-aoi-btn eco-aoi-btn--primary" disabled={!canCreateAoi}>
@@ -1013,7 +1133,7 @@ export function CreateAoiPage({
             </span>
           )}
         </div>
-        <PipelineProgressPanel progress={pipelineProgress} showUf={includeUnitesFoncieres} />
+        <PipelineProgressPanel progress={pipelineProgress} showUf={includeUnitesFoncieres} showIlots={includeIlotsRpg} />
         {summary && (
           <div className="eco-aoi-summary">
             <p>
@@ -1036,35 +1156,30 @@ export function CreateAoiPage({
     <div className="eco-aoi-page">
       <div className="eco-aoi-layout">
         <aside className="eco-aoi-sidebar">
-          <div className="eco-aoi-sidebar-head">
-            <h1>Recherche de foncier</h1>
-          </div>
-
-          <div className="eco-aoi-tabs" role="tablist">
+          <div className="eco-aoi-sidebar-head eco-aoi-mode">
             <button
               type="button"
-              role="tab"
-              aria-selected={projectTab === "new"}
-              className={`eco-aoi-tab${projectTab === "new" ? " eco-aoi-tab--active" : ""}`}
-              disabled={isWizardLocked}
-              onClick={() => setProjectTab("new")}
+              className={`eco-aoi-mode__tab${workMode === "recherche" ? " is-on" : ""}`}
+              onClick={() => setWorkMode("recherche")}
             >
-              Nouveau projet
+              Recherche
             </button>
             <button
               type="button"
-              role="tab"
-              aria-selected={projectTab === "existing"}
-              className={`eco-aoi-tab${projectTab === "existing" ? " eco-aoi-tab--active" : ""}`}
-              disabled={isWizardLocked}
-              onClick={() => setProjectTab("existing")}
+              className={`eco-aoi-mode__tab${workMode === "analyse" ? " is-on" : ""}`}
+              onClick={() => setWorkMode("analyse")}
             >
-              Projet existant
+              Analyse
             </button>
           </div>
 
-          {projectTab === "new" ? (
-            <div className="eco-aoi-sidebar-main">
+          <div className="eco-aoi-sidebar-main">
+            {workMode === "analyse" ? (
+              <div className="eco-aoi-body">
+                <AnalyseFoncierPanel />
+              </div>
+            ) : (
+            <>
               <nav className="eco-aoi-steps" aria-label="Étapes de création">
                 {([1, 2, 3] as const).map((n) => (
                   <button
@@ -1161,61 +1276,13 @@ export function CreateAoiPage({
                   </button>
                 )}
               </div>
-            </div>
-          ) : (
-            <div className="eco-aoi-sidebar-main">
-              <div className="eco-aoi-body">
-                <div className="eco-aoi-existing-panel">
-                  <h2>Projet existant</h2>
-                  {historyLoading ? (
-                    <div className="eco-aoi-status eco-aoi-status--muted">Chargement des projets…</div>
-                  ) : historyError ? (
-                    <div className="eco-aoi-error">{historyError}</div>
-                  ) : historyProjects.length === 0 ? (
-                    <div className="eco-aoi-status eco-aoi-status--muted">Aucun projet existant.</div>
-                  ) : (
-                    <div className="eco-aoi-row">
-                      <label className="create-aoi-label" htmlFor="existing-project">
-                        Projet
-                      </label>
-                      <select
-                        id="existing-project"
-                        className="create-aoi-input"
-                        value={selectedExistingProjectId}
-                        onChange={(e) => setSelectedExistingProjectId(e.target.value)}
-                        disabled={isWizardLocked}
-                      >
-                        <option value="">Sélectionner un projet…</option>
-                        {historyProjects.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name} · {new Date(p.created_at).toLocaleDateString("fr-FR")}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                </div>
-              </div>
-              {historyProjects.length > 0 && !historyLoading && !historyError && (
-                <div className="eco-aoi-sidebar-foot">
-                  <button
-                    type="button"
-                    className="eco-aoi-btn eco-aoi-btn--primary"
-                    disabled={!canLoadExistingProject}
-                    onClick={() => {
-                      if (selectedExistingProjectId) onDone(selectedExistingProjectId);
-                    }}
-                  >
-                    Ouvrir en filtrage
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
+            </>
+            )}
+          </div>
         </aside>
 
         <div className="eco-aoi-map-wrap">
-          {projectTab === "new" && sourceFeature && (
+          {sourceFeature && (
             <div className="eco-aoi-map-legend" aria-hidden>
               {!isZh && (
                 <div className="eco-aoi-legend-item">

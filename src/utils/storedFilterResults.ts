@@ -83,6 +83,7 @@ export function parseStoredLastFilter(raw: unknown): FilterOptions | null {
     excluded_layers: Array.isArray(lf.excluded_layers)
       ? (lf.excluded_layers as string[])
       : DEFAULT_FILTER.excluded_layers,
+    fauna_combine: lf.fauna_combine === "and" ? "and" : "or",
     faune_criteria: (
       (lf.fauna_criteria as Array<{
         species?: string;
@@ -96,5 +97,73 @@ export function parseStoredLastFilter(raw: unknown): FilterOptions | null {
       radius_m: fc.radius_m ?? fc.dist_m ?? 1000,
       sources: [],
     })),
+    same_bassin_versant: Boolean(lf.same_bassin_versant),
+    arrachage_vignes_mode: lf.arrachage_vignes ? "intersect" : DEFAULT_FILTER.arrachage_vignes_mode,
+    ebc_mode: Array.isArray(lf.excluded_layers) && lf.excluded_layers.includes("ebc")
+      ? "exclude"
+      : (lf.ebc_mode as FilterOptions["ebc_mode"]) ?? DEFAULT_FILTER.ebc_mode,
+    natura2000_mode:
+      Array.isArray(lf.excluded_layers) && lf.excluded_layers.includes("natura_2000")
+        ? "exclude"
+        : (lf.natura2000_mode as FilterOptions["natura2000_mode"]) ?? DEFAULT_FILTER.natura2000_mode,
+    znieff_mode:
+      Array.isArray(lf.excluded_layers)
+      && (lf.excluded_layers.includes("znieff_1") || lf.excluded_layers.includes("znieff_2"))
+        ? "exclude"
+        : DEFAULT_FILTER.znieff_mode,
+    ...hydroFromSnapshot(lf),
   };
+}
+
+function hydroFromSnapshot(lf: Record<string, unknown>): Pick<
+  FilterOptions,
+  "troncon_hydro_mode" | "troncon_hydro_radius_m" | "surface_hydro_mode" | "surface_hydro_radius_m"
+  | "troncons_hydros_max_dist_m" | "surfaces_hydros_max_dist_m"
+> {
+  const dTr = lf.troncons_hydros_max_dist_m;
+  const dSu = lf.surfaces_hydros_max_dist_m;
+  const tronconMode =
+    typeof dTr === "number" ? (dTr <= 0 ? "intersect" : "within_radius") : DEFAULT_FILTER.troncon_hydro_mode;
+  const surfaceMode =
+    typeof dSu === "number" ? (dSu <= 0 ? "intersect" : "within_radius") : DEFAULT_FILTER.surface_hydro_mode;
+  return {
+    troncons_hydros_max_dist_m: typeof dTr === "number" || dTr === null ? (dTr as number | null) : undefined,
+    surfaces_hydros_max_dist_m: typeof dSu === "number" || dSu === null ? (dSu as number | null) : undefined,
+    troncon_hydro_mode: tronconMode,
+    troncon_hydro_radius_m:
+      typeof dTr === "number" && dTr > 0 ? dTr : DEFAULT_FILTER.troncon_hydro_radius_m,
+    surface_hydro_mode: surfaceMode,
+    surface_hydro_radius_m:
+      typeof dSu === "number" && dSu > 0 ? dSu : DEFAULT_FILTER.surface_hydro_radius_m,
+  };
+}
+
+export const FILTER_PRESET_KIND = "kerfoncier.filter_preset.v1";
+
+export function serializeFilterPreset(options: FilterOptions): string {
+  return JSON.stringify({ kind: FILTER_PRESET_KIND, options }, null, 2);
+}
+
+/** Accepte le JSON copié, un FilterOptions brut, ou un filter_config d'entonnoir. */
+export function parseFilterPreset(raw: unknown): FilterOptions | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  if (o.kind === FILTER_PRESET_KIND && o.options && typeof o.options === "object") {
+    return { ...DEFAULT_FILTER, ...(o.options as FilterOptions) };
+  }
+  if (o.options && typeof o.options === "object" && "min_area_ha" in (o.options as object)) {
+    return { ...DEFAULT_FILTER, ...(o.options as FilterOptions) };
+  }
+  if ("faune_criteria" in o || "vegetation_hybride" in o) {
+    return { ...DEFAULT_FILTER, ...(o as FilterOptions) };
+  }
+  return parseStoredLastFilter(raw);
+}
+
+export function parseFilterPresetText(text: string): FilterOptions | null {
+  try {
+    return parseFilterPreset(JSON.parse(text));
+  } catch {
+    return null;
+  }
 }

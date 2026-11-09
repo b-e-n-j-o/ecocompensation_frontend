@@ -228,7 +228,7 @@ export function UrbanismeBlock({
             disabled={computing}
             onClick={onCompute}
           >
-            {computing ? "Calcul…" : "Calculer l’urbanisme"}
+            {computing ? "Calcul…" : "Calculer le score urba"}
           </button>
         )}
       </div>

@@ -2,7 +2,7 @@ import { isUfLayerKey } from "./layerProgress";
 
 export type StageStatus = "pending" | "running" | "done" | "error";
 export type SubStepKey = "analyse" | "sol" | "fauna";
-export type MainStageKey = "parcelles" | "uf";
+export type MainStageKey = "parcelles" | "uf" | "ilots";
 
 export type StageProgress = {
   status: StageStatus;
@@ -21,6 +21,13 @@ export const SUBSTEP_LABELS: Record<SubStepKey, string> = {
 export const MAIN_STAGE_LABELS: Record<MainStageKey, string> = {
   parcelles: "Parcelles seules",
   uf: "Groupement de parcelles de personnes morales",
+  ilots: "Îlots agricoles (RPG)",
+};
+
+const PENDING_SUBSTEPS: Record<SubStepKey, StageStatus> = {
+  analyse: "pending",
+  sol: "pending",
+  fauna: "pending",
 };
 
 const SUBSTEP_ORDER: SubStepKey[] = ["analyse", "sol", "fauna"];
@@ -31,6 +38,10 @@ export const INITIAL_PIPELINE_PROGRESS: PipelineProgress = {
     substeps: { analyse: "pending", sol: "pending", fauna: "pending" },
   },
   uf: {
+    status: "pending",
+    substeps: { analyse: "pending", sol: "pending", fauna: "pending" },
+  },
+  ilots: {
     status: "pending",
     substeps: { analyse: "pending", sol: "pending", fauna: "pending" },
   },
@@ -46,6 +57,7 @@ const ALL_SUBSTEPS_DONE: Record<SubStepKey, StageStatus> = {
 export function completedPipelineProgress(
   parcellesN?: number,
   ufN?: number,
+  ilotsN?: number,
 ): PipelineProgress {
   return {
     parcelles: {
@@ -56,7 +68,12 @@ export function completedPipelineProgress(
     uf: {
       status: ufN != null && ufN > 0 ? "done" : "pending",
       nEntities: ufN,
-      substeps: ufN != null && ufN > 0 ? { ...ALL_SUBSTEPS_DONE } : { analyse: "pending", sol: "pending", fauna: "pending" },
+      substeps: ufN != null && ufN > 0 ? { ...ALL_SUBSTEPS_DONE } : { ...PENDING_SUBSTEPS },
+    },
+    ilots: {
+      status: ilotsN != null && ilotsN > 0 ? "done" : "pending",
+      nEntities: ilotsN,
+      substeps: ilotsN != null && ilotsN > 0 ? { ...ALL_SUBSTEPS_DONE } : { ...PENDING_SUBSTEPS },
     },
   };
 }
@@ -72,6 +89,10 @@ function cloneProgress(prev: PipelineProgress): PipelineProgress {
   return {
     parcelles: cloneStage(prev.parcelles),
     uf: cloneStage(prev.uf),
+    ilots: cloneStage(prev.ilots ?? {
+      status: "pending",
+      substeps: { ...PENDING_SUBSTEPS },
+    }),
   };
 }
 
@@ -130,7 +151,11 @@ export function applyWsToPipelineProgress(
       },
       uf: {
         status: "pending",
-        substeps: { analyse: "pending", sol: "pending", fauna: "pending" },
+        substeps: { ...PENDING_SUBSTEPS },
+      },
+      ilots: {
+        status: "pending",
+        substeps: { ...PENDING_SUBSTEPS },
       },
     };
   }
@@ -237,8 +262,26 @@ export function applyWsToPipelineProgress(
     next.uf = setUfSubsteps(next.uf, { analyse: "done", sol: "done", fauna: "done" });
   }
 
+  if (layerKey === "ilots_rpg") {
+    next.ilots.status = ev === "error" ? "error" : "running";
+    if (msg.includes("végétation") || msg.includes("vegetation")) {
+      next.ilots = setUfSubsteps(next.ilots, { analyse: "done", sol: "running" });
+    } else if (msg.includes("faune")) {
+      next.ilots = setUfSubsteps(next.ilots, { analyse: "done", sol: "done", fauna: "running" });
+    } else if (ev === "progress" || ev === "running") {
+      next.ilots = setUfSubsteps(next.ilots, { analyse: "running" });
+    }
+  }
+
+  if (ev === "phase:ilots_rpg_ready") {
+    next.ilots.status = "done";
+    next.ilots = setUfSubsteps(next.ilots, { analyse: "done", sol: "done", fauna: "done" });
+  }
+
   if (ev === "error") {
-    if (isUfLayerKey(layerKey)) {
+    if (layerKey === "ilots_rpg") {
+      next.ilots.status = "error";
+    } else if (isUfLayerKey(layerKey)) {
       next.uf.status = "error";
     } else if (layerKey && layerKey !== "purge") {
       next.parcelles.status = "error";

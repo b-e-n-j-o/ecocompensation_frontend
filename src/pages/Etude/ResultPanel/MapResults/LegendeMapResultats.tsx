@@ -23,6 +23,12 @@ interface LegendeMapResultatsProps {
     onToggle: () => void;
     footnote?: ReactNode;
   };
+  extraLayers?: Array<{
+    label: string;
+    visible: boolean;
+    onToggle: () => void;
+    color?: string;
+  }>;
   bulkLoading?: boolean;
   onToggleValue?: (layerKey: string, value: string) => void;
   /** Sans cadre ni titre : contenu seul, à placer dans un onglet. */
@@ -34,6 +40,7 @@ export function LegendeMapResultats({
   layersState,
   onToggle,
   primaryLayer,
+  extraLayers = [],
   bulkLoading = false,
   onToggleValue,
   embedded = false,
@@ -90,6 +97,21 @@ export function LegendeMapResultats({
             ) : null}
           </li>
         )}
+        {extraLayers.map((layer) => (
+          <li key={layer.label}>
+            <button
+              type="button"
+              className={`map-legende__row${layer.visible ? " is-on" : " is-off"}`}
+              onClick={layer.onToggle}
+            >
+              <span
+                className={`map-legende__dot${layer.visible ? " is-on" : ""}`}
+                style={{ ["--dot-color" as string]: layer.color ?? "#2f7d5b" }}
+              />
+              <span className="map-legende__label">{layer.label}</span>
+            </button>
+          </li>
+        ))}
         {layers.map((def) => {
           const st = layersState[def.key];
           if (!st) return null;

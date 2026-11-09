@@ -3,7 +3,10 @@
  * ─────────────────────
  * Carte MapLibre satellite affichant :
  *   1. Le foncier source (emprise projet)
- *   2. Les sous-ensembles UF colorés par score écologique (score_ratio)
+ *   2. L'emprise de chaque UF = ses parcelles retenues (couleur = meilleur score de l'UF) ;
+ *      pour l'UF active, parcelles colorées par présence dans les combinaisons (noyau foncé)
+ *   2bis. Les sous-ensembles (combinaisons) : masqués par défaut, sauf la combinaison survolée /
+ *      sélectionnée dans l'onglet « Combinaisons » ; bouton « Toutes les combinaisons » pour tout afficher
  *   3. Les couches thématiques de résultats (lazy, même registry que ParcellesMap)
  * Liaison table ↔ carte via focusSubsetId / onSubsetClick (même modèle que ParcellesMap).
  */
@@ -25,6 +28,8 @@ import {
   type ThematicLayerState,
 } from "./cartoCouchesRegistry";
 import { LegendeMapResultats } from "./LegendeMapResultats";
+import { BaseMapToggle } from "./BaseMapToggle";
+import { RESULTS_BASEMAP_STYLE, applyBaseMapMode, type BaseMapMode } from "./resultsBasemap";
 import {
   createMapHoverPopup,
   hideMapHoverPopup,
@@ -43,27 +48,7 @@ function scoreNormColorExpression(): unknown[] {
   ];
 }
 
-const BASE_STYLE: maplibregl.StyleSpecification = {
-  version: 8,
-  sources: {
-    "esri-satellite": {
-      type: "raster",
-      tiles: ["https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
-      tileSize: 256,
-      attribution: "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
-    },
-    "osm-standard": {
-      type: "raster",
-      tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-      tileSize: 256,
-      attribution: "© OpenStreetMap contributors",
-    },
-  },
-  layers: [
-    { id: "basemap-satellite", type: "raster", source: "esri-satellite", layout: { visibility: "visible" } },
-    { id: "basemap-plan", type: "raster", source: "osm-standard", layout: { visibility: "none" } },
-  ],
-};
+const BASE_STYLE = RESULTS_BASEMAP_STYLE;
 
 function emptyFC(): FeatureCollection { return { type: "FeatureCollection", features: [] }; }
 function round4(n: number) { return Math.round(n * 10000) / 10000; }
@@ -130,6 +115,60 @@ function ensureHighlightOutlineLayer(m: maplibregl.Map) {
 
 const SUBSET_HIT_LAYERS = ["uf-subsets-fill"];
 
+const PARC = {
+  src: "uf-parcelles",
+  fill: "uf-parcelles-fill",
+  line: "uf-parcelles-line",
+  focus: "uf-parcelles-focus-fill",
+  hover: "uf-parcelles-hover",
+} as const;
+
+/** Présence dans les combinaisons : occasionnelle < 50 % ≤ fréquente < 100 % = noyau. */
+const PRESENCE_COLORS = { occasionnelle: "#bfdbfe", frequente: "#60a5fa", noyau: "#1e3a8a" };
+
+function presenceColorExpression(): maplibregl.ExpressionSpecification {
+  return [
+    "step", ["coalesce", ["get", "presence"], 0],
+    PRESENCE_COLORS.occasionnelle,
+    0.5, PRESENCE_COLORS.frequente,
+    0.999, PRESENCE_COLORS.noyau,
+  ] as maplibregl.ExpressionSpecification;
+}
+
+function parcellesFillOpacityExpr(activeUfId: string | null): maplibregl.ExpressionSpecification {
+  if (activeUfId) {
+    return ["case", ["==", ["get", "uf_id"], activeUfId], 0, 0.15] as maplibregl.ExpressionSpecification;
+  }
+  return 0.4 as unknown as maplibregl.ExpressionSpecification;
+}
+
+function ufFilter(ufId: string | null): maplibregl.FilterSpecification {
+  return ["==", ["get", "uf_id"], ufId ?? "___none___"];
+}
+
+/** Sous-ensembles masqués : seule la combinaison survolée / sélectionnée reste visible. */
+function subsetLayerFilter(showAll: boolean, subsetId: string | null): maplibregl.FilterSpecification | null {
+  if (showAll) return null;
+  return ["==", ["get", "subset_id"], subsetId ?? "___none___"];
+}
+
+function parcellePopupHtml(p: Record<string, unknown>): string {
+  const row = (k: string, v: string) =>
+    `<tr><th style="color:#64748b;padding-right:8px;font-weight:500;white-space:nowrap;text-align:left">${k}</th><td>${v}</td></tr>`;
+  const surface = toFiniteNumber(p.surface_ha);
+  const nb = toFiniteNumber(p.nb_combinaisons);
+  const tot = toFiniteNumber(p.nb_combinaisons_uf);
+  return (
+    `<div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px">Parcelle de l'UF #${p.uf_rang ?? "?"}</div>` +
+    `<table style="font-size:12px;border-collapse:collapse">` +
+    row("IDU", `<span class="mono">${p.idu ?? "—"}</span>`) +
+    row("Surface", surface != null ? `${surface.toFixed(2)} ha` : "—") +
+    row("Présence", nb != null && tot != null ? `${nb}/${tot} combinaisons${p.noyau === true ? " · noyau" : ""}` : "—") +
+    row("Pool parcelles", p.in_pool === true ? "oui" : "non") +
+    `</table>`
+  );
+}
+
 function pickSubsetAtPoint(m: maplibregl.Map, point: maplibregl.PointLike): Record<string, unknown> | null {
   try {
     if (!m.getLayer("uf-subsets-fill")) return null;
@@ -165,8 +204,14 @@ interface SousEnsemblesMapProps {
   hoverSubsetId?: string | null;
   hoverUfId?: string | null;
   onSubsetClick?: (subsetId: string) => void;
+  /** GET /geojson/uf-parcelles : parcelles retenues de chaque UF (vue par défaut). */
+  parcellesGeojson?: FeatureCollection<Geometry, Record<string, unknown>> | null;
+  /** Clic sur l'emprise d'une UF. */
+  onUfClick?: (ufId: string) => void;
+  /** Parcelle survolée (tableau ou carte), synchronisée avec UnitesFoncieresTable. */
+  hoverParcelleIdu?: string | null;
+  onParcelleHover?: (idu: string | null) => void;
 }
-type BaseMapMode = "satellite" | "plan";
 
 // ─── Composant ────────────────────────────────────────────────────────────────
 
@@ -183,6 +228,10 @@ export function SousEnsemblesMap({
   hoverSubsetId = null,
   hoverUfId = null,
   onSubsetClick,
+  parcellesGeojson = null,
+  onUfClick,
+  hoverParcelleIdu = null,
+  onParcelleHover,
 }: SousEnsemblesMapProps) {
   const activeLayers = useMemo(
     () =>
@@ -200,11 +249,20 @@ export function SousEnsemblesMap({
   const subsetPopupRef = useRef<maplibregl.Popup | null>(null);
   const subsetHandlersBoundRef = useRef(false);
   const didInitialFitRef = useRef(false);
+  const didParcelsFitRef = useRef(false);
+  const parcHandlersBoundRef = useRef(false);
+  const onUfClickRef = useRef(onUfClick);
+  onUfClickRef.current = onUfClick;
+  const onParcHoverRef = useRef(onParcelleHover);
+  onParcHoverRef.current = onParcelleHover;
 
   const [thematicState, setThematicState] = useState<Record<string, ThematicLayerState>>(() =>
     buildInitialThematic(thematicLayerKeys),
   );
-  const [subsetsVisible, setSubsetsVisible] = useState(true);
+  const [subsetsVisible, setSubsetsVisible] = useState(false);
+  const activeUfId = hoverUfId ?? focusUfId;
+  const activeSubsetId = hoverSubsetId ?? focusSubsetId;
+  const showAllSubsets = subsetsVisible || !parcellesGeojson?.features?.length;
   const [baseMapMode, setBaseMapMode] = useState<BaseMapMode>("satellite");
 
   // Reset au changement de projet
@@ -212,6 +270,8 @@ export function SousEnsemblesMap({
     setThematicState(buildInitialThematic(thematicLayerKeys));
     fetchedRef.current = new Set();
     didInitialFitRef.current = false;
+    didParcelsFitRef.current = false;
+    setSubsetsVisible(false);
   }, [projectId, thematicLayerKeys]);
 
   useEffect(() => {
@@ -295,6 +355,7 @@ export function SousEnsemblesMap({
       map.current?.remove();
       map.current = null;
       subsetHandlersBoundRef.current = false;
+      parcHandlersBoundRef.current = false;
     };
   }, []);
 
@@ -327,8 +388,10 @@ export function SousEnsemblesMap({
         } catch { /* layers pas encore montées */ }
       } else {
         map.current.addSource("uf-subsets", { type: "geojson", data: geojsonWithScores as unknown as FeatureCollection });
+        const subsetFilter = subsetLayerFilter(showAllSubsets, activeSubsetId);
         map.current.addLayer({
           id: "uf-subsets-fill", type: "fill", source: "uf-subsets",
+          ...(subsetFilter ? { filter: subsetFilter } : {}),
           paint: {
             "fill-color": colorExpr,
             "fill-opacity": fillOpacityExpr,
@@ -336,6 +399,7 @@ export function SousEnsemblesMap({
         });
         map.current.addLayer({
           id: "uf-subsets-outline", type: "line", source: "uf-subsets",
+          ...(subsetFilter ? { filter: subsetFilter } : {}),
           paint: {
             "line-color": colorExpr,
             "line-width": 2,
@@ -442,7 +506,7 @@ export function SousEnsemblesMap({
         subsetHandlersBoundRef.current = true;
       }
 
-      if (!didInitialFitRef.current) {
+      if (!didInitialFitRef.current && !parcellesGeojson?.features?.length) {
         const bounds = new maplibregl.LngLatBounds();
         geojsonWithScores.features.forEach((f: GeoJSON.Feature) => extendBoundsFromFeature(bounds, f));
         if (!bounds.isEmpty()) {
@@ -453,7 +517,7 @@ export function SousEnsemblesMap({
     };
 
     if (map.current.isStyleLoaded()) apply(); else map.current.once("load", apply);
-  }, [geojsonWithScores, foncierGeojson, focusUfId]);
+  }, [geojsonWithScores, foncierGeojson, focusUfId, showAllSubsets, activeSubsetId, parcellesGeojson]);
 
   // ── Opacité UF focus / hover (sans recréer les layers) ─────────────────────
   useEffect(() => {
@@ -472,9 +536,9 @@ export function SousEnsemblesMap({
     if (!map.current || !map.current.isStyleLoaded()) return;
     const filter = highlightFilterForUf({
       hoverSubsetId,
-      hoverUfId,
+      hoverUfId: subsetsVisible ? hoverUfId : null,
       focusSubsetId,
-      focusUfId,
+      focusUfId: subsetsVisible ? focusUfId : null,
     });
     try {
       ensureHighlightOutlineLayer(map.current);
@@ -485,7 +549,91 @@ export function SousEnsemblesMap({
         map.current.setFilter("uf-subsets-highlight-outline", filter);
       }
     } catch { /* layers pas encore montées */ }
-  }, [hoverSubsetId, hoverUfId, focusSubsetId, focusUfId, geojsonWithScores]);
+  }, [hoverSubsetId, hoverUfId, focusSubsetId, focusUfId, geojsonWithScores, subsetsVisible]);
+
+  useEffect(() => {
+    const m = map.current;
+    if (!m?.getLayer("uf-subsets-fill")) return;
+    const f = subsetLayerFilter(showAllSubsets, activeSubsetId);
+    m.setFilter("uf-subsets-fill", f);
+    m.setFilter("uf-subsets-outline", f);
+  }, [showAllSubsets, activeSubsetId, geojsonWithScores]);
+
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !parcellesGeojson) return;
+    const apply = () => {
+      const src = m.getSource(PARC.src) as maplibregl.GeoJSONSource | undefined;
+      if (src) {
+        src.setData(parcellesGeojson as FeatureCollection);
+      } else {
+        m.addSource(PARC.src, { type: "geojson", data: parcellesGeojson as FeatureCollection });
+        const before = m.getLayer("uf-subsets-fill") ? "uf-subsets-fill" : undefined;
+        m.addLayer({
+          id: PARC.fill, type: "fill", source: PARC.src,
+          paint: {
+            "fill-color": scoreNormColorExpression() as maplibregl.ExpressionSpecification,
+            "fill-opacity": parcellesFillOpacityExpr(activeUfId),
+          },
+        }, before);
+        m.addLayer({
+          id: PARC.focus, type: "fill", source: PARC.src, filter: ufFilter(activeUfId),
+          paint: { "fill-color": presenceColorExpression(), "fill-opacity": 0.7 },
+        }, before);
+        m.addLayer({
+          id: PARC.line, type: "line", source: PARC.src,
+          paint: { "line-color": "#ffffff", "line-width": 0.8, "line-opacity": 0.85 },
+        }, before);
+        m.addLayer({
+          id: PARC.hover, type: "line", source: PARC.src,
+          filter: ["==", ["get", "idu"], "___none___"],
+          paint: { "line-color": "#facc15", "line-width": 3 },
+        }, before);
+      }
+
+      if (!parcHandlersBoundRef.current && m.getLayer(PARC.fill)) {
+        const popup = createMapHoverPopup("320px");
+        m.on("mousemove", PARC.focus, (e) => {
+          const props = (e.features?.[0]?.properties ?? {}) as Record<string, unknown>;
+          showMapHoverPopup(popup, m, parcellePopupHtml(props));
+          m.getCanvas().style.cursor = "pointer";
+          onParcHoverRef.current?.(props.idu != null ? String(props.idu) : null);
+        });
+        m.on("mouseleave", PARC.focus, () => {
+          hideMapHoverPopup(popup);
+          m.getCanvas().style.removeProperty("cursor");
+          onParcHoverRef.current?.(null);
+        });
+        m.on("mousemove", PARC.fill, () => { m.getCanvas().style.cursor = "pointer"; });
+        m.on("mouseleave", PARC.fill, () => { m.getCanvas().style.removeProperty("cursor"); });
+        m.on("click", PARC.fill, (e) => {
+          if (m.getLayer("uf-subsets-fill") && m.queryRenderedFeatures(e.point, { layers: ["uf-subsets-fill"] }).length) return;
+          const ufId = e.features?.[0]?.properties?.uf_id;
+          if (ufId != null) onUfClickRef.current?.(String(ufId));
+        });
+        parcHandlersBoundRef.current = true;
+      }
+
+      if (!didParcelsFitRef.current && parcellesGeojson.features.length) {
+        const bounds = new maplibregl.LngLatBounds();
+        parcellesGeojson.features.forEach((f: GeoJSON.Feature) => extendBoundsFromFeature(bounds, f));
+        if (!bounds.isEmpty()) {
+          m.fitBounds(bounds, { padding: 50 });
+          didParcelsFitRef.current = true;
+          didInitialFitRef.current = true;
+        }
+      }
+    };
+    if (m.isStyleLoaded()) apply(); else m.once("load", apply);
+  }, [parcellesGeojson, activeUfId]);
+
+  useEffect(() => {
+    const m = map.current;
+    if (!m?.getLayer(PARC.fill)) return;
+    m.setPaintProperty(PARC.fill, "fill-opacity", parcellesFillOpacityExpr(activeUfId));
+    m.setFilter(PARC.focus, ufFilter(activeUfId));
+    m.setFilter(PARC.hover, ["==", ["get", "idu"], hoverParcelleIdu ?? "___none___"]);
+  }, [activeUfId, hoverParcelleIdu, parcellesGeojson]);
 
   useEffect(() => {
     if (!map.current || !geojsonWithScores?.features?.length) return;
@@ -504,42 +652,21 @@ export function SousEnsemblesMap({
 
     if (focusUfId) {
       const bounds = new maplibregl.LngLatBounds();
-      geojsonWithScores.features
-        .filter((f) => String(f.properties?.uf_id ?? "") === focusUfId)
-        .forEach((f) => extendBoundsFromFeature(bounds, f));
+      const parcelFeatures = (parcellesGeojson?.features ?? []).filter(
+        (f) => String(f.properties?.uf_id ?? "") === focusUfId,
+      );
+      const features = parcelFeatures.length
+        ? parcelFeatures
+        : geojsonWithScores.features.filter((f) => String(f.properties?.uf_id ?? "") === focusUfId);
+      features.forEach((f) => extendBoundsFromFeature(bounds, f));
       if (bounds.isEmpty()) return;
       map.current.fitBounds(bounds, { padding: 60, maxZoom: 16, duration: 650 });
     }
-  }, [focusSubsetId, focusUfId, geojsonWithScores]);
+  }, [focusSubsetId, focusUfId, geojsonWithScores, parcellesGeojson]);
 
-  // ── Fond de carte (satellite/plan) ────────────────────────────────────────
   useEffect(() => {
-    if (!map.current || !map.current.isStyleLoaded()) return;
-    const satVis = baseMapMode === "satellite" ? "visible" : "none";
-    const planVis = baseMapMode === "plan" ? "visible" : "none";
-    try {
-      map.current.setLayoutProperty("basemap-satellite", "visibility", satVis);
-      map.current.setLayoutProperty("basemap-plan", "visibility", planVis);
-    } catch {
-      /* layers pas encore montées */
-    }
+    applyBaseMapMode(map.current, baseMapMode);
   }, [baseMapMode]);
-
-  // ── Visibilité sous-ensembles ───────────────────────────────────────────────
-  useEffect(() => {
-    if (!map.current || !map.current.isStyleLoaded()) return;
-    const vis = subsetsVisible ? "visible" : "none";
-    try {
-      map.current.setLayoutProperty("uf-subsets-fill", "visibility", vis);
-      map.current.setLayoutProperty("uf-subsets-outline", "visibility", vis);
-      if (map.current.getLayer("uf-subsets-highlight-fill")) {
-        map.current.setLayoutProperty("uf-subsets-highlight-fill", "visibility", vis);
-      }
-      if (map.current.getLayer("uf-subsets-highlight-outline")) {
-        map.current.setLayoutProperty("uf-subsets-highlight-outline", "visibility", vis);
-      }
-    } catch { /* layers pas encore montées */ }
-  }, [subsetsVisible]);
 
   // ── Sync couches thématiques ──────────────────────────────────────────────
   useEffect(() => {
@@ -626,75 +753,60 @@ export function SousEnsemblesMap({
     });
   }, []);
 
-  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
-      <div
+      <BaseMapToggle
+        mode={baseMapMode}
+        onToggle={() => setBaseMapMode((m) => (m === "satellite" ? "plan" : "satellite"))}
+      />
+      <button
+        type="button"
+        onClick={() => setSubsetsVisible((v) => !v)}
         style={{
           position: "absolute",
           top: 10,
-          left: 10,
+          left: 54,
           zIndex: 5,
-          display: "flex",
-          gap: 6,
-          background: "rgba(15, 23, 42, 0.78)",
+          height: 36,
+          padding: "0 10px",
           border: "1px solid #334155",
-          borderRadius: 6,
-          padding: 4,
+          background: subsetsVisible ? "#1e3a8a" : "rgba(15, 23, 42, 0.85)",
+          color: "#e2e8f0",
+          borderRadius: 8,
+          fontSize: 11,
+          cursor: "pointer",
         }}
+        title={subsetsVisible
+          ? "Masquer les combinaisons (seule la combinaison sélectionnée reste affichée)"
+          : "Afficher toutes les combinaisons de parcelles calculées"}
       >
-        <button
-          type="button"
-          onClick={() => setBaseMapMode("satellite")}
+        Toutes les combinaisons
+      </button>
+      {parcellesGeojson && activeUfId && (
+        <div
           style={{
-            border: "1px solid #475569",
-            background: baseMapMode === "satellite" ? "#1d4ed8" : "#1f2937",
-            color: "#e2e8f0",
-            borderRadius: 4,
-            padding: "4px 8px",
-            fontSize: 11,
-            cursor: "pointer",
+            position: "absolute", top: 54, left: 10, zIndex: 5,
+            background: "rgba(255,255,255,0.94)", border: "1px solid #cbd5e1", borderRadius: 6,
+            padding: "6px 8px", fontSize: 11, color: "#0f172a", display: "grid", gap: 3,
           }}
         >
-          Satellite
-        </button>
-        <button
-          type="button"
-          onClick={() => setBaseMapMode("plan")}
-          style={{
-            border: "1px solid #475569",
-            background: baseMapMode === "plan" ? "#1d4ed8" : "#1f2937",
-            color: "#e2e8f0",
-            borderRadius: 4,
-            padding: "4px 8px",
-            fontSize: 11,
-            cursor: "pointer",
-          }}
-        >
-          Plan
-        </button>
-        <button
-          type="button"
-          onClick={() => setSubsetsVisible((v) => !v)}
-          style={{
-            border: "1px solid #475569",
-            background: subsetsVisible ? "#1d4ed8" : "#1f2937",
-            color: "#e2e8f0",
-            borderRadius: 4,
-            padding: "4px 8px",
-            fontSize: 11,
-            cursor: "pointer",
-          }}
-          title={subsetsVisible ? "Masquer les sous-ensembles UF" : "Afficher les sous-ensembles UF"}
-        >
-          Sous-ensembles
-        </button>
-      </div>
+          <strong style={{ fontSize: 11 }}>Parcelles de l&apos;UF</strong>
+          {([
+            [PRESENCE_COLORS.noyau, "Noyau (toutes les combinaisons)"],
+            [PRESENCE_COLORS.frequente, "Fréquente (≥ 50 %)"],
+            [PRESENCE_COLORS.occasionnelle, "Occasionnelle (< 50 %)"],
+          ] as const).map(([c, l]) => (
+            <span key={l} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ width: 10, height: 10, background: c, borderRadius: 2 }} />{l}
+            </span>
+          ))}
+        </div>
+      )}
       <div
         ref={mapContainer}
         className="parcelles-map"
         style={{ width: "100%", height: "100%" }}
-        title="Sous-ensembles UF — colorés par score écologique"
+        title="Unités foncières — parcelles colorées par score, détail de présence sur l'UF active"
       />
       <LegendeMapResultats
         layers={activeLayers}

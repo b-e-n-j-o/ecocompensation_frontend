@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { AppDialog } from "./ResultPanel/AppDialog";
@@ -21,7 +21,10 @@ import {
   fetchProjectContextGeometry,
   fetchFoncierGeojson,
   fetchUfSubsetsGeojson,
+  fetchUfParcellesGeojson,
   fetchUfResults,
+  fetchIlotsRpgResults,
+  fetchIlotsRpgGeojson,
   fetchSousEnsemblesStatus,
   prefetchAllResultsThematicLayers,
   fetchPoolIndesirables,
@@ -32,11 +35,11 @@ import {
   fetchPoolRunsList,
   fetchProjectStoredResults,
   fetchProjects,
-  deleteProject,
   startPoolRunDurete,
   fetchPoolRunDureteJob,
   computePoolRunUrbanisme,
   addParcellesToPoolRun,
+  integrateManualParcelles,
   startUfSearch,
 } from "../../api";
 import type { ProjectSummary } from "../../api";
@@ -66,15 +69,30 @@ import { normalizeStudyType } from "../../types/studyTypes";
 import "./ResultPanel/results.css";
 import "./ResultPanel/results-page.css";
 import type { FeatureCollection, GeoJsonProperties, Geometry } from "geojson";
+import { IlotsRpgMap, IlotsRpgTable, type IlotsRpgGeojson, type IlotsRpgResponse } from "./ResultPanel/ilotsRpg";
 
-/** Onglets principaux : Parcelles | Unités foncières */
-type MainResultsTab = "parcelles" | "unites" | "combine" | "filtrage";
+/** Onglets principaux : Parcelles | Unités foncières | Îlots agricoles */
+type MainResultsTab = "parcelles" | "unites" | "ilots" | "combine" | "filtrage";
 /** Sous-vues : tableau | carte */
 type ResultsSubView = "classement" | "classement_combine" | "carte";
 type FilterLoadingStage = "idle" | "filtering" | "profiling" | "metrics_loading";
 
 /** Présence de lignes dans ecocompensation_results.sous_ensembles pour le projet (filtre UF possible). */
 type SousEnsemblesStatus = "idle" | "loading" | "yes" | "no";
+
+async function loadUfMapGeojson(projectId: string): Promise<{
+  subsets: FeatureCollection<Geometry, GeoJsonProperties> | null;
+  parcelles: FeatureCollection<Geometry, GeoJsonProperties> | null;
+}> {
+  const [subsets, parcelles] = await Promise.allSettled([
+    fetchUfSubsetsGeojson(projectId),
+    fetchUfParcellesGeojson(projectId),
+  ]);
+  return {
+    subsets: subsets.status === "fulfilled" ? subsets.value : null,
+    parcelles: parcelles.status === "fulfilled" ? parcelles.value : null,
+  };
+}
 
 export interface EtudeResultatsProps {
   fixedProjectId?: string | null;
@@ -83,6 +101,11 @@ export interface EtudeResultatsProps {
   /** Appelé quand l’utilisateur change de projet depuis le sélecteur alors qu’on affiche un run (`initialRunId`). */
   onProjectChangeNavigate?: (newProjectId: string) => void;
   onNavigateToCreate?: () => void;
+}
+
+function isManualSas(rows: ParcelPoolMetricRow[] | undefined): boolean {
+  const origin = rows?.find((r) => r.metric_key === "pool_origin")?.metric_value_jsonb;
+  return origin?.source === "manual_idu" && origin?.in_classement !== true;
 }
 
 /**
@@ -159,13 +182,6 @@ function applyPoolIndesirableToParcellesGeojson(
   };
 }
 
-function formatStudyWhen(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
-}
-
 const OPEN_STUDY_MIN_MS = 450;
 
 function PoolOpenLoading({ label = "Chargement du pool…" }: { label?: string }) {
@@ -173,182 +189,6 @@ function PoolOpenLoading({ label = "Chargement du pool…" }: { label?: string }
     <div className="etude-open-loading" role="status" aria-live="polite">
       <span className="etude-open-loading__spinner" aria-hidden />
       <span className="etude-open-loading__label">{label}</span>
-    </div>
-  );
-}
-
-function EtudesHomeTable({
-  poolRuns,
-  projects,
-  onOpen,
-  onNewStudy,
-  onDeleted,
-  projectsLoaded = true,
-}: {
-  poolRuns: PoolRunListItem[];
-  projects: ProjectSummary[];
-  onOpen: (projectId: string, poolId: string) => void;
-  onNewStudy?: () => void;
-  onDeleted: (projectId: string) => void;
-  projectsLoaded?: boolean;
-}) {
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [openingId, setOpeningId] = useState<string | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<{ projectId: string; name: string } | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const knownProjectIds = useMemo(() => new Set(projects.map((p) => p.id)), [projects]);
-  const rows = useMemo(
-    () =>
-      [...poolRuns]
-        .filter((run) => knownProjectIds.has(run.project_id))
-        .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))),
-    [poolRuns, knownProjectIds],
-  );
-
-  function askDelete(e: MouseEvent, projectId: string, name: string) {
-    e.stopPropagation();
-    if (deletingId) return;
-    setDeleteError(null);
-    setPendingDelete({ projectId, name });
-  }
-
-  async function confirmDelete() {
-    if (!pendingDelete || deletingId) return;
-    const { projectId } = pendingDelete;
-    setDeletingId(projectId);
-    setDeleteError(null);
-    try {
-      await deleteProject(projectId);
-      onDeleted(projectId);
-      setPendingDelete(null);
-    } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : "Erreur lors de la suppression");
-    } finally {
-      setDeletingId(null);
-    }
-  }
-
-  if (!projectsLoaded) {
-    return <PoolOpenLoading label="Chargement des études…" />;
-  }
-
-  if (rows.length === 0) {
-    return (
-      <div className="empty-state">
-        <span className="empty-icon">⬡</span>
-        <span className="empty-text">Aucune étude enregistrée</span>
-        {onNewStudy && (
-          <button
-            type="button"
-            className="results-toolbar__btn results-toolbar__btn--primary"
-            onClick={onNewStudy}
-          >
-            Nouvelle étude
-          </button>
-        )}
-      </div>
-    );
-  }
-
-  function openStudy(projectId: string, poolId: string) {
-    if (openingId) return;
-    setOpeningId(poolId);
-    onOpen(projectId, poolId);
-  }
-
-  return (
-    <div className={`etudes-home${openingId ? " etudes-home--opening" : ""}`}>
-      {openingId && <PoolOpenLoading />}
-      <table className="etudes-home__table">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Nom</th>
-            <th>Parcelles dans le pool</th>
-            <th className="etudes-home__col-actions">
-              <span className="sr-only">Actions</span>
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((run) => {
-            const project = projects.find((p) => p.id === run.project_id);
-            const name = project?.name?.trim() || project?.id.slice(0, 8) || "Étude";
-            const isDeleting = deletingId === run.project_id;
-            return (
-              <tr
-                key={run.id}
-                tabIndex={0}
-                onClick={() => openStudy(run.project_id, run.id)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    openStudy(run.project_id, run.id);
-                  }
-                }}
-              >
-                <td>{formatStudyWhen(run.created_at)}</td>
-                <td>{name}</td>
-                <td>{run.total_count.toLocaleString("fr-FR")}</td>
-                <td className="etudes-home__col-actions">
-                  <button
-                    type="button"
-                    className="etudes-home__delete"
-                    title={`Supprimer « ${name} »`}
-                    aria-label={`Supprimer l’étude ${name}`}
-                    disabled={isDeleting}
-                    onClick={(e) => askDelete(e, run.project_id, name)}
-                  >
-                    ×
-                  </button>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      {pendingDelete && (
-        <div
-          className="etudes-home-modal-backdrop"
-          role="presentation"
-          onClick={() => {
-            if (!deletingId) setPendingDelete(null);
-          }}
-        >
-          <div
-            className="etudes-home-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="etude-delete-title"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 id="etude-delete-title">Supprimer cette étude ?</h2>
-            <p>
-              L’étude « {pendingDelete.name} » et toutes les données associées (résultats, AOI,
-              foncier, pools) seront définitivement supprimées.
-            </p>
-            {deleteError && <p className="etudes-home-modal__error">{deleteError}</p>}
-            <div className="etudes-home-modal__actions">
-              <button
-                type="button"
-                className="results-toolbar__btn"
-                disabled={!!deletingId}
-                onClick={() => setPendingDelete(null)}
-              >
-                Annuler
-              </button>
-              <button
-                type="button"
-                className="etudes-home-modal__confirm"
-                disabled={!!deletingId}
-                onClick={() => void confirmDelete()}
-              >
-                {deletingId ? "Suppression…" : "Supprimer"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -371,13 +211,20 @@ export function EtudeResultats({
   const [projectId, setProjectId] = useState<string | null>(fixedProjectId);
   const [poolRuns, setPoolRuns] = useState<PoolRunListItem[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [loading, setLoading] = useState(() => Boolean(initialRunId));
   const [openStudyLoading, setOpenStudyLoading] = useState(() => Boolean(initialRunId));
   const [openStudyError, setOpenStudyError] = useState(false);
   const [filterLoadingStage, setFilterLoadingStage] = useState<FilterLoadingStage>("idle");
   const [ufResults, setUfResults] = useState<UfFilterResponse | null>(null);
   const [ufGeojson, setUfGeojson] = useState<FeatureCollection<Geometry, GeoJsonProperties> | null>(null);
+  const [ufParcellesGeojson, setUfParcellesGeojson] = useState<FeatureCollection<Geometry, GeoJsonProperties> | null>(null);
+  const [ufScrollTarget, setUfScrollTarget] = useState<string | null>(null);
+  const [ilotsResults, setIlotsResults] = useState<IlotsRpgResponse | null>(null);
+  const [ilotsGeojson, setIlotsGeojson] = useState<IlotsRpgGeojson | null>(null);
+  const [linkedIlot, setLinkedIlot] = useState<string | null>(null);
+  const [hoverIlot, setHoverIlot] = useState<string | null>(null);
+  const [hoverParcelleIdu, setHoverParcelleIdu] = useState<string | null>(null);
+  const [ilotScrollNonce, setIlotScrollNonce] = useState(0);
   const [results, setResults] = useState<FilterResponse | null>(null);
   /** Config figée du pool affiché (pas le panneau de saisie courant). */
   const [appliedFilterConfig, setAppliedFilterConfig] = useState<FilterConfig | null>(null);
@@ -418,7 +265,7 @@ export function EtudeResultats({
   const [surfaceMaxHa, setSurfaceMaxHa] = useState<number>(0);
   const [sousEnsemblesStatus, setSousEnsemblesStatus] = useState<SousEnsemblesStatus>("idle");
   const [contextGeom, setContextGeom] = useState<Awaited<ReturnType<typeof fetchProjectContextGeometry>> | null>(null);
-  const { connected, progress, parcellesReady, ufReady, pipelineProgress } =
+  const { connected, progress, parcellesReady, ufReady, ilotsRpgReady, ilotsRpgError, pipelineProgress } =
     useFetchProgress(projectId);
   const projectIdRef = useRef<string | null>(null);
   const thematicPrefetchSeqRef = useRef(0);
@@ -537,6 +384,26 @@ export function EtudeResultats({
   }, [ufReady]);
 
   useEffect(() => {
+    if (!projectId || !ilotsRpgReady) return;
+    let cancelled = false;
+    void fetchIlotsRpgResults(projectId)
+      .then(async (res) => {
+        if (cancelled) return;
+        setIlotsResults(res);
+        try {
+          const geo = await fetchIlotsRpgGeojson(projectId);
+          if (!cancelled) setIlotsGeojson(geo);
+        } catch {
+          if (!cancelled) setIlotsGeojson(null);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, ilotsRpgReady]);
+
+  useEffect(() => {
     if (!projectId || !ufReady) return;
 
     let cancelled = false;
@@ -564,11 +431,10 @@ export function EtudeResultats({
           (u) => (u.sous_ensembles ?? []).length > 0,
         );
         if (hasSubsets) {
-          try {
-            const ufGeo = await fetchUfSubsetsGeojson(projectId);
-            if (!cancelled) setUfGeojson(ufGeo);
-          } catch {
-            if (!cancelled) setUfGeojson(null);
+          const ufGeo = await loadUfMapGeojson(projectId);
+          if (!cancelled) {
+            setUfGeojson(ufGeo.subsets);
+            setUfParcellesGeojson(ufGeo.parcelles);
           }
         }
       })
@@ -592,9 +458,6 @@ export function EtudeResultats({
       })
       .catch(() => {
         if (!cancelled) setProjects([]);
-      })
-      .finally(() => {
-        if (!cancelled) setProjectsLoaded(true);
       });
     return () => {
       cancelled = true;
@@ -710,23 +573,35 @@ export function EtudeResultats({
                 (u) => (u.sous_ensembles ?? []).length > 0,
               );
               if (hasSubsets) {
-                try {
-                  const ufGeo = await fetchUfSubsetsGeojson(projectId);
-                  if (active) setUfGeojson(ufGeo);
-                } catch {
-                  if (active) setUfGeojson(null);
+                const ufGeo = await loadUfMapGeojson(projectId);
+                if (active) {
+                  setUfGeojson(ufGeo.subsets);
+                  setUfParcellesGeojson(ufGeo.parcelles);
                 }
               } else {
                 setUfGeojson(null);
+                setUfParcellesGeojson(null);
               }
             } else {
               setUfResults(null);
               setUfGeojson(null);
+              setUfParcellesGeojson(null);
+            }
+            const ilotsRaw = stored.last_results_ilots_rpg;
+            if (ilotsRaw && typeof ilotsRaw === "object" && Array.isArray((ilotsRaw as IlotsRpgResponse).ilots)) {
+              setIlotsResults(ilotsRaw as IlotsRpgResponse);
+              try {
+                const ilotsGeo = await fetchIlotsRpgGeojson(projectId);
+                if (active) setIlotsGeojson(ilotsGeo);
+              } catch {
+                if (active) setIlotsGeojson(null);
+              }
             }
           } catch {
             if (active) {
               setUfResults(null);
               setUfGeojson(null);
+              setUfParcellesGeojson(null);
             }
           }
         };
@@ -847,12 +722,21 @@ export function EtudeResultats({
             (u) => (u.sous_ensembles ?? []).length > 0,
           );
           if (hasSubsets) {
-            try {
-              const ufGeo = await fetchUfSubsetsGeojson(projectId);
-              if (!cancelled) setUfGeojson(ufGeo);
-            } catch {
-              if (!cancelled) setUfGeojson(null);
+            const ufGeo = await loadUfMapGeojson(projectId);
+            if (!cancelled) {
+              setUfGeojson(ufGeo.subsets);
+              setUfParcellesGeojson(ufGeo.parcelles);
             }
+          }
+        }
+        const ilotsRaw = stored.last_results_ilots_rpg;
+        if (ilotsRaw && typeof ilotsRaw === "object" && Array.isArray((ilotsRaw as IlotsRpgResponse).ilots) && !cancelled) {
+          setIlotsResults(ilotsRaw as IlotsRpgResponse);
+          try {
+            const ilotsGeo = await fetchIlotsRpgGeojson(projectId);
+            if (!cancelled) setIlotsGeojson(ilotsGeo);
+          } catch {
+            if (!cancelled) setIlotsGeojson(null);
           }
         }
       } catch (e) {
@@ -1041,6 +925,25 @@ export function EtudeResultats({
     }
   }
 
+  async function handleIntegrateAjoutManuel(idus: string[]) {
+    const runId = initialRunId ?? results?.pool_run_id ?? null;
+    if (!projectId || !runId || !idus.length) return;
+    const resp = await integrateManualParcelles(projectId, runId, idus);
+    const done = new Set(resp.integrated);
+    setPoolMetricsByIdu((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev };
+      for (const idu of done) {
+        next[idu] = (next[idu] ?? []).map((row) =>
+          row.metric_key === "pool_origin"
+            ? { ...row, metric_value_jsonb: { ...row.metric_value_jsonb, in_classement: true } }
+            : row,
+        );
+      }
+      return next;
+    });
+  }
+
   async function handleAddParcelles(idus: string[]) {
     const runId = initialRunId ?? results?.pool_run_id ?? null;
     if (!projectId || !runId) return;
@@ -1225,6 +1128,7 @@ export function EtudeResultats({
     setLinkedSubsetId(subsetId);
     setLinkedUfId(findUfIdForSubset(subsetId));
     setScrollToSubsetId(subsetId);
+    setUfScrollTarget(null);
     setScrollUfTableNonce((n) => n + 1);
   }
 
@@ -1234,6 +1138,21 @@ export function EtudeResultats({
     if (!splitMapVisible) {
       setSplitMapVisible(true);
     }
+  }
+
+  function handleMapUfClick(ufId: string) {
+    setMainResultsTab("unites");
+    if (ufSubView !== "classement") {
+      setUfSubView("classement");
+    }
+    if (!splitMapVisible) {
+      setSplitMapVisible(true);
+    }
+    setLinkedUfId(ufId);
+    setLinkedSubsetId(null);
+    setScrollToSubsetId(null);
+    setUfScrollTarget(ufId);
+    setScrollUfTableNonce((n) => n + 1);
   }
 
   function handleTableUfActivate(ufId: string) {
@@ -1320,12 +1239,13 @@ export function EtudeResultats({
       return raw;
     };
     const cap = Math.max(1, distanceCursorKm);
-    let list = results.parcelles.filter(
-      (p) =>
-        !indesirableSet.has(p.idu) &&
-        (p.distance_km ?? 0) <= cap &&
-        (p.surface_ha ?? 0) >= surfaceMinHa,
-    );
+    let list = results.parcelles.filter((p) => {
+      if (indesirableSet.has(p.idu)) return false;
+      if ((p.distance_km ?? 0) > cap) return false;
+      if ((p.surface_ha ?? 0) < surfaceMinHa) return false;
+      if (poolMetricsByIdu && isManualSas(poolMetricsByIdu[p.idu])) return false;
+      return true;
+    });
     if (rankingSortKey === "rank") {
       list = [...list].sort((a, b) => {
         const sa = getParcelScore(a.idu);
@@ -1421,6 +1341,14 @@ export function EtudeResultats({
   ]);
   displayedIdusRef.current = displayedParcelles.map((p) => p.idu);
 
+  const ajoutManuelParcelles = useMemo(() => {
+    if (!results?.parcelles?.length || !poolMetricsByIdu) return [];
+    const hidden = new Set(indesirableIdus);
+    return results.parcelles.filter(
+      (p) => !hidden.has(p.idu) && isManualSas(poolMetricsByIdu[p.idu]),
+    );
+  }, [results?.parcelles, poolMetricsByIdu, indesirableIdus]);
+
   const displayedCombinedCandidates = useMemo(() => {
     const parcelles = displayedParcelles;
     if (!ufResults?.unites_foncieres?.length) return parcelles;
@@ -1473,9 +1401,13 @@ export function EtudeResultats({
   );
   const isSplitParcelView = mainResultsTab === "parcelles" || mainResultsTab === "combine";
   const isSplitUfView = mainResultsTab === "unites" && !!ufResults;
+  const showIlotsTab = appliedFilterConfig?.include_ilots_rpg === true
+    || ilotsRpgReady
+    || (ilotsResults?.ilots.length ?? 0) > 0;
+  const isSplitIlotsView = mainResultsTab === "ilots" && !!ilotsResults;
 
   const resultsContentClass = `results-content${
-    isSplitParcelView || isSplitUfView ? "" : " results-content--full"
+    isSplitParcelView || isSplitUfView || isSplitIlotsView ? "" : " results-content--full"
   }`;
 
   const toolbarStatus: ResultsToolbarStatus = !connected
@@ -1517,6 +1449,7 @@ export function EtudeResultats({
       onParcelleClick={handleMapParcelleClick}
       onParcelleHover={setHoverIdu}
       urbaRevision={metricsRefreshNonce}
+      onAddToPool={handleAddParcelles}
     />
   );
 
@@ -1524,12 +1457,16 @@ export function EtudeResultats({
     <EtudeResultatsUnitesMap
       {...mapShared}
       ufGeojson={ufGeojson}
+      parcellesGeojson={ufParcellesGeojson}
       subsetScores={subsetScores}
       focusSubsetId={linkedSubsetId}
       focusUfId={linkedSubsetId ? null : linkedUfId}
       hoverSubsetId={hoverSubsetId}
       hoverUfId={hoverUfId}
+      hoverParcelleIdu={hoverParcelleIdu}
       onSubsetClick={handleMapSubsetClick}
+      onUfClick={handleMapUfClick}
+      onParcelleHover={setHoverParcelleIdu}
     />
   );
 
@@ -1599,6 +1536,18 @@ export function EtudeResultats({
                   <span className="results-tab-spinner" aria-hidden="true" />
                 )}
               </button>
+              {showIlotsTab && (
+                <button
+                  type="button"
+                  className={`results-tab ${mainResultsTab === "ilots" ? "active" : ""}`}
+                  onClick={() => setMainResultsTab("ilots")}
+                >
+                  Îlots agricoles
+                  {!ilotsResults && !ilotsRpgError && parcellesReady && (
+                    <span className="results-tab-spinner" aria-hidden="true" />
+                  )}
+                </button>
+              )}
               {hasCombinedRanking && (
                 <button
                   type="button"
@@ -1608,7 +1557,7 @@ export function EtudeResultats({
                   Classement combiné
                 </button>
               )}
-              {(isSplitParcelView || isSplitUfView) && (
+              {(isSplitParcelView || isSplitUfView || isSplitIlotsView) && (
                 <button
                   type="button"
                   className="results-split-map-toggle"
@@ -1625,12 +1574,13 @@ export function EtudeResultats({
                 <div style={{ padding: 12, color: "#000000", fontSize: 13 }}>
                   Aucune parcelle retenue après filtrage. Ouvrez{" "}
                   <strong>Paramètres de filtrage</strong> dans la barre du haut pour voir à quelle étape elles ont été éliminées,
-                  ou ajoutez un IDU via <strong>Outils</strong>.
+                  ou ajoutez un IDU via <strong>Ajouter</strong>.
                 </div>
               )}
 
               {mainResultsTab === "filtrage" && (
                 <FilterParamsTab
+                  projectId={projectId}
                   steps={results.funnel ?? []}
                   filterConfig={appliedFilterConfig ?? readFilterConfig(results.filter_config)}
                   total={results.total}
@@ -1687,9 +1637,12 @@ export function EtudeResultats({
                     showZoneHumideColumn={showZoneHumideColumn}
                     showDistHydroColumn={showDistHydroColumn}
                     showSurfaceHydroColumn={showSurfaceHydroColumn}
+                    showFloraColumn={((appliedFilterConfig ?? readFilterConfig(results.filter_config))?.flora_criteria?.length ?? 0) > 0}
                     indesirableParcelles={indesirableParcelles}
                     indesirableMetricsByIdu={indesirableMetricsByIdu}
                     onRestoreIndesirable={handleRestoreIndesirable}
+                    ajoutManuelParcelles={ajoutManuelParcelles}
+                    onIntegrateAjoutManuel={handleIntegrateAjoutManuel}
                   />
                   }
                   map={<SplitMapFrame>{parcellesMapPanel}</SplitMapFrame>}
@@ -1723,6 +1676,61 @@ export function EtudeResultats({
                 />
               )}
 
+              {mainResultsTab === "ilots" && ilotsResults && (
+                <ResultsSplit
+                  mapVisible={splitMapVisible}
+                  tableShare={tableShare}
+                  onTableShareChange={setTableShare}
+                  table={
+                    <div className="results-split__table-fill">
+                      <div className="results-split__table-inner">
+                        <IlotsRpgTable
+                          results={ilotsResults}
+                          selectedIlotId={linkedIlot}
+                          hoverIlotId={hoverIlot}
+                          scrollToIlotId={linkedIlot}
+                          scrollTableNonce={ilotScrollNonce}
+                          showZoneHumide={showZoneHumideColumn}
+                          onIlotActivate={setLinkedIlot}
+                          onIlotHover={setHoverIlot}
+                          geojson={ilotsGeojson}
+                          hoverParcelleIdu={hoverParcelleIdu}
+                          onParcelleHover={setHoverParcelleIdu}
+                          projectId={projectId}
+                        />
+                      </div>
+                    </div>
+                  }
+                  map={
+                    <SplitMapFrame>
+                      <IlotsRpgMap
+                        geojson={ilotsGeojson}
+                        foncierGeojson={foncierGeojson}
+                        projectId={projectId}
+                        focusIlotId={linkedIlot}
+                        hoverIlotId={hoverIlot}
+                        hoverParcelleIdu={hoverParcelleIdu}
+                        onParcelleHover={setHoverParcelleIdu}
+                        onIlotClick={(id) => {
+                          setLinkedIlot(id);
+                          setIlotScrollNonce((n) => n + 1);
+                        }}
+                      />
+                    </SplitMapFrame>
+                  }
+                />
+              )}
+              {mainResultsTab === "ilots" && !ilotsResults && !ilotsRpgError && (
+                <div className="uf-loading">
+                  <span className="parcelles-map-spinner" aria-hidden="true" />
+                  <p>Calcul des îlots agricoles en cours…</p>
+                  <PipelineProgressPanel progress={pipelineProgress} compact showIlots />
+                </div>
+              )}
+              {mainResultsTab === "ilots" && ilotsRpgError && !ilotsResults && (
+                <div style={{ padding: 12, color: "#000000", fontSize: 13 }}>{ilotsRpgError}</div>
+              )}
+
               {mainResultsTab === "unites" && ufResults && (
                 <ResultsSplit
                   mapVisible={splitMapVisible}
@@ -1734,11 +1742,14 @@ export function EtudeResultats({
                     projectId={projectId}
                     selectedSubsetId={linkedSubsetId}
                     scrollToSubsetId={scrollToSubsetId}
+                    scrollToUfId={ufScrollTarget}
                     scrollTableNonce={scrollUfTableNonce}
+                    hoverParcelleIdu={hoverParcelleIdu}
                     onSubsetActivate={handleTableSubsetActivate}
                     onUfActivate={handleTableUfActivate}
                     onSubsetHover={setHoverSubsetId}
                     onUfHover={setHoverUfId}
+                    onParcelleHover={setHoverParcelleIdu}
                   />
                   }
                   map={<SplitMapFrame>{ufMapPanel}</SplitMapFrame>}
@@ -1811,17 +1822,9 @@ export function EtudeResultats({
             </div>
           </div>
         ) : (
-          <EtudesHomeTable
-            poolRuns={poolRuns}
-            projects={projects}
-            projectsLoaded={projectsLoaded}
-            onOpen={handleToolbarPoolChange}
-            onNewStudy={onNavigateToCreate}
-            onDeleted={(pid) => {
-              setPoolRuns((prev) => prev.filter((r) => r.project_id !== pid));
-              setProjects((prev) => prev.filter((p) => p.id !== pid));
-            }}
-          />
+          <div className="empty-state">
+            <span className="empty-text">Aucune étude sélectionnée.</span>
+          </div>
         )}
       </div>
     </div>

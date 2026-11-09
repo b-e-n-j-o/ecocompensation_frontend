@@ -652,6 +652,17 @@
   border: none;
   border-radius: 0;
   box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.results-split .ranking-table-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .results-split .ranking-chrome,
