@@ -38,6 +38,7 @@ interface UnitesFoncieresTableProps {
   hoverParcelleIdu?: string | null;
   onParcelleHover?: (idu: string | null) => void;
   onRemoveUf?: (ufId: string) => Promise<void> | void;
+  exportJauge?: import("../ExportEtudeMenu").ExportJauge | null;
 }
 
 function scoreLabel(score: ParcelScorePayload | undefined): string {
@@ -227,6 +228,7 @@ export function UnitesFoncieresTable({
   onParcelleHover,
   scrollToUfId = null,
   onRemoveUf,
+  exportJauge = null,
 }: UnitesFoncieresTableProps) {
   const [expandedUfId, setExpandedUfId] = useState<string | null>(null);
   const [expandedSubsetId, setExpandedSubsetId] = useState<string | null>(null);
@@ -295,7 +297,7 @@ export function UnitesFoncieresTable({
     <div className="ranking-wrap">
       <div className="ranking-chrome">
         <div className="ranking-chrome__bar">
-          {projectId && <ExportEtudeMenu projectId={projectId} page="uf" />}
+          {projectId && <ExportEtudeMenu projectId={projectId} page="uf" jauge={exportJauge} />}
           <span className="ranking-count mono">
             {Math.min(visibleUfCount, ufs.length)} / {ufCount} UF
           </span>

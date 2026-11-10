@@ -1154,9 +1154,12 @@ export async function exportEtudeGpkg(
   projectId: string,
   layers: EtudeExportLayer[],
   poolRunId?: string | null,
+  jauge?: { maxDistanceKm: number | null; minSurfaceHa: number | null } | null,
 ): Promise<void> {
   const q = new URLSearchParams({ layers: layers.join(",") });
   if (poolRunId) q.set("run_id", poolRunId);
+  if (jauge?.maxDistanceKm != null) q.set("max_distance_km", String(jauge.maxDistanceKm));
+  if (jauge?.minSurfaceHa != null && jauge.minSurfaceHa > 0) q.set("min_surface_ha", String(jauge.minSurfaceHa));
   const res = await fetch(`${API}/api/projects/${projectId}/export/etude.gpkg?${q}`);
   if (!res.ok) {
     const text = await res.text();

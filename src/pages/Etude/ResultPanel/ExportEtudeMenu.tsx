@@ -13,17 +13,43 @@ const ALL_PICKED: Record<EtudeExportLayer, boolean> = {
   ilots: true,
 };
 
+/** Bornes de la jauge résultats. null = curseur au maximum, pas de réduction. */
+export type ExportJauge = {
+  maxDistanceKm: number | null;
+  minSurfaceHa: number | null;
+};
+
+export function exportJaugeFrom(input: {
+  hideDistanceFilter?: boolean;
+  distanceMaxKm: number;
+  distanceCursorKm: number;
+  surfaceMinHa: number;
+} | null | undefined): ExportJauge | null {
+  if (!input) return null;
+  const distanceActive = !input.hideDistanceFilter
+    && input.distanceMaxKm > 0
+    && input.distanceCursorKm < input.distanceMaxKm - 0.05;
+  const surfaceActive = input.surfaceMinHa > 0.05;
+  if (!distanceActive && !surfaceActive) return null;
+  return {
+    maxDistanceKm: distanceActive ? input.distanceCursorKm : null,
+    minSurfaceHa: surfaceActive ? input.surfaceMinHa : null,
+  };
+}
+
 /** Bouton vert : tout est coché par défaut, on peut décocher pour n’exporter que certaines couches. */
 export function ExportEtudeMenu({
   projectId,
   poolRunId = null,
   disabled = false,
   page = "parcelles",
+  jauge = null,
 }: {
   projectId?: string | null;
   poolRunId?: string | null;
   disabled?: boolean;
   page?: EtudeExportLayer;
+  jauge?: ExportJauge | null;
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -34,9 +60,24 @@ export function ExportEtudeMenu({
 
   async function run(layers: EtudeExportLayer[]) {
     if (!projectId || !layers.length) return;
+    const active = jauge && (jauge.maxDistanceKm != null || (jauge.minSurfaceHa != null && jauge.minSurfaceHa > 0));
+    let apply = false;
+    if (active && jauge) {
+      const bits: string[] = [];
+      if (jauge.maxDistanceKm != null) bits.push(`à ${jauge.maxDistanceKm.toFixed(1)} km ou moins du projet`);
+      if (jauge.minSurfaceHa != null && jauge.minSurfaceHa > 0) bits.push(`d'au moins ${jauge.minSurfaceHa.toFixed(1)} ha`);
+      apply = window.confirm(
+        `La jauge est active. Exporter seulement les parcelles, unités foncières et îlots ${bits.join(" et ")} ?\n\nOK : uniquement ces éléments.\nAnnuler : tout le pool.`,
+      );
+    }
     setBusy(true);
     try {
-      await exportEtudeGpkg(projectId, layers, poolRunId);
+      await exportEtudeGpkg(
+        projectId,
+        layers,
+        poolRunId,
+        apply && jauge ? jauge : null,
+      );
       setOpen(false);
     } catch (err) {
       console.error("Export étude:", err);

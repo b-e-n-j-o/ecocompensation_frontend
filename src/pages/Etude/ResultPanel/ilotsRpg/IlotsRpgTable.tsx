@@ -54,6 +54,7 @@ export interface IlotsRpgTableProps {
   hoverParcelleIdu?: string | null;
   onParcelleHover?: (idu: string | null) => void;
   projectId?: string | null;
+  exportJauge?: import("../ExportEtudeMenu").ExportJauge | null;
 }
 
 function sortValue(il: IlotRpgResult, key: IlotsRpgSortKey): number {
@@ -343,6 +344,7 @@ export function IlotsRpgTable({
   hoverParcelleIdu = null,
   onParcelleHover,
   projectId = null,
+  exportJauge = null,
 }: IlotsRpgTableProps) {
   const parcelles = useMemo(() => parcellesByIlot(geojson), [geojson]);
   const [sortKey, setSortKey] = useState<IlotsRpgSortKey>("rang");
@@ -415,7 +417,7 @@ export function IlotsRpgTable({
     <div className="ranking-wrap">
       <div className="ranking-chrome">
         <div className="ranking-chrome__bar">
-          {projectId && <ExportEtudeMenu projectId={projectId} page="ilots" />}
+          {projectId && <ExportEtudeMenu projectId={projectId} page="ilots" jauge={exportJauge} />}
           <span className="ranking-filter__current" title="Îlots agricoles déclarés à la PAC, convertis en parcelles cadastrales">
             Îlots agricoles RPG {results.millesime}
           </span>

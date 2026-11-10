@@ -1,6 +1,6 @@
 // ─── RankingTable ─────────────────────────────────────────────────────────────
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { ExportEtudeMenu } from "../ExportEtudeMenu";
+import { ExportEtudeMenu, exportJaugeFrom } from "../ExportEtudeMenu";
 import type { ParcelleResult, ParcelPoolMetricRow, RankingSortKey } from "../../../../types";
 import {
   type FaunaTableEntry,
@@ -539,6 +539,7 @@ export function RankingTable({
               poolRunId={exportPoolRunId ?? null}
               page="parcelles"
               disabled={selectionMode}
+              jauge={exportJaugeFrom(poolFilters)}
             />
           )}
           <span className="ranking-count mono">

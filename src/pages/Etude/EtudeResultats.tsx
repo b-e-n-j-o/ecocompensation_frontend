@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { AppDialog } from "./ResultPanel/AppDialog";
+import { exportJaugeFrom } from "./ResultPanel/ExportEtudeMenu";
 import { ResultsToolbar, type ResultsToolbarStatus } from "./ResultPanel/TableauParcelles/ResultsToolbar";
 import { FilterParamsTab } from "./FiltrageParam/FilterParamTab";
 import { readFilterConfig } from "./FiltrageParam/FilterCatalog";
@@ -1789,6 +1790,12 @@ export function EtudeResultats({
                           hoverParcelleIdu={hoverParcelleIdu}
                           onParcelleHover={setHoverParcelleIdu}
                           projectId={projectId}
+                          exportJauge={exportJaugeFrom({
+                            hideDistanceFilter: currentStudyProfile.hideDistanceFilter,
+                            distanceMaxKm,
+                            distanceCursorKm,
+                            surfaceMinHa,
+                          })}
                         />
                       </div>
                     </div>
@@ -1855,6 +1862,12 @@ export function EtudeResultats({
                     onSubsetHover={setHoverSubsetId}
                     onUfHover={setHoverUfId}
                     onParcelleHover={setHoverParcelleIdu}
+                    exportJauge={exportJaugeFrom({
+                      hideDistanceFilter: currentStudyProfile.hideDistanceFilter,
+                      distanceMaxKm,
+                      distanceCursorKm,
+                      surfaceMinHa,
+                    })}
                   />
                   }
                   map={<SplitMapFrame>{ufMapPanel}</SplitMapFrame>}

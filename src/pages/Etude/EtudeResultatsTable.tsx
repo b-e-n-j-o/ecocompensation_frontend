@@ -2,6 +2,7 @@ import { AjoutManuelTable } from "./ResultPanel/AjoutManuel/AjoutManuelTable";
 import { IndesirablesTable } from "./ResultPanel/Indesirables/IndesirablesTable";
 import { RankingTable } from "./ResultPanel/TableauParcelles/RankingTable";
 import { UnitesFoncieresTable } from "./ResultPanel/TableauParcelles/UnitesFoncieresTable";
+import type { ExportJauge } from "./ResultPanel/ExportEtudeMenu";
 import type { FilterResponse, ParcelleResult, ParcelPoolMetricRow, RankingSortKey, UfFilterResponse } from "../../types";
 
 type RankingShared = {
@@ -69,6 +70,7 @@ type UnitesTableProps = {
   onUfHover: (ufId: string | null) => void;
   onParcelleHover?: (idu: string | null) => void;
   onRemoveUf?: (ufId: string) => Promise<void> | void;
+  exportJauge?: ExportJauge | null;
 };
 
 export function EtudeResultatsParcellesTable({
@@ -260,6 +262,7 @@ export function EtudeResultatsUnitesTable({
   onUfHover,
   onParcelleHover,
   onRemoveUf,
+  exportJauge = null,
 }: UnitesTableProps) {
   return (
     <div className="results-split__table-fill">
@@ -278,6 +281,7 @@ export function EtudeResultatsUnitesTable({
           onSubsetHover={onSubsetHover}
           onUfHover={onUfHover}
           onParcelleHover={onParcelleHover}
+          exportJauge={exportJauge}
         />
       </div>
     </div>
