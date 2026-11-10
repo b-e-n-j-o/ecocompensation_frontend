@@ -343,6 +343,8 @@ export interface FilterResponse {
   pool_run_id?: string | null;
   /** Présent quand les résultats sont chargés depuis un run historique (GET snapshot). */
   run_created_at?: string | null;
+  /** Enrichissement distances faune / flore / hydro échoué : le pool reste affiché. */
+  enrich_error?: string | null;
 }
 
 /** Ligne de liste GET /pool/runs */

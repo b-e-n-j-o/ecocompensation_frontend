@@ -26,6 +26,7 @@ export function parseStoredFilterResponse(lr: unknown): FilterResponse | null {
         : null,
     pool_run_id: typeof o.pool_run_id === "string" ? o.pool_run_id : null,
     run_created_at: typeof o.run_created_at === "string" ? o.run_created_at : undefined,
+    enrich_error: typeof o.enrich_error === "string" && o.enrich_error.trim() ? o.enrich_error : null,
   };
 }
 

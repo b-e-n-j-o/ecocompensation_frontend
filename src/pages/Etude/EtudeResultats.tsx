@@ -28,6 +28,7 @@ import {
   fetchSousEnsemblesStatus,
   prefetchAllResultsThematicLayers,
   fetchPoolIndesirables,
+  recomputePoolEnrich,
   addPoolIndesirables,
   removePoolIndesirable,
   fetchPoolRunSnapshot,
@@ -295,6 +296,7 @@ export function EtudeResultats({
   const [addParcellesLoading, setAddParcellesLoading] = useState(false);
   const [ufSearchLoading, setUfSearchLoading] = useState(false);
   const [metricsRefreshNonce, setMetricsRefreshNonce] = useState(0);
+  const [enrichRetrying, setEnrichRetrying] = useState(false);
   const [ufPoolLoading, setUfPoolLoading] = useState(false);
   const [storedResultsLoading, setStoredResultsLoading] = useState(false);
   const [storedProjectStatus, setStoredProjectStatus] = useState<string | null>(null);
@@ -1583,6 +1585,40 @@ export function EtudeResultats({
                   finalRadiusKm={results.final_radius_km}
                   computedAt={results.run_created_at}
                 />
+              )}
+
+              {mainResultsTab === "parcelles" && results.enrich_error && (
+                <div className="results-enrich-retry">
+                  <p>
+                    Le pool est disponible. L’enrichissement (distances faune, flore, hydro) n’a pas abouti.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={enrichRetrying || !projectId || !results.pool_run_id}
+                    onClick={() => {
+                      const runId = results.pool_run_id;
+                      if (!projectId || !runId) return;
+                      setEnrichRetrying(true);
+                      void recomputePoolEnrich(projectId, runId)
+                        .then((out) => {
+                          setResults((prev) =>
+                            prev ? { ...prev, enrich_error: out.enrich_error || null } : prev,
+                          );
+                          if (!out.enrich_error) setMetricsRefreshNonce((n) => n + 1);
+                        })
+                        .catch((e: unknown) => {
+                          setResults((prev) =>
+                            prev
+                              ? { ...prev, enrich_error: e instanceof Error ? e.message : String(e) }
+                              : prev,
+                          );
+                        })
+                        .finally(() => setEnrichRetrying(false));
+                    }}
+                  >
+                    {enrichRetrying ? "Enrichissement en cours…" : "Relancer l’enrichissement"}
+                  </button>
+                </div>
               )}
 
               {mainResultsTab === "parcelles" && (

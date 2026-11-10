@@ -663,6 +663,19 @@ export async function removePoolIndesirable(
   if (!res.ok) await throwHttpError(res);
 }
 
+/** Relance l'enrichissement distances (faune, flore, hydro) d'un pool déjà filtré. */
+export async function recomputePoolEnrich(
+  projectId: string,
+  runId: string,
+): Promise<{ status: string; enrich_error?: string | null }> {
+  const res = await fetch(
+    `${API}/api/projects/${projectId}/pool/runs/${runId}/recompute-enrich`,
+    { method: "POST" },
+  );
+  if (!res.ok) await throwHttpError(res);
+  return res.json();
+}
+
 /** Lance le calcul des profilers (COSIA, CARHAB, végétation hybride, …) pour le run pool. Appelé après le filtre. */
 export async function computePoolRunMetrics(projectId: string, runId: string): Promise<void> {
   const res = await fetch(

@@ -19,6 +19,38 @@
   overflow: hidden;
 }
 
+.results-enrich-retry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 12px 0;
+  padding: 8px 12px;
+  background: #fff8e8;
+  border: 1px solid #e6c36a;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.results-enrich-retry p {
+  margin: 0;
+}
+
+.results-enrich-retry button {
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 10px;
+  background: #111;
+  color: #fff;
+  cursor: pointer;
+}
+
+.results-enrich-retry button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .results-page__body {
   flex: 1;
   min-height: 0;
