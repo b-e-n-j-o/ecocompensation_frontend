@@ -44,23 +44,14 @@ function scoreLabel(score: ParcelScorePayload | undefined): string {
   return `${score.total_score}/${score.max_score}`;
 }
 
-function largestSubset(uf: { sous_ensembles: SousEnsembleResult[] }): SousEnsembleResult | null {
-  return uf.sous_ensembles.reduce<SousEnsembleResult | null>((best, ss) => {
-    if (!best) return ss;
-    return (ss.idus?.length ?? ss.k) > (best.idus?.length ?? best.k) ? ss : best;
-  }, null);
-}
-
-function UniteEnrichissement({ uf }: { uf: { sous_ensembles: SousEnsembleResult[] } }) {
-  const ss = largestSubset(uf);
-  if (!ss) return null;
-  const n = ss.idus?.length ?? ss.k;
+function UniteEnrichissement({ uf }: { uf: { nb_parcelles?: number; veg_libelles?: string[]; veg_profile?: SousEnsembleResult["veg_profile"]; sous_ensembles: SousEnsembleResult[] } }) {
+  const n = uf.nb_parcelles ?? uf.sous_ensembles.reduce((acc, ss) => acc + (ss.idus?.length ?? ss.k ?? 0), 0);
   const enrichPayload = {
-    veg_libelles: ss.veg_libelles ?? [],
-    veg_profile: ss.veg_profile,
-    fauna_distances: ss.fauna_distances ?? {},
+    veg_libelles: uf.veg_libelles ?? [],
+    veg_profile: uf.veg_profile,
+    fauna_distances: {},
   };
-  const hasProfile = Object.keys(ss.veg_profile ?? {}).length > 0;
+  const hasProfile = Object.keys(uf.veg_profile ?? {}).length > 0;
   const hasEnrich =
     enrichPayload.veg_libelles.length > 0
     || hasProfile
@@ -70,7 +61,7 @@ function UniteEnrichissement({ uf }: { uf: { sous_ensembles: SousEnsembleResult[
     <section className="ranking-metric-block" style={{ marginBottom: 10 }}>
       <h4 className="ranking-metric-title">Occupation du sol de l&apos;unité foncière</h4>
       <p className="ranking-line-empty" style={{ marginTop: 0 }}>
-        Mesurée sur l&apos;union des {n} parcelles de l&apos;unité, pas en moyenne des parcelles.
+        Mesurée en additionnant chaque parcelle de l&apos;unité ({n} parcelles), pas sous-ensemble par sous-ensemble.
       </p>
       {hasEnrich ? (
         <FilterEnrichBlock payload={enrichPayload} part="sol" />
@@ -164,18 +155,15 @@ function SousEnsembleDetail({ ss }: { ss: SousEnsembleResult }) {
     veg_profile: ss.veg_profile,
     fauna_distances: ss.fauna_distances ?? {},
   };
-  const hasEnrich =
-    enrichPayload.veg_libelles.length > 0
-    || Object.keys(ss.veg_profile ?? {}).length > 0
-    || Object.keys(enrichPayload.fauna_distances).length > 0;
+  const hasEnrich = Object.keys(enrichPayload.fauna_distances).length > 0;
   const scorePayload = ss.score_eco as ParcelScorePayload | undefined;
 
   return (
     <div className="ranking-line-detail uf-subset-detail" role="region" aria-label={`Détail ${ss.subset_id}`}>
       {hasEnrich ? (
         <section className="ranking-metric-block">
-          <h4 className="ranking-metric-title">Enrichissement écologique (union parcelles)</h4>
-          <FilterEnrichBlock payload={enrichPayload} />
+          <h4 className="ranking-metric-title">Faune du sous-ensemble</h4>
+          <FilterEnrichBlock payload={enrichPayload} part="faune" />
         </section>
       ) : (
         <p className="ranking-line-empty">Enrichissement CESBIO / faune non disponible pour ce sous-ensemble.</p>

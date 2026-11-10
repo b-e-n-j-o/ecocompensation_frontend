@@ -470,6 +470,8 @@ export interface UniteFoncieresResult {
     surface_deja_en_mc_m2?: number | null;
   };
   sous_ensembles: SousEnsembleResult[];
+  veg_libelles?: string[];
+  veg_profile?: Record<string, { area_m2?: number; pct?: number }>;
 }
 
 export interface UfFilterResponse {
