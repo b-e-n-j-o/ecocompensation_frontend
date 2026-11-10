@@ -23,7 +23,7 @@ interface Props {
 
 export function CadastreZoneControls({ map, apiBase, poolIdus, poolLayerIds, projectId, poolRunId, drawAboveResults, onAddToPool, onAddAsUf }: Props) {
   const cz = useCadastreZone({ map, apiBase, poolIdus, poolLayerIds, projectId, poolRunId, drawAboveResults });
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<"pool" | "uf" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [follow, setFollow] = useState<{ x: number; y: number } | null>(null);
   const n = cz.selection.size;
@@ -46,8 +46,8 @@ export function CadastreZoneControls({ map, apiBase, poolIdus, poolLayerIds, pro
     };
   }, [cz.armed, map]);
 
-  const run = async (fn: (idus: string[]) => Promise<void>) => {
-    setAdding(true);
+  const run = async (kind: "pool" | "uf", fn: (idus: string[]) => Promise<void>) => {
+    setAdding(kind);
     setError(null);
     try {
       await fn(cz.selectedIdus);
@@ -55,7 +55,7 @@ export function CadastreZoneControls({ map, apiBase, poolIdus, poolLayerIds, pro
     } catch (e) {
       setError((e as Error).message || "Ajout impossible");
     } finally {
-      setAdding(false);
+      setAdding(null);
     }
   };
 
@@ -109,16 +109,18 @@ export function CadastreZoneControls({ map, apiBase, poolIdus, poolLayerIds, pro
           </ul>
           <div className="cz-row">
             {onAddToPool ? (
-              <button className="cz-btn cz-btn--primary" onClick={() => run(onAddToPool)} disabled={adding}>
-                {adding ? "Ajout…" : "Ajouter au pool"}
+              <button className="cz-btn cz-btn--primary" onClick={() => run("pool", onAddToPool)} disabled={adding != null}>
+                {adding === "pool" && <span className="cz-spinner" aria-hidden />}
+                {adding === "pool" ? "Ajout au pool…" : "Ajouter au pool"}
               </button>
             ) : null}
             {onAddAsUf && n >= 2 ? (
-              <button className="cz-btn" onClick={() => run(onAddAsUf)} disabled={adding}>
-                Grouper en unité foncière
+              <button className="cz-btn" onClick={() => run("uf", onAddAsUf)} disabled={adding != null}>
+                {adding === "uf" && <span className="cz-spinner" aria-hidden />}
+                {adding === "uf" ? "Création de l'unité…" : "Grouper en unité foncière"}
               </button>
             ) : null}
-            <button className="cz-btn cz-btn--ghost" onClick={cz.clearSelection} disabled={adding}>
+            <button className="cz-btn cz-btn--ghost" onClick={cz.clearSelection} disabled={adding != null}>
               Désélectionner
             </button>
           </div>

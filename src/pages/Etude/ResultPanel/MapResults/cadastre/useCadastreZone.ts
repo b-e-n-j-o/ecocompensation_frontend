@@ -94,9 +94,13 @@ export function useCadastreZone({
           return;
         }
         const beforeId = poolLayerIds.find((id) => map.getLayer(id));
-        if (beforeId) {
+        const layers = map.getStyle()?.layers ?? [];
+        const poolIdx = beforeId ? layers.findIndex((l) => l.id === beforeId) : -1;
+        if (beforeId && layers[poolIdx - 1]?.id !== CADASTRE_FILL) {
           map.moveLayer(CADASTRE_FILL, beforeId);
-          map.moveLayer(CADASTRE_LINE, beforeId);
+        }
+        if (layers[layers.length - 1]?.id !== CADASTRE_LINE) {
+          map.moveLayer(CADASTRE_LINE);
         }
       } catch {
         /* style en cours de mise à jour */
@@ -158,7 +162,7 @@ export function useCadastreZone({
     else map.once("load", setup);
     // Cartes UF / îlots : leurs couches arrivent après le cadastre → on le remonte à chaque ajout.
     // Pas de boucle : placeAboveBasemap ne fait rien s'il est déjà au sommet.
-    if (drawAboveResults) map.on("styledata", placeAboveBasemap);
+    map.on("styledata", placeAboveBasemap);
     return () => {
       map.off("load", setup);
       map.off("styledata", placeAboveBasemap);
@@ -166,23 +170,13 @@ export function useCadastreZone({
     };
   }, [map, poolLayerIds, drawAboveResults]);
 
-  // Parcelles déjà dans le pool : non dessinées par la couche cadastre (le pool les affiche déjà).
-  // (line-dasharray n'est pas data-driven dans MapLibre → on filtre plutôt la couche.)
+  // Toutes les parcelles du carré, y compris celles déjà dans le pool :
+  // on s'en sert pour regrouper une parcelle du pool avec des parcelles voisines.
   useEffect(() => {
     if (!map || !map.getLayer(CADASTRE_FILL)) return;
-    if (drawAboveResults) {
-      // Tout afficher : aucun filtre (["has","idu"] peut tout masquer avec promoteId: "idu").
-      map.setFilter(CADASTRE_FILL, null);
-      map.setFilter(CADASTRE_LINE, null);
-      return;
-    }
-    const ids = Array.from(poolIdus);
-    const filter: maplibregl.FilterSpecification | null = ids.length
-      ? ["!", ["in", ["get", "idu"], ["literal", ids]]]
-      : null;
-    map.setFilter(CADASTRE_FILL, filter);
-    map.setFilter(CADASTRE_LINE, filter);
-  }, [map, poolIdus, loadedCount, drawAboveResults]);
+    map.setFilter(CADASTRE_FILL, null);
+    map.setFilter(CADASTRE_LINE, null);
+  }, [map, loadedCount]);
 
   const pushData = useCallback(() => {
     if (!map) return;
@@ -277,18 +271,12 @@ export function useCadastreZone({
         loadAt(e.lngLat.lng, e.lngLat.lat);
         return;
       }
-      if (!map.getLayer(CADASTRE_FILL)) return;
-      // Un clic sur une parcelle du pool reste géré par la carte existante
-      const poolLayers = poolLayerIds.filter((id) => map.getLayer(id));
-      if (poolLayers.length && map.queryRenderedFeatures(e.point, { layers: poolLayers }).length) return;
+      const hitLayers = [CADASTRE_LINE, CADASTRE_FILL].filter((id) => map.getLayer(id));
+      if (!hitLayers.length) return;
 
-      const f = map.queryRenderedFeatures(e.point, { layers: [CADASTRE_FILL] })[0];
+      const f = map.queryRenderedFeatures(e.point, { layers: hitLayers })[0];
       if (!f) return;
       const props = f.properties as CadastreProps;
-      if (poolRef.current.has(props.idu)) {
-        setMessage(`${props.idu} est déjà dans le pool.`);
-        return;
-      }
       setSelection((prev) => {
         const next = new Map(prev);
         if (next.has(props.idu)) next.delete(props.idu);
@@ -300,7 +288,9 @@ export function useCadastreZone({
 
     const onMove = (e: maplibregl.MapMouseEvent) => {
       if (!map.getLayer(CADASTRE_FILL)) return;
-      const f = map.queryRenderedFeatures(e.point, { layers: [CADASTRE_FILL] })[0];
+      const hitLayers = [CADASTRE_LINE, CADASTRE_FILL].filter((id) => map.getLayer(id));
+      if (!hitLayers.length) return;
+      const f = map.queryRenderedFeatures(e.point, { layers: hitLayers })[0];
       const id = (f?.properties as CadastreProps | undefined)?.idu ?? null;
       if (id === hovered) return;
       if (hovered) map.setFeatureState({ source: CADASTRE_SOURCE, id: hovered }, { hover: false });

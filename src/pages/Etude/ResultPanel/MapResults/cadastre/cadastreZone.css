@@ -10,6 +10,9 @@
 }
 .cz-row { display: flex; gap: 6px; flex-wrap: wrap; }
 .cz-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 6px 10px;
   border-radius: 6px;
   border: 1px solid #cbd5e1;
@@ -23,6 +26,16 @@
 .cz-btn:disabled { opacity: .6; cursor: default; }
 .cz-btn--primary { background: #fff; color: #0f172a; border-color: #94a3b8; font-weight: 600; }
 .cz-btn--ghost { background: #fff; border-color: #cbd5e1; color: #475569; }
+.cz-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 2px solid #cbd5e1;
+  border-top-color: #0f172a;
+  animation: cz-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes cz-spin { to { transform: rotate(360deg); } }
 .cz-msg {
   padding: 7px 9px;
   border: 1px solid #e2e8f0;
