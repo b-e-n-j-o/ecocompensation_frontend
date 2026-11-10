@@ -1,6 +1,6 @@
 // ─── RankingLine — détail enrichissement filter_v2 ────────────────────────────
 import { useEffect, useState } from "react";
-import { CESBIO_LIBELLE_COLORS, type ParcelPoolMetricRow } from "../../../types";
+import { CESBIO_LIBELLE_COLORS, type ParcelPoolMetricRow } from "../../../../types";
 import {
   type ArrachageVignesMetric,
   type CompositeScoreMetric,
@@ -17,7 +17,7 @@ import {
   getPersonnesMoralesMetric,
   getUrbanismeGpuMetric,
   getZnieff2Metric,
-} from "../../../utils/poolMetrics";
+} from "../../../../utils/poolMetrics";
 import { EnvironnementTab } from "./RankingLineEnvironnement";
 import { DureteFoncierePanel } from "./RankingLineDurete";
 import { UrbanismeBlock } from "./RankingLineUrbanisme";

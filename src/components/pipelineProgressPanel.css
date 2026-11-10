@@ -58,6 +58,14 @@
   flex: 1;
 }
 
+.pipeline-stage-detail {
+  margin: 0;
+  padding: 0.35rem 0.55rem 0;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: #92400e;
+}
+
 .pipeline-stage-count {
   font-size: 0.75rem;
   font-weight: 500;

@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { auditUfCombinations, type UfCombinationsAudit } from "../../../api";
-import { ExportEtudeMenu } from "./ExportEtudeMenu";
+import { auditUfCombinations, type UfCombinationsAudit } from "../../../../api";
+import { ExportEtudeMenu } from "../ExportEtudeMenu";
 import { ResultInfoNote } from "./ResultInfoNote";
-import type { SousEnsembleResult, UfFilterResponse } from "../../../types";
+import type { SousEnsembleResult, UfFilterResponse } from "../../../../types";
 import {
   FilterEnrichBlock,
   PersonnesMoralesBlock,
@@ -37,6 +37,7 @@ interface UnitesFoncieresTableProps {
   /** Parcelle survolée (tableau ou carte), synchronisée avec SousEnsemblesMap. */
   hoverParcelleIdu?: string | null;
   onParcelleHover?: (idu: string | null) => void;
+  onRemoveUf?: (ufId: string) => Promise<void> | void;
 }
 
 function scoreLabel(score: ParcelScorePayload | undefined): string {
@@ -44,33 +45,67 @@ function scoreLabel(score: ParcelScorePayload | undefined): string {
   return `${score.total_score}/${score.max_score}`;
 }
 
+function faunaDistancesOfUf(sousEnsembles: SousEnsembleResult[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const ss of sousEnsembles) {
+    const fauna = ss.fauna_distances ?? {};
+    for (const [name, raw] of Object.entries(fauna)) {
+      const n = typeof raw === "number" ? raw : Number(raw);
+      if (!name.trim() || !Number.isFinite(n) || n < 0) continue;
+      const prev = out[name.trim()];
+      if (prev == null || n < prev) out[name.trim()] = n;
+    }
+  }
+  return out;
+}
+
 function UniteEnrichissement({ uf }: { uf: { nb_parcelles?: number; veg_libelles?: string[]; veg_profile?: SousEnsembleResult["veg_profile"]; sous_ensembles: SousEnsembleResult[] } }) {
   const n = uf.nb_parcelles ?? uf.sous_ensembles.reduce((acc, ss) => acc + (ss.idus?.length ?? ss.k ?? 0), 0);
+  const fauna_distances = faunaDistancesOfUf(uf.sous_ensembles);
   const enrichPayload = {
     veg_libelles: uf.veg_libelles ?? [],
     veg_profile: uf.veg_profile,
-    fauna_distances: {},
+    fauna_distances,
   };
   const hasProfile = Object.keys(uf.veg_profile ?? {}).length > 0;
-  const hasEnrich =
-    enrichPayload.veg_libelles.length > 0
-    || hasProfile
-    || Object.keys(enrichPayload.fauna_distances).length > 0;
+  const hasSol = enrichPayload.veg_libelles.length > 0 || hasProfile;
+  const hasFaune = Object.keys(fauna_distances).length > 0;
+  const bestSs = uf.sous_ensembles.reduce<SousEnsembleResult | null>((best, ss) => {
+    const score = (ss.score_eco as ParcelScorePayload | undefined)?.total_score ?? -1;
+    const bestScore = (best?.score_eco as ParcelScorePayload | undefined)?.total_score ?? -1;
+    return score > bestScore ? ss : best;
+  }, null);
+  const scorePayload = bestSs?.score_eco as ParcelScorePayload | undefined;
 
   return (
-    <section className="ranking-metric-block" style={{ marginBottom: 10 }}>
-      <h4 className="ranking-metric-title">Occupation du sol de l&apos;unité foncière</h4>
-      <p className="ranking-line-empty" style={{ marginTop: 0 }}>
-        Mesurée en additionnant chaque parcelle de l&apos;unité ({n} parcelles), pas sous-ensemble par sous-ensemble.
-      </p>
-      {hasEnrich ? (
-        <FilterEnrichBlock payload={enrichPayload} part="sol" />
-      ) : (
-        <p className="ranking-line-empty">
-          Profil CESBIO non encore calculé pour cette unité. Il apparaît après un nouveau filtrage.
+    <>
+      <section className="ranking-metric-block" style={{ marginBottom: 10 }}>
+        <h4 className="ranking-metric-title">Occupation du sol de l&apos;unité foncière</h4>
+        <p className="ranking-line-empty" style={{ marginTop: 0 }}>
+          Mesurée en additionnant chaque parcelle de l&apos;unité ({n} parcelles), pas sous-ensemble par sous-ensemble.
         </p>
+        {hasSol ? (
+          <FilterEnrichBlock payload={enrichPayload} part="sol" />
+        ) : (
+          <p className="ranking-line-empty">
+            Profil CESBIO non encore calculé pour cette unité. Il apparaît après un nouveau filtrage.
+          </p>
+        )}
+      </section>
+      {hasFaune ? (
+        <section className="ranking-metric-block" style={{ marginBottom: 10 }}>
+          <FilterEnrichBlock payload={enrichPayload} part="faune" />
+        </section>
+      ) : (
+        <p className="ranking-line-empty">Aucune distance d&apos;espèce calculée pour cette unité.</p>
       )}
-    </section>
+      {scorePayload ? (
+        <section className="ranking-metric-block" style={{ marginBottom: 10 }}>
+          <h4 className="ranking-metric-title">Score écologique</h4>
+          <ScoreBlock payload={scorePayload} />
+        </section>
+      ) : null}
+    </>
   );
 }
 
@@ -191,6 +226,7 @@ export function UnitesFoncieresTable({
   hoverParcelleIdu = null,
   onParcelleHover,
   scrollToUfId = null,
+  onRemoveUf,
 }: UnitesFoncieresTableProps) {
   const [expandedUfId, setExpandedUfId] = useState<string | null>(null);
   const [expandedSubsetId, setExpandedSubsetId] = useState<string | null>(null);
@@ -201,6 +237,7 @@ export function UnitesFoncieresTable({
   const [auditLoading, setAuditLoading] = useState(false);
   const [audit, setAudit] = useState<UfCombinationsAudit | null>(null);
   const [auditError, setAuditError] = useState<string | null>(null);
+  const [removingUfId, setRemovingUfId] = useState<string | null>(null);
   const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
 
   useEffect(() => {
@@ -355,6 +392,20 @@ export function UnitesFoncieresTable({
                   onParcelleHover?.(null);
                 }}
               >
+                <div
+                  style={{
+                    width: "100%",
+                    textAlign: "left",
+                    background: "white",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 8,
+                    padding: "10px 12px",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 10,
+                  }}
+                >
                 <button
                   type="button"
                   onClick={() => {
@@ -365,12 +416,11 @@ export function UnitesFoncieresTable({
                     onUfActivate?.(uf.uf_id);
                   }}
                   style={{
-                    width: "100%",
+                    flex: 1,
                     textAlign: "left",
-                    background: "white",
-                    border: "1px solid #e2e8f0",
-                    borderRadius: 8,
-                    padding: "10px 12px",
+                    background: "transparent",
+                    border: "none",
+                    padding: 0,
                     cursor: "pointer",
                     display: "flex",
                     justifyContent: "space-between",
@@ -405,6 +455,29 @@ export function UnitesFoncieresTable({
                     {isExpanded ? "−" : "+"}
                   </span>
                 </button>
+                {onRemoveUf ? (
+                  <button
+                    type="button"
+                    className="cz-btn cz-btn--ghost"
+                    disabled={removingUfId === uf.uf_id}
+                    title="Retirer cette unité foncière du classement"
+                    onClick={async (ev) => {
+                      ev.stopPropagation();
+                      const label = uf.denomination ? `UF #${uf.rang} · ${uf.denomination}` : `UF #${uf.rang}`;
+                      if (!window.confirm(`Retirer ${label} du classement des unités foncières ?`)) return;
+                      setRemovingUfId(uf.uf_id);
+                      try {
+                        await onRemoveUf(uf.uf_id);
+                        if (expandedUfId === uf.uf_id) setExpandedUfId(null);
+                      } finally {
+                        setRemovingUfId(null);
+                      }
+                    }}
+                  >
+                    {removingUfId === uf.uf_id ? "…" : "Retirer"}
+                  </button>
+                ) : null}
+                </div>
 
                 {isExpanded && (
                   <div style={{ paddingTop: 8 }}>

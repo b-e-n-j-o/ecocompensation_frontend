@@ -7,6 +7,10 @@ export type MainStageKey = "parcelles" | "uf" | "ilots";
 export type StageProgress = {
   status: StageStatus;
   nEntities?: number;
+  /** Occupation du sol des unités foncières : unités déjà traitées / total. */
+  solProgress?: { done: number; total: number };
+  /** Phrase courte de l'étape en cours (tuiles, lot de sol, espèce). */
+  detail?: string;
   substeps: Record<SubStepKey, StageStatus>;
 };
 
@@ -82,6 +86,7 @@ function cloneStage(stage: StageProgress): StageProgress {
   return {
     ...stage,
     substeps: { ...stage.substeps },
+    solProgress: stage.solProgress ? { ...stage.solProgress } : undefined,
   };
 }
 
@@ -233,16 +238,35 @@ export function applyWsToPipelineProgress(
     if (ev === "running" || ev === "progress") {
       next.uf.status = "running";
       next.uf = setUfSubsteps(next.uf, { analyse: "running", sol: "pending", fauna: "pending" });
+      const tiles = msg.match(/TILE_PROGRESS:(\d+)\/(\d+)/);
+      if (tiles) {
+        next.uf.detail = `Construction des groupements : ${Number(tiles[1]).toLocaleString("fr-FR")} / ${Number(tiles[2]).toLocaleString("fr-FR")} tuiles`;
+      } else if (/sous-ensembles/i.test(msg)) {
+        next.uf.detail = msg.replace(/^\[ENRICH_UF\]\s*/, "").trim();
+      } else if (!next.uf.detail) {
+        next.uf.detail = "Construction des groupements de personnes morales";
+      }
     }
     if (ev === "done" && typeof data.n_inserted === "number") {
       next.uf.nEntities = data.n_inserted;
+      next.uf.detail = `${data.n_inserted.toLocaleString("fr-FR")} groupements construits`;
       next.uf = setUfSubsteps(next.uf, { analyse: "done", sol: "pending", fauna: "pending" });
     }
   }
 
   if (layerKey === "enrich_uf") {
     next.uf.status = "running";
+    const sol = msg.match(/UF_SOL:(\d+)\/(\d+)/);
+    if (sol) {
+      const done = Number(sol[1]);
+      const total = Number(sol[2]);
+      next.uf.solProgress = { done, total };
+      next.uf.detail = `Occupation du sol : ${done.toLocaleString("fr-FR")} / ${total.toLocaleString("fr-FR")} unités foncières`;
+    }
     if (isEnrichUfFauna(msg)) {
+      const species = msg.match(/Fauna '([^']+)'|fauna '([^']+)'|🦎\s*([^\d:]+)/);
+      const name = (species?.[1] || species?.[2] || species?.[3] || "").trim();
+      next.uf.detail = name ? `Faune : ${name}` : "Croisement avec les données faune";
       next.uf = setUfSubsteps(next.uf, { analyse: "done", sol: "done", fauna: "running" });
     } else if (isEnrichUfVeg(msg) || ev === "running" || ev === "progress") {
       next.uf = setUfSubsteps(next.uf, {

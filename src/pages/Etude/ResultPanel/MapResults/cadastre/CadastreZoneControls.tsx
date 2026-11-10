@@ -11,14 +11,18 @@ interface Props {
   apiBase: string;
   poolIdus: Set<string>;
   poolLayerIds?: string[];
+  projectId?: string | null;
+  poolRunId?: string | null;
   /** Dessine le cadastre au-dessus des résultats (cartes UF et îlots). */
   drawAboveResults?: boolean;
   /** Appelle l'endpoint d'ajout existant avec les idu ; doit recharger le pool ensuite. */
   onAddToPool?: (idus: string[]) => Promise<void>;
+  /** Regroupe la sélection contiguë en une unité foncière du pool UF. */
+  onAddAsUf?: (idus: string[]) => Promise<void>;
 }
 
-export function CadastreZoneControls({ map, apiBase, poolIdus, poolLayerIds, drawAboveResults, onAddToPool }: Props) {
-  const cz = useCadastreZone({ map, apiBase, poolIdus, poolLayerIds, drawAboveResults });
+export function CadastreZoneControls({ map, apiBase, poolIdus, poolLayerIds, projectId, poolRunId, drawAboveResults, onAddToPool, onAddAsUf }: Props) {
+  const cz = useCadastreZone({ map, apiBase, poolIdus, poolLayerIds, projectId, poolRunId, drawAboveResults });
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [follow, setFollow] = useState<{ x: number; y: number } | null>(null);
@@ -42,15 +46,14 @@ export function CadastreZoneControls({ map, apiBase, poolIdus, poolLayerIds, dra
     };
   }, [cz.armed, map]);
 
-  const add = async () => {
-    if (!onAddToPool) return;
+  const run = async (fn: (idus: string[]) => Promise<void>) => {
     setAdding(true);
     setError(null);
     try {
-      await onAddToPool(cz.selectedIdus);
+      await fn(cz.selectedIdus);
       cz.clearSelection();
     } catch (e) {
-      setError(`Ajout impossible : ${(e as Error).message}`);
+      setError((e as Error).message || "Ajout impossible");
     } finally {
       setAdding(false);
     }
@@ -106,8 +109,13 @@ export function CadastreZoneControls({ map, apiBase, poolIdus, poolLayerIds, dra
           </ul>
           <div className="cz-row">
             {onAddToPool ? (
-              <button className="cz-btn cz-btn--primary" onClick={add} disabled={adding}>
+              <button className="cz-btn cz-btn--primary" onClick={() => run(onAddToPool)} disabled={adding}>
                 {adding ? "Ajout…" : "Ajouter au pool"}
+              </button>
+            ) : null}
+            {onAddAsUf && n >= 2 ? (
+              <button className="cz-btn" onClick={() => run(onAddAsUf)} disabled={adding}>
+                Grouper en unité foncière
               </button>
             ) : null}
             <button className="cz-btn cz-btn--ghost" onClick={cz.clearSelection} disabled={adding}>

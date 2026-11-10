@@ -88,6 +88,7 @@ interface ParcellesMapProps {
   urbaRevision?: number;
   /** Ajout des parcelles cadastrales sélectionnées au pool du run courant. */
   onAddToPool?: (idus: string[]) => Promise<void>;
+  onAddAsUf?: (idus: string[]) => Promise<void>;
 }
 
 const CADASTRE_API_BASE = `${getApiBaseUrl()}/api`;
@@ -219,6 +220,7 @@ export function ParcellesMap({
   indesirableCount = 0,
   urbaRevision = 0,
   onAddToPool,
+  onAddAsUf,
 }: ParcellesMapProps) {
   const activeLayers = useMemo(
     () =>
@@ -844,7 +846,10 @@ export function ParcellesMap({
         apiBase={CADASTRE_API_BASE}
         poolIdus={poolIdus}
         poolLayerIds={POOL_LAYER_IDS}
+        projectId={projectId}
+        poolRunId={poolRunId}
         onAddToPool={onAddToPool}
+        onAddAsUf={onAddAsUf}
       />
       {loadingMessage && (
         <div className="parcelles-map-loading-overlay" aria-live="polite">

@@ -1,4 +1,4 @@
-import type { UrbanismeGpuMetric, UrbanismeScore } from "../../../utils/poolMetrics";
+import type { UrbanismeGpuMetric, UrbanismeScore } from "../../../../utils/poolMetrics";
 
 const SOUS_SCORE_LABEL: Record<string, string> = {
   perennite: "Pérennité",

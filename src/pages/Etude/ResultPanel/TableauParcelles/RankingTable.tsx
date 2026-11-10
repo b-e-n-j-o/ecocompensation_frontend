@@ -1,7 +1,7 @@
 // ─── RankingTable ─────────────────────────────────────────────────────────────
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { ExportEtudeMenu } from "./ExportEtudeMenu";
-import type { ParcelleResult, ParcelPoolMetricRow, RankingSortKey } from "../../../types";
+import { ExportEtudeMenu } from "../ExportEtudeMenu";
+import type { ParcelleResult, ParcelPoolMetricRow, RankingSortKey } from "../../../../types";
 import {
   type FaunaTableEntry,
   compositeBadgeStyle,
@@ -12,8 +12,8 @@ import {
   getFaunaTableEntries,
   getFloraTableEntries,
   getPersonnesMoralesMetric,
-} from "../../../utils/poolMetrics";
-import { AppDialog } from "./AppDialog";
+} from "../../../../utils/poolMetrics";
+import { AppDialog } from "../AppDialog";
 import { RankingLine } from "./RankingLine";
 
 const PAGE_SIZE = 50;

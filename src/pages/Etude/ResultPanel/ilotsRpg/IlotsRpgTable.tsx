@@ -12,10 +12,10 @@ import {
   ScoreBlock,
   parsePersonnesMoralesPayload,
   type ParcelScorePayload,
-} from "../RankingLine";
+} from "../TableauParcelles/RankingLine";
 import { catColor, catLabel, cultureLabel, ecoBadgeStyle, formatPct, ownerColor, parcelleLabel } from "./labels";
 import { ExportEtudeMenu } from "../ExportEtudeMenu";
-import { ResultInfoNote } from "../ResultInfoNote";
+import { ResultInfoNote } from "../TableauParcelles/ResultInfoNote";
 import {
   parcellesByIlot,
   type IlotRpgParcelle,

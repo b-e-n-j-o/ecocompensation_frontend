@@ -858,6 +858,30 @@ export async function auditUfCombinations(projectId: string, maxK: number): Prom
   return res.json();
 }
 
+export async function deleteUniteFonciere(
+  projectId: string,
+  ufId: string,
+): Promise<{ uf_id: string; deleted: boolean }> {
+  const res = await fetch(`${API}/api/projects/${projectId}/uf/${encodeURIComponent(ufId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) await throwHttpError(res);
+  return res.json();
+}
+
+export async function addManualUniteFonciere(
+  projectId: string,
+  idus: string[],
+): Promise<{ uf_id: string; nb_parcelles: number; surface_ha: number }> {
+  const res = await fetch(`${API}/api/projects/${projectId}/uf-manuelle`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ idus }),
+  });
+  if (!res.ok) await throwHttpError(res);
+  return res.json();
+}
+
 export async function fetchUfResults(
   projectId: string,
   params?: {
@@ -899,6 +923,14 @@ export async function fetchIlotsRpgGeojson(
   projectId: string,
 ): Promise<FeatureCollection<Geometry, GeoJsonProperties>> {
   const res = await fetch(`${API}/api/projects/${projectId}/geojson/ilots-rpg`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function fetchPmParcellesSourceGeojson(
+  projectId: string,
+): Promise<FeatureCollection<Geometry, GeoJsonProperties>> {
+  const res = await fetch(`${API}/api/projects/${projectId}/geojson/pm-parcelles`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }

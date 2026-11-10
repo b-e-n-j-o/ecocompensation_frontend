@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ParcelleResult } from "../../../types";
+import type { ParcelleResult } from "../../../../types";
 
 interface Props {
   parcelles: ParcelleResult[];

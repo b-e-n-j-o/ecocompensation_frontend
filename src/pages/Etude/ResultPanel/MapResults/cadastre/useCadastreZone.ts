@@ -5,6 +5,7 @@
 // Les zones chargées s'accumulent (fusion par idu).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type maplibregl from "maplibre-gl";
+import { createMapHoverPopup, hideMapHoverPopup, showMapHoverPopup } from "../mapHoverPopup";
 
 export const CADASTRE_SOURCE = "cadastre-zone";
 export const CADASTRE_FILL = "cadastre-zone-fill";
@@ -40,6 +41,9 @@ interface Options {
   poolIdus: Set<string>;
   /** Couches du pool : le cadastre est inséré sous la première, et un clic sur le pool n'est pas intercepté. */
   poolLayerIds?: string[];
+  /** Run affiché : permet d'indiquer pourquoi une parcelle du cadastre a été écartée. */
+  projectId?: string | null;
+  poolRunId?: string | null;
   /**
    * Cartes UF / îlots : l'emprise et les polygones recouvrent tout le carré.
    * Le cadastre est dessiné au-dessus, y compris les parcelles déjà dans le résultat.
@@ -53,6 +57,8 @@ export function useCadastreZone({
   apiBase,
   poolIdus,
   poolLayerIds = [],
+  projectId = null,
+  poolRunId = null,
   drawAboveResults = false,
   radiusM = 500,
 }: Options) {
@@ -63,6 +69,7 @@ export function useCadastreZone({
   const [selection, setSelection] = useState<Map<string, CadastreProps>>(new Map());
 
   const featuresRef = useRef(new Map<string, CadastreFeature>());
+  const rejetsRef = useRef(new Map<string, string>());
   const raiseRef = useRef<() => void>(() => {});
   const armedRef = useRef(armed);
   armedRef.current = armed;
@@ -227,6 +234,23 @@ export function useCadastreZone({
           featuresRef.current.set(idu, f);
         }
         pushData();
+        if (projectId && poolRunId) {
+          const idus = fc.features
+            .map((f) => (f.properties?.idu != null ? String(f.properties.idu) : ""))
+            .filter(Boolean);
+          void fetch(`${apiBase}/projects/${projectId}/filtre-rejets`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ run_id: poolRunId, idus }),
+          })
+            .then((r) => (r.ok ? r.json() : { rejets: {} }))
+            .then((data: { rejets?: Record<string, string> }) => {
+              for (const [idu, label] of Object.entries(data.rejets ?? {})) {
+                rejetsRef.current.set(idu, label);
+              }
+            })
+            .catch(() => {});
+        }
         setMessage(
           fc.truncated
             ? "Zone dense : seules les 5 000 premières parcelles sont affichées."
@@ -239,13 +263,14 @@ export function useCadastreZone({
         setArmed(false);
       }
     },
-    [map, apiBase, radiusM, pushData],
+    [map, apiBase, radiusM, pushData, projectId, poolRunId],
   );
 
   // ── Clic / survol ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (!map) return;
     let hovered: string | null = null;
+    const popup = createMapHoverPopup("280px");
 
     const onClick = (e: maplibregl.MapMouseEvent) => {
       if (armedRef.current) {
@@ -281,12 +306,20 @@ export function useCadastreZone({
       if (hovered) map.setFeatureState({ source: CADASTRE_SOURCE, id: hovered }, { hover: false });
       hovered = id;
       if (id) map.setFeatureState({ source: CADASTRE_SOURCE, id }, { hover: true });
+      const raison = id ? rejetsRef.current.get(id) : undefined;
+      if (id && raison && !poolRef.current.has(id)) {
+        const safe = raison.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] ?? c));
+        showMapHoverPopup(popup, map, `<strong>${id}</strong><br/>Non retenue : ${safe}`);
+      } else {
+        hideMapHoverPopup(popup);
+      }
       map.getCanvas().style.cursor = armedRef.current ? "crosshair" : id ? "pointer" : "";
     };
 
     map.on("click", onClick);
     map.on("mousemove", onMove);
     return () => {
+      hideMapHoverPopup(popup);
       map.off("click", onClick);
       map.off("mousemove", onMove);
     };

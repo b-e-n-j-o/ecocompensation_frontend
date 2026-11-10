@@ -16,10 +16,11 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { FeatureCollection, Geometry } from "geojson";
 import type * as GeoJSON from "geojson";
-import { fetchResultsLayerGeojson } from "../../../../api";
+import { fetchResultsLayerGeojson, fetchPmParcellesSourceGeojson } from "../../../../api";
 import {
   RESULTS_LAYERS,
   buildInitialThematic,
+  DISCRIMINANT_PALETTE,
   buildDiscriminantColorExpression,
   extractDistinctValues,
   getResultsLayerDefs,
@@ -27,8 +28,16 @@ import {
   type ResultsThematicPreload,
   type ThematicLayerState,
 } from "./cartoCouchesRegistry";
-import { LegendeMapResultats } from "./LegendeMapResultats";
+import {
+  PM_PARCELLES_COLOR,
+  PM_PARCELLES_FILL,
+  PM_PARCELLES_LABEL,
+  PM_PARCELLES_LINE,
+  PM_PARCELLES_NAME_FIELD,
+  PM_PARCELLES_SOURCE,
+} from "./MapPersonnesMorales/pmParcellesSourceLayer";
 import { BaseMapToggle } from "./BaseMapToggle";
+import { LegendeMapResultats } from "./LegendeMapResultats";
 import { RESULTS_BASEMAP_STYLE, applyBaseMapMode, type BaseMapMode } from "./resultsBasemap";
 import {
   createMapHoverPopup,
@@ -51,6 +60,14 @@ function scoreNormColorExpression(): unknown[] {
 const BASE_STYLE = RESULTS_BASEMAP_STYLE;
 
 function emptyFC(): FeatureCollection { return { type: "FeatureCollection", features: [] }; }
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
 function round4(n: number) { return Math.round(n * 10000) / 10000; }
 
 function toFiniteNumber(value: unknown): number | null {
@@ -260,6 +277,21 @@ export function SousEnsemblesMap({
     buildInitialThematic(thematicLayerKeys),
   );
   const [subsetsVisible, setSubsetsVisible] = useState(false);
+  const [pmSourceVisible, setPmSourceVisible] = useState(false);
+  const [pmColorByName, setPmColorByName] = useState(true);
+  const [pmGeojson, setPmGeojson] = useState<FeatureCollection | null>(null);
+  const pmPopupRef = useRef<maplibregl.Popup | null>(null);
+  const pmHandlersBoundRef = useRef(false);
+  const pmCategories = useMemo(() => {
+    const names = extractDistinctValues(pmGeojson, PM_PARCELLES_NAME_FIELD);
+    return names.map((label, i) => ({
+      label,
+      color: DISCRIMINANT_PALETTE[i % DISCRIMINANT_PALETTE.length],
+      count: pmGeojson?.features.filter(
+        (f) => String(f.properties?.[PM_PARCELLES_NAME_FIELD] ?? "") === label,
+      ).length ?? 0,
+    }));
+  }, [pmGeojson]);
   const activeUfId = hoverUfId ?? focusUfId;
   const activeSubsetId = hoverSubsetId ?? focusSubsetId;
   const showAllSubsets = subsetsVisible || !parcellesGeojson?.features?.length;
@@ -518,6 +550,93 @@ export function SousEnsemblesMap({
 
     if (map.current.isStyleLoaded()) apply(); else map.current.once("load", apply);
   }, [geojsonWithScores, foncierGeojson, focusUfId, showAllSubsets, activeSubsetId, parcellesGeojson]);
+
+  // ── Parcelles personnes morales sources (table du pipeline UF) ──────────────
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !projectId) return;
+    let cancelled = false;
+
+    const paintColor = (data: FeatureCollection) =>
+      (pmColorByName
+        ? buildDiscriminantColorExpression(PM_PARCELLES_NAME_FIELD, data, PM_PARCELLES_COLOR)
+        : PM_PARCELLES_COLOR) as string | maplibregl.ExpressionSpecification;
+
+    const applyPaint = (mapNow: maplibregl.Map, data: FeatureCollection) => {
+      const color = paintColor(data);
+      if (mapNow.getLayer(PM_PARCELLES_FILL)) mapNow.setPaintProperty(PM_PARCELLES_FILL, "fill-color", color);
+      if (mapNow.getLayer(PM_PARCELLES_LINE)) mapNow.setPaintProperty(PM_PARCELLES_LINE, "line-color", color);
+    };
+
+    const setVisibility = () => {
+      const vis = pmSourceVisible ? "visible" : "none";
+      if (m.getLayer(PM_PARCELLES_FILL)) m.setLayoutProperty(PM_PARCELLES_FILL, "visibility", vis);
+      if (m.getLayer(PM_PARCELLES_LINE)) m.setLayoutProperty(PM_PARCELLES_LINE, "visibility", vis);
+    };
+
+    const bindHover = (mapNow: maplibregl.Map) => {
+      if (pmHandlersBoundRef.current) return;
+      const onMove = (e: maplibregl.MapLayerMouseEvent) => {
+        const props = e.features?.[0]?.properties;
+        const nom = String(props?.[PM_PARCELLES_NAME_FIELD] ?? "").trim() || "Nom inconnu";
+        const siren = String(props?.siren ?? "").trim();
+        if (!pmPopupRef.current) pmPopupRef.current = createMapHoverPopup("280px");
+        showMapHoverPopup(
+          pmPopupRef.current,
+          mapNow,
+          `<div style="font-size:12px;font-weight:650;color:#0f172a">${escapeHtml(nom)}</div>${
+            siren ? `<div style="font-size:11px;color:#64748b;margin-top:2px">SIREN ${escapeHtml(siren)}</div>` : ""
+          }`,
+        );
+        mapNow.getCanvas().style.cursor = "pointer";
+      };
+      const onLeave = () => {
+        if (pmPopupRef.current) hideMapHoverPopup(pmPopupRef.current);
+        mapNow.getCanvas().style.removeProperty("cursor");
+      };
+      mapNow.on("mousemove", PM_PARCELLES_FILL, onMove);
+      mapNow.on("mouseleave", PM_PARCELLES_FILL, onLeave);
+      pmHandlersBoundRef.current = true;
+    };
+
+    const mount = () => {
+      if (!pmSourceVisible) {
+        if (pmPopupRef.current) hideMapHoverPopup(pmPopupRef.current);
+        setVisibility();
+        return;
+      }
+      void fetchPmParcellesSourceGeojson(projectId).then((data) => {
+        if (cancelled || !map.current) return;
+        const mapNow = map.current;
+        setPmGeojson(data);
+        const existing = mapNow.getSource(PM_PARCELLES_SOURCE) as maplibregl.GeoJSONSource | undefined;
+        if (existing) existing.setData(data);
+        else {
+          mapNow.addSource(PM_PARCELLES_SOURCE, { type: "geojson", data });
+          const before = mapNow.getLayer("uf-subsets-fill") ? "uf-subsets-fill" : undefined;
+          mapNow.addLayer({
+            id: PM_PARCELLES_FILL,
+            type: "fill",
+            source: PM_PARCELLES_SOURCE,
+            paint: { "fill-color": PM_PARCELLES_COLOR, "fill-opacity": 0.45 },
+          }, before);
+          mapNow.addLayer({
+            id: PM_PARCELLES_LINE,
+            type: "line",
+            source: PM_PARCELLES_SOURCE,
+            paint: { "line-color": PM_PARCELLES_COLOR, "line-width": 1.1 },
+          }, before);
+          bindHover(mapNow);
+        }
+        applyPaint(mapNow, data);
+        setVisibility();
+      }).catch(() => undefined);
+    };
+
+    if (m.isStyleLoaded()) mount();
+    else m.once("load", mount);
+    return () => { cancelled = true; };
+  }, [pmSourceVisible, pmColorByName, projectId]);
 
   // ── Opacité UF focus / hover (sans recréer les layers) ─────────────────────
   useEffect(() => {
@@ -814,6 +933,15 @@ export function SousEnsemblesMap({
         onToggle={toggleLayer}
         bulkLoading={thematicPreloadLoading}
         onToggleValue={toggleDiscriminantValue}
+        extraLayers={[{
+          label: PM_PARCELLES_LABEL,
+          visible: pmSourceVisible,
+          onToggle: () => setPmSourceVisible((v) => !v),
+          color: PM_PARCELLES_COLOR,
+          categories: pmCategories,
+          categorized: pmColorByName,
+          onToggleCategorize: () => setPmColorByName((v) => !v),
+        }]}
       />
     </div>
   );

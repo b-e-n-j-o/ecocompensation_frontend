@@ -82,13 +82,15 @@ export function useFetchProgress(projectId: string | null) {
         ufReadyRef.current = true;
         stopPollRef.current = true;
       }
-      if (nIlots > 0) setIlotsRpgReady(true);
-      if (nParc > 0 && nUf === 0) {
-        stopPollRef.current = true;
+      if (stored.last_results_ilots_rpg && typeof stored.last_results_ilots_rpg === "object") {
+        setIlotsRpgReady(true);
       }
 
-      if (nParc > 0 || nUf > 0 || nIlots > 0) {
-        setPipelineProgress(completedPipelineProgress(nParc || undefined, nUf || undefined, nIlots || undefined));
+      if (nParc > 0 || nUf > 0 || nIlots > 0 || stored.last_results_ilots_rpg) {
+        setPipelineProgress((prev) => {
+          if (prev.uf.status === "running" || prev.ilots.status === "running") return prev;
+          return completedPipelineProgress(nParc || undefined, nUf || undefined, nIlots || undefined);
+        });
       }
       return { nParc, nUf, stored, missing: false };
     } catch (err) {

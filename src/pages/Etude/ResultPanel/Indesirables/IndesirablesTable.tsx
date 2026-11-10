@@ -1,8 +1,8 @@
 // ─── Table des parcelles « pool indésirables » (sous le classement principal) ─
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { exportCsv, exportShp } from "../../../api";
-import type { ParcelleResult, ParcelPoolMetricRow } from "../../../types";
-import { RankingLine } from "./RankingLine";
+import { exportCsv, exportShp } from "../../../../api";
+import type { ParcelleResult, ParcelPoolMetricRow } from "../../../../types";
+import { RankingLine } from "../TableauParcelles/RankingLine";
 
 const COL_SPAN_DETAIL = 9;
 

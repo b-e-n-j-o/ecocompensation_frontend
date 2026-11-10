@@ -1,5 +1,5 @@
-import type { ProjectSummary } from "../../../api";
-import type { PoolRunListItem } from "../../../types";
+import type { ProjectSummary } from "../../../../api";
+import type { PoolRunListItem } from "../../../../types";
 import { Link } from "react-router-dom";
 
 export type ResultsToolbarStatus =

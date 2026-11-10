@@ -1,4 +1,4 @@
-import type { EspacesBoisesClassesMetric, Znieff2Metric } from "../../../utils/poolMetrics";
+import type { EspacesBoisesClassesMetric, Znieff2Metric } from "../../../../utils/poolMetrics";
 
 const CLASSE_LABELS: Record<string, string> = {
   ebc: "EBC",

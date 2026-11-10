@@ -28,6 +28,7 @@ type ParcellesMapPanelProps = SharedMapProps & {
   onParcelleHover?: (idu: string | null) => void;
   urbaRevision?: number;
   onAddToPool?: (idus: string[]) => Promise<void>;
+  onAddAsUf?: (idus: string[]) => Promise<void>;
 };
 
 type UnitesMapPanelProps = SharedMapProps & {
@@ -159,6 +160,7 @@ export function EtudeResultatsParcellesMap({
   onParcelleHover,
   urbaRevision = 0,
   onAddToPool,
+  onAddAsUf,
 }: ParcellesMapPanelProps) {
   if (!geojson) {
     return <MapEmpty>GeoJSON parcelles indisponible.</MapEmpty>;
@@ -182,6 +184,7 @@ export function EtudeResultatsParcellesMap({
       onParcelleHover={onParcelleHover}
       urbaRevision={urbaRevision}
       onAddToPool={onAddToPool}
+      onAddAsUf={onAddAsUf}
     />
   );
 }

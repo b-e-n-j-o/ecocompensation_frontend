@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { AppDialog } from "./ResultPanel/AppDialog";
-import { ResultsToolbar, type ResultsToolbarStatus } from "./ResultPanel/ResultsToolbar";
+import { ResultsToolbar, type ResultsToolbarStatus } from "./ResultPanel/TableauParcelles/ResultsToolbar";
 import { FilterParamsTab } from "./FiltrageParam/FilterParamTab";
 import { readFilterConfig } from "./FiltrageParam/FilterCatalog";
 import type { FilterConfig } from "./FiltrageParam/FilterCatalog";
@@ -40,6 +40,8 @@ import {
   fetchPoolRunDureteJob,
   computePoolRunUrbanisme,
   addParcellesToPoolRun,
+  addManualUniteFonciere,
+  deleteUniteFonciere,
   integrateManualParcelles,
   startUfSearch,
 } from "../../api";
@@ -67,8 +69,8 @@ import { ProjectContextMap } from "../../components/ProjectContextMap";
 import { getStudyProfile, getMapLayerKeys } from "./studyProfiles";
 import { parseStoredFilterResponse, parseStoredLastFilter } from "../../utils/storedFilterResults";
 import { normalizeStudyType } from "../../types/studyTypes";
-import "./ResultPanel/results.css";
-import "./ResultPanel/results-page.css";
+import "./ResultPanel/TableauParcelles/results.css";
+import "./ResultPanel/TableauParcelles/results-page.css";
 import type { FeatureCollection, GeoJsonProperties, Geometry } from "geojson";
 import { IlotsRpgMap, IlotsRpgTable, type IlotsRpgGeojson, type IlotsRpgResponse } from "./ResultPanel/ilotsRpg";
 
@@ -946,6 +948,61 @@ export function EtudeResultats({
     });
   }
 
+  async function handleAddAsUf(idus: string[]) {
+    if (!projectId) return;
+    const created = await addManualUniteFonciere(projectId, idus);
+    const cesbioLibelles =
+      lastFilterOptions?.vegetation_hybride?.cesbio_libelles?.filter(Boolean) ?? [
+        "Forêts de conifères",
+        "Forêts de feuillus",
+      ];
+    const faunaSpecies = lastFilterOptions?.faune_criteria?.[0]?.tax_nom_val?.trim() || "";
+    const uf = await fetchUfResults(projectId, {
+      fauna_species: faunaSpecies || undefined,
+      cesbio_libelles: cesbioLibelles,
+      miller_thresh: lastFilterOptions?.miller_threshold ?? 0.39,
+      study_type: currentStudyProfile.id,
+      min_zone_humide_ha: lastFilterOptions?.min_zone_humide_ha,
+    });
+    setUfResults(uf);
+    setSousEnsemblesStatus("yes");
+    try {
+      const ufGeo = await loadUfMapGeojson(projectId);
+      setUfGeojson(ufGeo.subsets);
+      setUfParcellesGeojson(ufGeo.parcelles);
+    } catch {
+      /* la carte UF se rechargera à l'ouverture de l'onglet */
+    }
+    setToolNotice({
+      title: "Unité foncière",
+      body: `${created.nb_parcelles} parcelles groupées (${created.surface_ha.toLocaleString("fr-FR")} ha). Elles figurent dans le pool des unités foncières.`,
+    });
+  }
+
+  async function handleRemoveUf(ufId: string) {
+    if (!projectId) return;
+    await deleteUniteFonciere(projectId, ufId);
+    setUfResults((prev) => {
+      if (!prev) return prev;
+      const unites = (prev.unites_foncieres ?? [])
+        .filter((u) => u.uf_id !== ufId)
+        .map((u, i) => ({ ...u, rang: i + 1 }));
+      return {
+        ...prev,
+        unites_foncieres: unites,
+        total_uf: unites.length,
+        total_sous_ensembles: unites.reduce((n, u) => n + (u.sous_ensembles?.length ?? 0), 0),
+      };
+    });
+    try {
+      const ufGeo = await loadUfMapGeojson(projectId);
+      setUfGeojson(ufGeo.subsets);
+      setUfParcellesGeojson(ufGeo.parcelles);
+    } catch {
+      /* carte éventuellement vide si plus d'UF */
+    }
+  }
+
   async function handleAddParcelles(idus: string[]) {
     const runId = initialRunId ?? results?.pool_run_id ?? null;
     if (!projectId || !runId) return;
@@ -1397,12 +1454,14 @@ export function EtudeResultats({
   const hasCombinedRanking = (ufResults?.unites_foncieres ?? []).some(
     (u) => (u.sous_ensembles ?? []).length > 0,
   );
+  const ufRunning = pipelineProgress.uf.status === "running";
+  const ilotsRunning = pipelineProgress.ilots.status === "running";
   const isSplitParcelView = mainResultsTab === "parcelles" || mainResultsTab === "combine";
   const isSplitUfView = mainResultsTab === "unites" && !!ufResults;
   const showIlotsTab = appliedFilterConfig?.include_ilots_rpg === true
     || ilotsRpgReady
     || (ilotsResults?.ilots.length ?? 0) > 0;
-  const isSplitIlotsView = mainResultsTab === "ilots" && !!ilotsResults;
+  const isSplitIlotsView = mainResultsTab === "ilots" && (ilotsResults?.ilots.length ?? 0) > 0;
 
   const resultsContentClass = `results-content${
     isSplitParcelView || isSplitUfView || isSplitIlotsView ? "" : " results-content--full"
@@ -1448,6 +1507,7 @@ export function EtudeResultats({
       onParcelleHover={setHoverIdu}
       urbaRevision={metricsRefreshNonce}
       onAddToPool={handleAddParcelles}
+      onAddAsUf={handleAddAsUf}
     />
   );
 
@@ -1530,7 +1590,7 @@ export function EtudeResultats({
                 }
               >
                 Groupement de parcelles de personnes morales
-                {!ufReady && parcellesReady && sousEnsemblesStatus !== "no" && (
+                {(ufRunning || (!ufReady && parcellesReady && sousEnsemblesStatus !== "no")) && (
                   <span className="results-tab-spinner" aria-hidden="true" />
                 )}
               </button>
@@ -1541,7 +1601,7 @@ export function EtudeResultats({
                   onClick={() => setMainResultsTab("ilots")}
                 >
                   Îlots agricoles
-                  {!ilotsResults && !ilotsRpgError && parcellesReady && (
+                  {ilotsRunning && (
                     <span className="results-tab-spinner" aria-hidden="true" />
                   )}
                 </button>
@@ -1708,7 +1768,7 @@ export function EtudeResultats({
                 />
               )}
 
-              {mainResultsTab === "ilots" && ilotsResults && (
+              {mainResultsTab === "ilots" && ilotsResults && ilotsResults.ilots.length > 0 && (
                 <ResultsSplit
                   mapVisible={splitMapVisible}
                   tableShare={tableShare}
@@ -1752,11 +1812,23 @@ export function EtudeResultats({
                   }
                 />
               )}
-              {mainResultsTab === "ilots" && !ilotsResults && !ilotsRpgError && (
+              {mainResultsTab === "ilots" && ilotsRunning && !ilotsResults && (
                 <div className="uf-loading">
                   <span className="parcelles-map-spinner" aria-hidden="true" />
                   <p>Calcul des îlots agricoles en cours…</p>
-                  <PipelineProgressPanel progress={pipelineProgress} compact showIlots />
+                  <PipelineProgressPanel progress={pipelineProgress} compact showUf={false} showIlots />
+                </div>
+              )}
+              {mainResultsTab === "ilots" && ilotsResults && ilotsResults.ilots.length === 0 && (
+                <div style={{ padding: 12, color: "#000000", fontSize: 13 }}>
+                  Aucun îlot agricole ne correspond aux critères.
+                </div>
+              )}
+              {mainResultsTab === "ilots" && !ilotsResults && !ilotsRunning && !ilotsRpgError && parcellesReady && (
+                <div className="uf-loading">
+                  <span className="parcelles-map-spinner" aria-hidden="true" />
+                  <p>Calcul des îlots agricoles en cours…</p>
+                  <PipelineProgressPanel progress={pipelineProgress} compact showUf={false} showIlots />
                 </div>
               )}
               {mainResultsTab === "ilots" && ilotsRpgError && !ilotsResults && (
@@ -1779,6 +1851,7 @@ export function EtudeResultats({
                     hoverParcelleIdu={hoverParcelleIdu}
                     onSubsetActivate={handleTableSubsetActivate}
                     onUfActivate={handleTableUfActivate}
+                    onRemoveUf={handleRemoveUf}
                     onSubsetHover={setHoverSubsetId}
                     onUfHover={setHoverUfId}
                     onParcelleHover={setHoverParcelleIdu}
@@ -1787,7 +1860,7 @@ export function EtudeResultats({
                   map={<SplitMapFrame>{ufMapPanel}</SplitMapFrame>}
                 />
               )}
-              {mainResultsTab === "unites" && !ufResults && (ufPoolLoading || (!ufReady && parcellesReady && sousEnsemblesStatus !== "no")) && (
+              {mainResultsTab === "unites" && !ufResults && (ufRunning || ufPoolLoading || (!ufReady && parcellesReady && sousEnsemblesStatus !== "no")) && (
                 <div className="uf-loading">
                   <span className="parcelles-map-spinner" aria-hidden="true" />
                   <p>Calcul des unités foncières en cours…</p>
@@ -1802,7 +1875,7 @@ export function EtudeResultats({
                   Aucune unité foncière ne correspond aux critères (végétation / faune / Miller).
                 </div>
               )}
-              {mainResultsTab === "unites" && !ufResults && !ufPoolLoading && !ufReady && sousEnsemblesStatus === "no" && !ufSearchLoading && (
+              {mainResultsTab === "unites" && !ufResults && !ufPoolLoading && !ufRunning && !ufReady && sousEnsemblesStatus === "no" && !ufSearchLoading && (
                 <div style={{ padding: 12, color: "#000000", fontSize: 13, display: "grid", gap: 10, justifyItems: "start" }}>
                   <p style={{ margin: 0 }}>
                     Ce filtrage a été lancé sur les parcelles seules. La recherche des groupements

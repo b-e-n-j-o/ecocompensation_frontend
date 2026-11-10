@@ -28,6 +28,9 @@ interface LegendeMapResultatsProps {
     visible: boolean;
     onToggle: () => void;
     color?: string;
+    categories?: Array<{ label: string; color: string; count: number }>;
+    categorized?: boolean;
+    onToggleCategorize?: () => void;
   }>;
   bulkLoading?: boolean;
   onToggleValue?: (layerKey: string, value: string) => void;
@@ -47,7 +50,7 @@ export function LegendeMapResultats({
 }: LegendeMapResultatsProps) {
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
 
-  if (layers.length === 0) return null;
+  if (layers.length === 0 && extraLayers.length === 0 && !primaryLayer) return null;
 
   function toggleExpand(key: string) {
     setExpandedKeys((prev) => {
@@ -97,21 +100,62 @@ export function LegendeMapResultats({
             ) : null}
           </li>
         )}
-        {extraLayers.map((layer) => (
-          <li key={layer.label}>
-            <button
-              type="button"
-              className={`map-legende__row${layer.visible ? " is-on" : " is-off"}`}
-              onClick={layer.onToggle}
-            >
-              <span
-                className={`map-legende__dot${layer.visible ? " is-on" : ""}`}
-                style={{ ["--dot-color" as string]: layer.color ?? "#2f7d5b" }}
-              />
-              <span className="map-legende__label">{layer.label}</span>
-            </button>
-          </li>
-        ))}
+        {extraLayers.map((layer) => {
+          const isExpanded = expandedKeys.has(layer.label);
+          const categories = layer.categories ?? [];
+          return (
+            <li key={layer.label}>
+              <div style={{ display: "flex", alignItems: "center" }}>
+                <button
+                  type="button"
+                  className={`map-legende__row${layer.visible ? " is-on" : " is-off"}`}
+                  onClick={layer.onToggle}
+                >
+                  <span
+                    className={`map-legende__dot${layer.visible ? " is-on" : ""}`}
+                    style={{ ["--dot-color" as string]: layer.color ?? "#2f7d5b" }}
+                  />
+                  <span className="map-legende__label">{layer.label}</span>
+                </button>
+                {layer.visible && categories.length > 0 && (
+                  <button
+                    type="button"
+                    className="map-legende__expand"
+                    onClick={() => toggleExpand(layer.label)}
+                    title={isExpanded ? "Replier" : "Par personne morale"}
+                  >
+                    {isExpanded ? "▴" : "▾"}
+                  </button>
+                )}
+              </div>
+              {layer.visible && layer.onToggleCategorize && (
+                <button
+                  type="button"
+                  className="map-legende__value"
+                  onClick={layer.onToggleCategorize}
+                >
+                  {layer.categorized ? "Couleur unique" : "Couleur par nom"}
+                </button>
+              )}
+              {layer.visible && layer.categorized && isExpanded && categories.length > 0 && (
+                <ul className="map-legende__values" style={{ maxHeight: 220, overflow: "auto" }}>
+                  {categories.map((cat) => (
+                    <li key={cat.label}>
+                      <span className="map-legende__value">
+                        <span
+                          className="map-legende__swatch"
+                          style={{ background: cat.color }}
+                        />
+                        <span className="map-legende__value-label">{cat.label}</span>
+                        <span className="map-legende__meta">{cat.count.toLocaleString("fr-FR")}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          );
+        })}
         {layers.map((def) => {
           const st = layersState[def.key];
           if (!st) return null;

@@ -1,5 +1,5 @@
 // Vue « parcelles » des UF personnes morales (miroir de backend uf_parcelles.py).
-import type { UniteFoncieresResult } from "../../../types";
+import type { UniteFoncieresResult } from "../../../../types";
 
 export interface UfParcelle {
   idu: string;

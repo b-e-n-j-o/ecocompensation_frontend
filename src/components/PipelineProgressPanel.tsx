@@ -42,6 +42,9 @@ function StageBlock({ stageKey, stage }: { stageKey: MainStageKey; stage: StageP
         <span className="pipeline-stage-title">{MAIN_STAGE_LABELS[stageKey]}</span>
         {count && <span className="pipeline-stage-count">{count}</span>}
       </div>
+      {stage.status === "running" && stage.detail && (
+        <p className="pipeline-stage-detail">{stage.detail}</p>
+      )}
       <ul className="pipeline-substeps">
         {SUBSTEP_ORDER.map((key) => (
           <li
@@ -49,7 +52,12 @@ function StageBlock({ stageKey, stage }: { stageKey: MainStageKey; stage: StageP
             className={`pipeline-substep pipeline-substep--${stage.substeps[key]}`}
           >
             <SubstepIcon status={stage.substeps[key]} />
-            <span>{SUBSTEP_LABELS[key]}</span>
+            <span>
+              {SUBSTEP_LABELS[key]}
+              {key === "sol" && stage.substeps.sol === "running" && stage.solProgress
+                ? ` — ${Math.max(stage.solProgress.total - stage.solProgress.done, 0)} restante${stage.solProgress.total - stage.solProgress.done > 1 ? "s" : ""}`
+                : ""}
+            </span>
           </li>
         ))}
       </ul>

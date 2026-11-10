@@ -10,7 +10,7 @@
  * Rétro-compatible : un résultat V3 (sans detail_axes.v4) est affiché à partir de axeN/axeN_note.
  */
 import React, { useMemo, useState } from "react";
-import { type DureteFonciereMetric, dureteSkipReasonLabel } from "../../../utils/poolMetrics";
+import { type DureteFonciereMetric, dureteSkipReasonLabel } from "../../../../utils/poolMetrics";
 
 /* ------------------------------------------------------------------ Types (sortie pipeline V4) */
 
