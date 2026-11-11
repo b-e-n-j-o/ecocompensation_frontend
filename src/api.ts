@@ -10,7 +10,6 @@ import type {
 import type { FeatureCollection, Geometry, GeoJsonProperties } from "geojson";
 import {
   RESULTS_LAYERS,
-  getResultsLayerDefs,
   type ResultsThematicPreload,
 } from "./pages/Etude/ResultPanel/MapResults/cartoCouchesRegistry";
 
@@ -838,26 +837,6 @@ export async function integrateManualParcelles(
   return res.json();
 }
 
-export type UfCombinationsAudit = {
-  max_k: number;
-  cap_parcelles_uf: number;
-  cap_parcelles_uf_actuel: number;
-  n_uf: number;
-  n_uf_au_dela_du_plafond_actuel: number;
-  n_combinaisons: number;
-  n_combinaisons_surface_ok: number;
-  par_taille: Record<string, number>;
-  secondes: number;
-};
-
-export async function auditUfCombinations(projectId: string, maxK: number): Promise<UfCombinationsAudit> {
-  const res = await fetch(
-    `${API}/api/projects/${projectId}/uf-combinations-audit?max_k=${maxK}`,
-  );
-  if (!res.ok) throw new Error(`Audit combinaisons UF : ${res.status}`);
-  return res.json();
-}
-
 export async function deleteUniteFonciere(
   projectId: string,
   ufId: string,
@@ -872,7 +851,14 @@ export async function deleteUniteFonciere(
 export async function addManualUniteFonciere(
   projectId: string,
   idus: string[],
-): Promise<{ uf_id: string; nb_parcelles: number; surface_ha: number }> {
+): Promise<{
+  uf_id: string;
+  nb_parcelles: number;
+  idus: string[];
+  surface_ha: number | null;
+  verdict: boolean | null;
+  motif_rejet: string | null;
+}> {
   const res = await fetch(`${API}/api/projects/${projectId}/uf-manuelle`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -935,19 +921,33 @@ export async function fetchPmParcellesSourceGeojson(
   return res.json();
 }
 
-export async function fetchUfSubsetsGeojson(
-  projectId: string,
-): Promise<FeatureCollection<Geometry, GeoJsonProperties>> {
-  const res = await fetch(`${API}/api/projects/${projectId}/geojson/uf-subsets`);
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
-}
-
 export async function fetchUfParcellesGeojson(
   projectId: string,
 ): Promise<FeatureCollection<Geometry, GeoJsonProperties>> {
   const res = await fetch(`${API}/api/projects/${projectId}/geojson/uf-parcelles`);
   if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function fetchUfOccupationSolGeojson(
+  projectId: string,
+  ufId: string,
+): Promise<FeatureCollection<Geometry, GeoJsonProperties>> {
+  const res = await fetch(
+    `${API}/api/projects/${projectId}/uf/${encodeURIComponent(ufId)}/occupation-sol.geojson`,
+  );
+  if (!res.ok) throw new Error(`Occupation du sol UF : ${res.status}`);
+  return res.json();
+}
+
+export async function fetchParcelleOccupationSolGeojson(
+  projectId: string,
+  idu: string,
+): Promise<FeatureCollection<Geometry, GeoJsonProperties>> {
+  const res = await fetch(
+    `${API}/api/projects/${projectId}/parcelles/${encodeURIComponent(idu)}/occupation-sol.geojson`,
+  );
+  if (!res.ok) throw new Error(`Occupation du sol parcelle : ${res.status}`);
   return res.json();
 }
 
@@ -1267,6 +1267,23 @@ export async function fetchUrbaEntitesGeojson(
   return res.json();
 }
 
+export type FilterLayerApiDef = {
+  key: string;
+  label: string;
+  groupe: "exclusion" | "critere" | "contexte";
+  color: string;
+  discriminant?: string | null;
+  popup_fields?: { field: string; label: string }[];
+  geom_type?: string;
+};
+
+export async function fetchFilterMapLayers(projectId: string): Promise<FilterLayerApiDef[]> {
+  const res = await fetch(`${API}/api/projects/${projectId}/geojson/filter-layers`);
+  if (!res.ok) throw new Error(await res.text());
+  const body = await res.json();
+  return Array.isArray(body?.layers) ? body.layers : [];
+}
+
 export async function fetchResultsLayerGeojson(
   projectId: string,
   layerKey: string,
@@ -1291,17 +1308,15 @@ export async function prefetchAllResultsThematicLayers(
   poolRunId?: string | null,
   layerKeys?: string[],
 ): Promise<ResultsThematicPreload> {
-  const defs = layerKeys?.length
-    ? getResultsLayerDefs(layerKeys)
-    : RESULTS_LAYERS;
+  const keys = layerKeys?.length ? layerKeys : RESULTS_LAYERS.map((d) => d.key);
   const out: ResultsThematicPreload = {};
   await Promise.all(
-    defs.map(async (def) => {
+    keys.map(async (key) => {
       try {
-        const data = await fetchResultsLayerGeojson(projectId, def.key, poolRunId);
-        out[def.key] = { geojson: data, error: null };
+        const data = await fetchResultsLayerGeojson(projectId, key, poolRunId);
+        out[key] = { geojson: data, error: null };
       } catch (e) {
-        out[def.key] = {
+        out[key] = {
           geojson: null,
           error: e instanceof Error ? e.message : String(e),
         };

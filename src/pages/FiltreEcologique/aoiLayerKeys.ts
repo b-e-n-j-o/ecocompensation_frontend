@@ -3,8 +3,8 @@ import type { LayerInfo } from "../../api";
 /** Toujours exécutées — pas de case à cocher. */
 export const ALWAYS_FETCH_KEYS = new Set(["parcelles"]);
 
-/** Cluster PPM → sous-ensembles, toujours exécuté avec le fetch UF. */
-export const UF_BUNDLE_KEYS = ["sous_ensembles"] as const;
+/** Couche UF du pipeline, hors fetch SIG des couches d'emprise. */
+export const UF_BUNDLE_KEYS = ["unites_foncieres"] as const;
 export const FAUNA_LAYER_KEY = "fauna" as const;
 
 export const PRIMARY_OPTIONAL_LAYER_KEYS = [

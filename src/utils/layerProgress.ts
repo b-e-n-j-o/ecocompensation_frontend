@@ -2,7 +2,7 @@ export type LayerStatus = "pending" | "running" | "done" | "skipped" | "error";
 
 export type LayerState = { status: LayerStatus; n_inserted?: number; message?: string };
 
-const UF_LAYER_KEYS = new Set(["unites_foncieres", "sous_ensembles", "enrich_uf"]);
+const UF_LAYER_KEYS = new Set(["unites_foncieres"]);
 
 export function isUfLayerKey(key: string): boolean {
   return UF_LAYER_KEYS.has(key);
@@ -111,6 +111,5 @@ export function applyWsLayerEvent(
 }
 
 export const DEFAULT_UF_PHASES = [
-  { key: "sous_ensembles", label: "Unités foncières (PPM → sous-ensembles)" },
-  { key: "enrich_uf", label: "Enrichissement UF (végétation / faune)" },
+  { key: "unites_foncieres", label: "Unités foncières (personnes morales)" },
 ] as const;

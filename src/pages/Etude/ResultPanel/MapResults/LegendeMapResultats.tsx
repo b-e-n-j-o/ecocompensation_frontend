@@ -6,12 +6,20 @@
  */
 
 import { useState, type ReactNode } from "react";
+import { CESBIO_LIBELLE_COLORS } from "../../../../types";
 import {
   DISCRIMINANT_PALETTE,
   extractDistinctValues,
   type ResultsLayerDef,
   type ThematicLayerState,
 } from "./cartoCouchesRegistry";
+
+const SECTION_ORDER = ["exclusion", "critere", "contexte"] as const;
+const SECTION_LABEL: Record<(typeof SECTION_ORDER)[number], string> = {
+  exclusion: "Exclusions",
+  critere: "Critères",
+  contexte: "Contexte",
+};
 
 interface LegendeMapResultatsProps {
   layers: ResultsLayerDef[];
@@ -49,6 +57,10 @@ export function LegendeMapResultats({
   embedded = false,
 }: LegendeMapResultatsProps) {
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
+  const [openSections, setOpenSections] = useState<Set<string>>(
+    () => new Set(SECTION_ORDER),
+  );
+  const [collapsed, setCollapsed] = useState(false);
 
   if (layers.length === 0 && extraLayers.length === 0 && !primaryLayer) return null;
 
@@ -156,10 +168,32 @@ export function LegendeMapResultats({
             </li>
           );
         })}
-        {layers.map((def) => {
+        {SECTION_ORDER.flatMap((groupe) => {
+          const section = layers.filter((d) => (d.groupe ?? "critere") === groupe && layersState[d.key]);
+          if (!section.length) return [];
+          const sectionOpen = openSections.has(groupe);
+          return [
+            <li key={`sec-${groupe}`}>
+              <button
+                type="button"
+                className="map-legende__section"
+                onClick={() => {
+                  setOpenSections((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(groupe)) next.delete(groupe);
+                    else next.add(groupe);
+                    return next;
+                  });
+                }}
+                aria-expanded={sectionOpen}
+              >
+                <strong>{SECTION_LABEL[groupe]}</strong>
+                <span className="map-legende__expand" aria-hidden>{sectionOpen ? "▴" : "▾"}</span>
+              </button>
+            </li>,
+            ...(sectionOpen ? section.map((def) => {
           const st = layersState[def.key];
           if (!st) return null;
-
           const isExpanded = expandedKeys.has(def.key);
           const hasDiscriminant = !!def.discriminantField && st.loadState === "loaded" && !!st.geojson;
           const distinctValues = hasDiscriminant
@@ -179,7 +213,10 @@ export function LegendeMapResultats({
                     className={`map-legende__dot${st.visible ? " is-on" : ""}`}
                     style={{ ["--dot-color" as string]: swatchColor }}
                   />
-                  <span className="map-legende__label">{def.label}</span>
+                  <span className="map-legende__label">
+                    {def.label}
+                    {st.truncated ? <span title="Couche tronquée à 20 000 entités"> ⚠</span> : null}
+                  </span>
                   {st.loadState === "loading" && (
                     <span className="parcelles-map-spinner" aria-hidden />
                   )}
@@ -216,7 +253,9 @@ export function LegendeMapResultats({
                 <ul className="map-legende__values">
                   {distinctValues.map((val) => {
                     const idx = distinctValues.indexOf(val);
-                    const color = DISCRIMINANT_PALETTE[(idx >= 0 ? idx : 0) % DISCRIMINANT_PALETTE.length];
+                    const color = def.discriminantField === "libelle_prio"
+                      ? (CESBIO_LIBELLE_COLORS[val] ?? DISCRIMINANT_PALETTE[(idx >= 0 ? idx : 0) % DISCRIMINANT_PALETTE.length])
+                      : DISCRIMINANT_PALETTE[(idx >= 0 ? idx : 0) % DISCRIMINANT_PALETTE.length];
                     const selected = st.selectedValues;
                     const isActive = !selected || selected.includes(val);
                     const count = st.geojson!.features.filter(
@@ -248,6 +287,8 @@ export function LegendeMapResultats({
               )}
             </li>
           );
+            }) : []),
+          ];
         })}
       </ul>
     </>
@@ -255,9 +296,32 @@ export function LegendeMapResultats({
 
   if (embedded) return body;
 
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        className="map-legende map-legende--collapsed"
+        onClick={() => setCollapsed(false)}
+        title="Ouvrir la légende"
+      >
+        Légende
+      </button>
+    );
+  }
+
   return (
     <div className="map-legende">
-      <div className="map-legende__head">Couches</div>
+      <div className="map-legende__head">
+        Couches
+        <button
+          type="button"
+          className="map-legende__collapse"
+          onClick={() => setCollapsed(true)}
+          title="Réduire la légende"
+        >
+          −
+        </button>
+      </div>
       {body}
     </div>
   );

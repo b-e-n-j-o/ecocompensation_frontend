@@ -12,19 +12,22 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { FeatureCollection, Geometry } from "geojson";
 import type * as GeoJSON from "geojson";
-import { fetchResultsLayerGeojson, fetchUrbaEntitesGeojson } from "../../../../api";
+import { fetchParcelleOccupationSolGeojson, fetchResultsLayerGeojson, fetchUrbaEntitesGeojson } from "../../../../api";
+import { OccupationSolLegend, useOccupationSolLayer } from "../TableauParcelles/occupationSol";
 import { getApiBaseUrl } from "../../../../config/apiBase";
 import { CadastreZoneControls } from "./cadastre/CadastreZoneControls";
 import { BaseMapToggle } from "./BaseMapToggle";
 import { RESULTS_BASEMAP_STYLE, applyBaseMapMode, type BaseMapMode } from "./resultsBasemap";
 import type { ParcelPoolMetricRow } from "../../../../types";
 import {
-  RESULTS_LAYERS,
   buildInitialThematic,
   buildDiscriminantColorExpression,
   extractDistinctValues,
-  getResultsLayerDefs,
+  mapLayerKeysToEnsure,
+  companionOf,
+  styleForLayerKey,
   thematicLayerIds,
+  type ResultsLayerDef,
   type ResultsThematicPreload,
   type ThematicLayerState,
 } from "./cartoCouchesRegistry";
@@ -81,7 +84,7 @@ interface ParcellesMapProps {
   /** Métriques pool préchargées, utilisées pour la couleur de score. */
   poolMetricsByIdu?: Record<string, ParcelPoolMetricRow[]> | null;
   /** Clés des couches thématiques à afficher (selon type d'étude). */
-  thematicLayerKeys?: string[];
+  layerDefs: ResultsLayerDef[];
   /** Nombre de parcelles indésirables (légende carte). */
   indesirableCount?: number;
   /** Incrémenté après un profil urbanisme pour recharger les entités. */
@@ -216,19 +219,18 @@ export function ParcellesMap({
   preloadedThematic,
   thematicPreloadLoading = false,
   poolMetricsByIdu = null,
-  thematicLayerKeys,
+  layerDefs,
   indesirableCount = 0,
   urbaRevision = 0,
   onAddToPool,
   onAddAsUf,
 }: ParcellesMapProps) {
-  const activeLayers = useMemo(
-    () =>
-      getResultsLayerDefs(
-        thematicLayerKeys ?? RESULTS_LAYERS.map((d) => d.key),
-      ),
-    [thematicLayerKeys],
-  );
+  const activeLayers = layerDefs;
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      console.debug("[ParcellesMap] activeLayers", activeLayers.map((d) => [d.groupe, d.key]));
+    }
+  }, [activeLayers]);
 
   const mapContainer       = useRef<HTMLDivElement>(null);
   const map                = useRef<maplibregl.Map | null>(null);
@@ -254,13 +256,24 @@ export function ParcellesMap({
   const fetchedRef         = useRef<Set<string>>(new Set());
 
   const [thematicState, setThematicState] = useState<Record<string, ThematicLayerState>>(() =>
-    buildInitialThematic(thematicLayerKeys),
+    buildInitialThematic(layerDefs),
   );
   const [parcellesVisible, setParcellesVisible] = useState(true);
-  const [floreVisible, setFloreVisible] = useState(false);
+  const [floreVisible, setFloreVisible] = useState(false); // réservé couche réserve foncière hors filtre
   const [baseMapMode, setBaseMapMode] = useState<BaseMapMode>("satellite");
   const scoreColorMode: ScoreColorMode = "ecologique";
   const [mapReady, setMapReady] = useState(false);
+  const [solVisible, setSolVisible] = useState(true);
+  useEffect(() => {
+    if (focusIdu) setSolVisible(true);
+  }, [focusIdu]);
+  const occupation = useOccupationSolLayer(map, mapReady, {
+    key: solVisible && focusIdu ? focusIdu : null,
+    fetcher: (idu) => fetchParcelleOccupationSolGeojson(projectId ?? "", idu),
+    visible: solVisible && !!focusIdu,
+    beforeLayerId: "parcelles-outline",
+    beforeLayerId: "parcelles-outline",
+  });
   const [urbaData, setUrbaData] = useState<UrbaFeatureCollection>(EMPTY_URBA);
   const [urbaHidden, setUrbaHidden] = useState<Set<string>>(() => new Set());
   const [urbaLoading, setUrbaLoading] = useState(false);
@@ -306,47 +319,48 @@ export function ParcellesMap({
 
   // Reset au changement de projet ou de run pool (critères CESBIO / faune)
   useEffect(() => {
-    setThematicState(buildInitialThematic(thematicLayerKeys));
+    setThematicState(buildInitialThematic(layerDefs));
     fetchedRef.current = new Set();
     setParcellesVisible(true);
     didInitialFitRef.current = false;
     parcelHandlersBoundRef.current = false;
-  }, [projectId, poolRunId, thematicLayerKeys]);
+  }, [projectId, poolRunId, layerDefs]);
 
   // Préchargement des couches thématiques (après filtrage) — données prêtes, visibilité inchangée
   useEffect(() => {
     if (preloadedThematic === undefined) return;
     if (preloadedThematic === null) {
-      setThematicState(buildInitialThematic(thematicLayerKeys));
+      setThematicState(buildInitialThematic(layerDefs));
       fetchedRef.current = new Set();
       return;
     }
     setThematicState((prev) => {
       const next = { ...prev };
-      for (const def of activeLayers) {
-        const p = preloadedThematic[def.key];
+      for (const key of mapLayerKeysToEnsure(activeLayers)) {
+        const p = preloadedThematic[key];
         if (!p) continue;
-        const cur = prev[def.key];
+        const cur = prev[key];
         if (p.error) {
-          next[def.key] = {
-            visible: cur.visible,
+          next[key] = {
+            visible: cur?.visible ?? false,
             loadState: "error",
             geojson: null,
             error: p.error,
           };
         } else if (p.geojson) {
-          next[def.key] = {
-            visible: cur.visible,
+          next[key] = {
+            visible: cur?.visible ?? false,
             loadState: "loaded",
             geojson: p.geojson,
             error: null,
+            truncated: Boolean((p.geojson as { truncated?: boolean }).truncated),
           };
         }
-        fetchedRef.current.add(def.key);
+        fetchedRef.current.add(key);
       }
       return next;
     });
-  }, [preloadedThematic, activeLayers, thematicLayerKeys]);
+  }, [preloadedThematic, activeLayers, layerDefs]);
 
   // ── Init carte ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -422,8 +436,9 @@ export function ParcellesMap({
         ensureHighlightOutlineLayer(map.current);
 
         // Couches thématiques — insérées AVANT parcelles (restent en dessous)
-        for (const def of activeLayers) {
-          const { sourceId, fillId, lineId, circleId } = thematicLayerIds(def.key);
+        for (const key of mapLayerKeysToEnsure(activeLayers)) {
+          const def = styleForLayerKey(activeLayers, key);
+          const { sourceId, fillId, lineId, circleId } = thematicLayerIds(key);
           if (!map.current.getSource(sourceId)) {
             map.current.addSource(sourceId, { type: "geojson", data: emptyFC() });
             map.current.addLayer(
@@ -631,6 +646,22 @@ export function ParcellesMap({
   }, [focusIdu, hoverIdu, geojsonWithScoreRatio]);
 
   useEffect(() => {
+    const m = map.current;
+    if (!m || !mapReady || !m.getLayer("parcelles-fill")) return;
+    const showSol = solVisible && !!focusIdu && (occupation.data?.features.length ?? 0) > 0;
+    m.setPaintProperty(
+      "parcelles-fill",
+      "fill-opacity",
+      showSol
+        ? ["case", ["==", ["get", "idu"], focusIdu], 0.08, 0.4]
+        : 0.4,
+    );
+    if (m.getLayer("parcelles-highlight-fill")) {
+      m.setPaintProperty("parcelles-highlight-fill", "fill-opacity", showSol ? 0.05 : 0.38);
+    }
+  }, [mapReady, solVisible, focusIdu, occupation.data]);
+
+  useEffect(() => {
     const current = map.current;
     if (!mapReady || !current || !focusIdu || !geojsonWithScoreRatio?.features?.length) return;
     const token = `${focusIdu}:${focusZoomNonce}`;
@@ -734,13 +765,52 @@ export function ParcellesMap({
     }
   }, [parcellesVisible, geojson]);
 
+  // ── Couches thématiques ajoutées après le premier rendu de la carte ────────
+  useEffect(() => {
+    const current = map.current;
+    if (!current || !mapReady) return;
+    const before = current.getLayer("parcelles-fill") ? "parcelles-fill" : undefined;
+    for (const key of mapLayerKeysToEnsure(activeLayers)) {
+      const def = styleForLayerKey(activeLayers, key);
+      const { sourceId, fillId, lineId, circleId } = thematicLayerIds(key);
+      if (current.getSource(sourceId)) continue;
+      current.addSource(sourceId, { type: "geojson", data: emptyFC() });
+      current.addLayer(
+        { id: fillId, type: "fill", source: sourceId, paint: { "fill-color": def.fillColor, "fill-opacity": def.fillOpacity }, layout: { visibility: "none" } },
+        before,
+      );
+      current.addLayer(
+        { id: lineId, type: "line", source: sourceId, paint: { "line-color": def.lineColor, "line-width": def.lineWidth }, layout: { visibility: "none" } },
+        before,
+      );
+      current.addLayer(
+        {
+          id: circleId,
+          type: "circle",
+          source: sourceId,
+          filter: ["in", ["geometry-type"], ["literal", ["Point", "MultiPoint"]]] as maplibregl.ExpressionSpecification,
+          paint: {
+            "circle-color": def.fillColor,
+            "circle-stroke-color": def.lineColor,
+            "circle-stroke-width": 1,
+            "circle-radius": 4,
+            "circle-opacity": 0.9,
+          },
+          layout: { visibility: "none" },
+        },
+        before,
+      );
+    }
+  }, [mapReady, activeLayers]);
+
   // ── Sync couches thématiques ──────────────────────────────────────────────
   useEffect(() => {
     if (!map.current || !map.current.isStyleLoaded()) return;
-    for (const def of activeLayers) {
-      const st = thematicState[def.key];
+    for (const key of mapLayerKeysToEnsure(activeLayers)) {
+      const def = styleForLayerKey(activeLayers, key);
+      const st = thematicState[key];
       if (!st) continue;
-      const { sourceId, fillId, lineId, circleId } = thematicLayerIds(def.key);
+      const { sourceId, fillId, lineId, circleId } = thematicLayerIds(key);
       const src = map.current.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
       if (!src) continue;
       if (st.geojson) {
@@ -775,34 +845,44 @@ export function ParcellesMap({
           } catch { /* layer pas encore monté */ }
         }
       }
-      const vis = st.visible && st.loadState === "loaded" ? "visible" : "none";
+      const owner = activeLayers.find((d) => d.key === key || d.companionKey === key);
+      const ownerSt = owner ? thematicState[owner.key] : st;
+      const vis = (ownerSt?.visible ?? st.visible) && st.loadState === "loaded" ? "visible" : "none";
       try {
         map.current.setLayoutProperty(fillId, "visibility", vis);
         map.current.setLayoutProperty(lineId, "visibility", vis);
         map.current.setLayoutProperty(circleId, "visibility", vis);
       } catch { /* layer pas encore monté */ }
     }
-  }, [thematicState]);
+  }, [thematicState, activeLayers]);
 
   // ── Toggle + fetch lazy ───────────────────────────────────────────────────
   const toggleLayer = useCallback((key: string) => {
+    const companion = companionOf(activeLayers, key);
     setThematicState((prev) => {
       const cur = prev[key];
       if (!cur) return prev;
       const nextVisible = !cur.visible;
-      if (nextVisible && cur.loadState === "idle" && projectId && !fetchedRef.current.has(key)) {
-        fetchedRef.current.add(key);
-        fetchResultsLayerGeojson(projectId, key, poolRunId)
-          .then((data) => setThematicState((s) => ({ ...s, [key]: { ...s[key], loadState: "loaded", geojson: data, error: null } })))
-          .catch((err) => {
-            fetchedRef.current.delete(key);
-            setThematicState((s) => ({ ...s, [key]: { ...s[key], loadState: "error", error: err instanceof Error ? err.message : "Erreur" } }));
-          });
-        return { ...prev, [key]: { ...cur, visible: true, loadState: "loading" } };
+      const next = { ...prev, [key]: { ...cur, visible: nextVisible, loadState: nextVisible && cur.loadState === "idle" ? "loading" as const : cur.loadState } };
+      if (companion && prev[companion]) {
+        const c = prev[companion];
+        next[companion] = { ...c, visible: nextVisible, loadState: nextVisible && c.loadState === "idle" ? "loading" as const : c.loadState };
       }
-      return { ...prev, [key]: { ...cur, visible: nextVisible } };
+      if (nextVisible && projectId) {
+        const toFetch = [key, ...(companion ? [companion] : [])].filter((k) => prev[k]?.loadState === "idle" && !fetchedRef.current.has(k));
+        for (const k of toFetch) fetchedRef.current.add(k);
+        for (const k of toFetch) {
+          fetchResultsLayerGeojson(projectId, k, poolRunId)
+            .then((data) => setThematicState((s) => ({ ...s, [k]: { ...s[k], loadState: "loaded", geojson: data, error: null, truncated: Boolean((data as { truncated?: boolean }).truncated) } })))
+            .catch((err) => {
+              fetchedRef.current.delete(k);
+              setThematicState((s) => ({ ...s, [k]: { ...s[k], loadState: "error", error: err instanceof Error ? err.message : "Erreur" } }));
+            });
+        }
+      }
+      return next;
     });
-  }, [projectId, poolRunId]);
+  }, [projectId, poolRunId, activeLayers]);
 
   const toggleDiscriminantValue = useCallback((layerKey: string, value: string) => {
     setThematicState((prev) => {
@@ -835,6 +915,30 @@ export function ParcellesMap({
         mode={baseMapMode}
         onToggle={() => setBaseMapMode((m) => (m === "satellite" ? "plan" : "satellite"))}
       />
+      <button
+        type="button"
+        className="sol-toggle-btn"
+        onClick={() => setSolVisible((v) => !v)}
+        style={{
+          position: "absolute", top: 10, left: 54, zIndex: 5, height: 36, padding: "0 10px",
+          border: "1px solid #334155",
+          color: "#e2e8f0", borderRadius: 8, fontSize: 11,
+        }}
+        data-on={solVisible ? "1" : "0"}
+        title="Occupation du sol (CESBIO) découpée sur la parcelle sélectionnée"
+      >
+        Occupation du sol de la parcelle{occupation.loading ? " …" : ""}
+      </button>
+      {focusIdu && solVisible && (
+        <div style={{
+          position: "absolute", top: 54, left: 10, zIndex: 5, maxWidth: 260, maxHeight: "45%", overflowY: "auto",
+          background: "rgba(255,255,255,0.95)", border: "1px solid #cbd5e1", borderRadius: 6,
+          padding: "6px 8px", fontSize: 11, color: "#0f172a", display: "grid", gap: 3,
+        }}>
+          <strong>Parcelle sélectionnée</strong>
+          <OccupationSolLegend legend={occupation.legend} />
+        </div>
+      )}
       <div
         ref={mapContainer}
         className={`parcelles-map${loadingMessage ? " parcelles-map--loading" : ""}`}
@@ -893,12 +997,7 @@ export function ParcellesMap({
                       </span>
                     ) : undefined,
                 }}
-                extraLayers={[{
-                  label: "Observations flore",
-                  visible: floreVisible,
-                  color: "#2f7d5b",
-                  onToggle: () => setFloreVisible((v) => !v),
-                }]}
+                            extraLayers={[]}
                 bulkLoading={thematicPreloadLoading}
                 onToggleValue={toggleDiscriminantValue}
               />

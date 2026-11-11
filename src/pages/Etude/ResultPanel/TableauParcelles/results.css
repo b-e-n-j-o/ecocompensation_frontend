@@ -2283,3 +2283,15 @@
   background: #fef2f2;
   color: #b91c1c;
 }
+
+.sol-toggle-btn {
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+.sol-toggle-btn[data-on="1"] { background: #1e3a8a; }
+.sol-toggle-btn[data-on="0"] { background: rgba(15, 23, 42, 0.85); }
+.sol-toggle-btn:hover {
+  border-color: #93c5fd;
+  background: #2563eb;
+  transform: translateY(-1px);
+}

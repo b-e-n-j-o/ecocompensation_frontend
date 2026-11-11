@@ -125,14 +125,6 @@ function setUfSubsteps(
   };
 }
 
-function isEnrichUfVeg(msg: string): boolean {
-  return msg.includes("🌿") || /vég/i.test(msg) || /veg_libelles/i.test(msg);
-}
-
-function isEnrichUfFauna(msg: string): boolean {
-  return msg.includes("🦎") || /fauna/i.test(msg) || /faune/i.test(msg);
-}
-
 export function applyWsToPipelineProgress(
   prev: PipelineProgress,
   data: {
@@ -234,7 +226,7 @@ export function applyWsToPipelineProgress(
     });
   }
 
-  if (layerKey === "unites_foncieres" || layerKey === "sous_ensembles") {
+  if (layerKey === "unites_foncieres") {
     if (ev === "running" || ev === "progress") {
       next.uf.status = "running";
       next.uf = setUfSubsteps(next.uf, { analyse: "running", sol: "pending", fauna: "pending" });
@@ -251,33 +243,6 @@ export function applyWsToPipelineProgress(
       next.uf.nEntities = data.n_inserted;
       next.uf.detail = `${data.n_inserted.toLocaleString("fr-FR")} groupements construits`;
       next.uf = setUfSubsteps(next.uf, { analyse: "done", sol: "pending", fauna: "pending" });
-    }
-  }
-
-  if (layerKey === "enrich_uf") {
-    next.uf.status = "running";
-    const sol = msg.match(/UF_SOL:(\d+)\/(\d+)/);
-    if (sol) {
-      const done = Number(sol[1]);
-      const total = Number(sol[2]);
-      next.uf.solProgress = { done, total };
-      next.uf.detail = `Occupation du sol : ${done.toLocaleString("fr-FR")} / ${total.toLocaleString("fr-FR")} unités foncières`;
-    }
-    if (isEnrichUfFauna(msg)) {
-      const species = msg.match(/Fauna '([^']+)'|fauna '([^']+)'|🦎\s*([^\d:]+)/);
-      const name = (species?.[1] || species?.[2] || species?.[3] || "").trim();
-      next.uf.detail = name ? `Faune : ${name}` : "Croisement avec les données faune";
-      next.uf = setUfSubsteps(next.uf, { analyse: "done", sol: "done", fauna: "running" });
-    } else if (isEnrichUfVeg(msg) || ev === "running" || ev === "progress") {
-      next.uf = setUfSubsteps(next.uf, {
-        analyse: "done",
-        sol: "running",
-        fauna: next.uf.substeps.fauna === "done" ? "done" : "pending",
-      });
-    }
-    if (ev === "done" && typeof data.n_inserted === "number") {
-      next.uf.nEntities = data.n_inserted;
-      next.uf = setUfSubsteps(next.uf, { analyse: "done", sol: "done", fauna: "done" });
     }
   }
 

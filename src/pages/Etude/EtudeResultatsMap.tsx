@@ -2,16 +2,16 @@ import { useRef, type PointerEvent as ReactPointerEvent, type ReactNode } from "
 import type { FeatureCollection, GeoJsonProperties, Geometry } from "geojson";
 
 import { ParcellesMap, type ParcellesGeoJSON } from "./ResultPanel/MapResults/ParcellesMap";
-import { SousEnsemblesMap } from "./ResultPanel/MapResults/SousEnsemblesMap";
-import type { ResultsThematicPreload } from "./ResultPanel/MapResults/cartoCouchesRegistry";
-import type { ParcelPoolMetricRow } from "../../types";
+import { UnitesFoncieresMap } from "./ResultPanel/MapResults/UnitesFoncieres/UnitesFoncieresMap";
+import type { ResultsLayerDef, ResultsThematicPreload } from "./ResultPanel/MapResults/cartoCouchesRegistry";
+import type { ParcelPoolMetricRow, UfFilterResponse } from "../../types";
 
 type SharedMapProps = {
   projectId: string | null;
   foncierGeojson: unknown | null;
   thematicPreload: ResultsThematicPreload | null;
   thematicPreloadLoading: boolean;
-  mapLayerKeys: string[];
+  mapLayerDefs: ResultsLayerDef[];
 };
 
 type ParcellesMapPanelProps = SharedMapProps & {
@@ -32,15 +32,11 @@ type ParcellesMapPanelProps = SharedMapProps & {
 };
 
 type UnitesMapPanelProps = SharedMapProps & {
-  ufGeojson: FeatureCollection<Geometry, GeoJsonProperties> | null;
+  ufResults?: UfFilterResponse | null;
   parcellesGeojson?: FeatureCollection<Geometry, GeoJsonProperties> | null;
-  subsetScores: Record<string, number> | null;
-  focusSubsetId: string | null;
   focusUfId: string | null;
-  hoverSubsetId?: string | null;
   hoverUfId?: string | null;
   hoverParcelleIdu?: string | null;
-  onSubsetClick: (subsetId: string) => void;
   onUfClick?: (ufId: string) => void;
   onParcelleHover?: (idu: string | null) => void;
 };
@@ -149,7 +145,7 @@ export function EtudeResultatsParcellesMap({
   poolRunId,
   thematicPreload,
   thematicPreloadLoading,
-  mapLayerKeys,
+  mapLayerDefs,
   poolMetricsByIdu,
   indesirableCount,
   loadingMessage,
@@ -173,7 +169,7 @@ export function EtudeResultatsParcellesMap({
       poolRunId={poolRunId}
       preloadedThematic={thematicPreload}
       thematicPreloadLoading={thematicPreloadLoading}
-      thematicLayerKeys={mapLayerKeys}
+      layerDefs={mapLayerDefs}
       poolMetricsByIdu={poolMetricsByIdu}
       indesirableCount={indesirableCount}
       loadingMessage={loadingMessage}
@@ -190,41 +186,33 @@ export function EtudeResultatsParcellesMap({
 }
 
 export function EtudeResultatsUnitesMap({
-  ufGeojson,
+  ufResults = null,
   parcellesGeojson = null,
-  subsetScores,
   foncierGeojson,
   projectId,
   thematicPreload,
   thematicPreloadLoading,
-  mapLayerKeys,
-  focusSubsetId,
+  mapLayerDefs,
   focusUfId,
-  hoverSubsetId,
   hoverUfId,
   hoverParcelleIdu = null,
-  onSubsetClick,
   onUfClick,
   onParcelleHover,
 }: UnitesMapPanelProps) {
-  if (!ufGeojson) {
-    return <MapEmpty>GeoJSON des sous-ensembles indisponible.</MapEmpty>;
+  if (!parcellesGeojson) {
+    return <MapEmpty>GeoJSON des unités foncières indisponible.</MapEmpty>;
   }
   return (
-    <SousEnsemblesMap
-      geojson={ufGeojson as FeatureCollection<Geometry, Record<string, unknown>>}
-      subsetScores={subsetScores}
+    <UnitesFoncieresMap
+      parcellesGeojson={parcellesGeojson as FeatureCollection<Geometry, Record<string, unknown>>}
+      ufResults={ufResults}
       foncierGeojson={foncierGeojson}
       projectId={projectId}
       preloadedThematic={thematicPreload}
       thematicPreloadLoading={thematicPreloadLoading}
-      thematicLayerKeys={mapLayerKeys}
-      focusSubsetId={focusSubsetId}
+      layerDefs={mapLayerDefs}
       focusUfId={focusUfId}
-      hoverSubsetId={hoverSubsetId}
       hoverUfId={hoverUfId}
-      onSubsetClick={onSubsetClick}
-      parcellesGeojson={parcellesGeojson as FeatureCollection<Geometry, Record<string, unknown>> | null}
       onUfClick={onUfClick}
       hoverParcelleIdu={hoverParcelleIdu}
       onParcelleHover={onParcelleHover}

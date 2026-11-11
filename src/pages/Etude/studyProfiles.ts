@@ -63,7 +63,7 @@ export function getMapLayerKeys(studyType: StudyType | string | null | undefined
     const keys = [
       "zone_humide",
       "zones_humides_probables",
-      "espaces_naturels_sensibles_ens",
+      "ens",
       "preemption_ens",
     ];
     if (hasFauna) keys.push("fauna", "fauna_buffer");

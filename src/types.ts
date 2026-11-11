@@ -427,38 +427,62 @@ export interface ScoreEcoPayload {
   total_score: number;
   max_score: number;
   breakdown: {
-    especes: Record<string, unknown>;
-    distance: Record<string, unknown>;
+    especes?: Record<string, unknown>;
+    distance?: Record<string, unknown>;
+    zone_humide?: Record<string, unknown>;
   };
 }
 
-export interface SousEnsembleResult {
-  subset_id: string;
-  k: number;
-  idus: string[];
+export type UfCritereType =
+  | "surface"
+  | "eliminatoire"
+  | "existence"
+  | "faune"
+  | "flore"
+  | "zh_surface"
+  | "combinaison"
+  | "forme";
+
+export interface UfCritereDetail {
+  label: string;
+  type: UfCritereType;
+  ok: boolean;
+  idus?: string[];
+  valeur_ha?: number;
+  valeur?: number;
+  seuil?: number | null;
+  bloquant?: boolean;
+  faune_ok?: boolean | null;
+  flore_ok?: boolean | null;
+}
+
+export interface UfParcelleResult {
+  idu: string;
   surface_ha: number;
-  miller: number;
-  distance_centre_km: number;
-  dist_hydro_m?: number | null;
-  denomination?: string | null;
-  siren?: string | null;
-  veg_libelles?: string[];
-  veg_profile?: Record<string, { area_m2?: number; pct?: number }>;
+  in_pool: boolean;
   fauna_distances?: Record<string, number>;
-  dist_fauna_m?: number | null;
-  score_eco?: ScoreEcoPayload;
+  criteres_portes: string[];
 }
 
 export interface UniteFoncieresResult {
   rang: number;
   uf_id: string;
-  nb_parcelles: number;
-  idus?: string[];
-  best_surface_ha?: number;
-  best_miller?: number;
-  distance_centre_km: number;
-  denomination?: string | null;
+  source?: "pm" | "manuel";
   siren?: string | null;
+  denomination?: string | null;
+  forme_juridique?: string | null;
+  nb_parcelles: number;
+  surface_ha?: number;
+  miller?: number | null;
+  distance_centre_km: number;
+  zone_humide_ha?: number;
+  verdict?: boolean;
+  motif_rejet?: string | null;
+  criteres?: Record<string, UfCritereDetail>;
+  fauna_distances?: Record<string, number>;
+  veg_libelles?: string[];
+  veg_profile?: Record<string, { area_m2?: number; pct?: number }>;
+  score_eco?: ScoreEcoPayload;
   pm_prospect?: {
     intersects_pm_database?: boolean;
     siren?: string | null;
@@ -469,15 +493,14 @@ export interface UniteFoncieresResult {
     nb_parcelles_deja_en_mc?: number | null;
     surface_deja_en_mc_m2?: number | null;
   };
-  sous_ensembles: SousEnsembleResult[];
-  veg_libelles?: string[];
-  veg_profile?: Record<string, { area_m2?: number; pct?: number }>;
+  parcelles?: UfParcelleResult[];
 }
 
 export interface UfFilterResponse {
+  version?: number;
   total_uf: number;
-  total_sous_ensembles: number;
   unites_foncieres: UniteFoncieresResult[];
+  diagnostic?: Record<string, number>;
   funnel?: FunnelStep[];
   memory?: unknown;
 }

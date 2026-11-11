@@ -17,11 +17,11 @@ import { EtudeResultatsParcellesMap, EtudeResultatsUnitesMap, ResultsSplit, Spli
 import "../../components/pipelineProgressPanel.css";
 import type { ParcellesGeoJSON } from "./ResultPanel/MapResults/ParcellesMap";
 import {
+  fetchFilterMapLayers,
   fetchParcellesGeojson,
   fetchPoolRunMetricsBulk,
   fetchProjectContextGeometry,
   fetchFoncierGeojson,
-  fetchUfSubsetsGeojson,
   fetchUfParcellesGeojson,
   fetchUfResults,
   fetchIlotsRpgResults,
@@ -47,7 +47,8 @@ import {
   startUfSearch,
 } from "../../api";
 import type { ProjectSummary } from "../../api";
-import type { ResultsThematicPreload } from "./ResultPanel/MapResults/cartoCouchesRegistry";
+import type { ResultsThematicPreload, ResultsLayerDef } from "./ResultPanel/MapResults/cartoCouchesRegistry";
+import { getResultsLayerDefs, layerDefsFromFilterLayers } from "./ResultPanel/MapResults/cartoCouchesRegistry";
 import {
   type FilterOptions,
   type FilterResponse,
@@ -68,6 +69,7 @@ import {
 import { useFetchProgress } from "../../hooks/useFetchProgress";
 import { ProjectContextMap } from "../../components/ProjectContextMap";
 import { getStudyProfile, getMapLayerKeys } from "./studyProfiles";
+import type { FilterLayerApiDef } from "../../api";
 import { parseStoredFilterResponse, parseStoredLastFilter } from "../../utils/storedFilterResults";
 import { normalizeStudyType } from "../../types/studyTypes";
 import "./ResultPanel/TableauParcelles/results.css";
@@ -81,21 +83,17 @@ type MainResultsTab = "parcelles" | "unites" | "ilots" | "combine" | "filtrage";
 type ResultsSubView = "classement" | "classement_combine" | "carte";
 type FilterLoadingStage = "idle" | "filtering" | "profiling" | "metrics_loading";
 
-/** Présence de lignes dans ecocompensation_results.sous_ensembles pour le projet (filtre UF possible). */
+/** Terrains UF déjà calculés pour le projet (la route lit uf_terrains). */
 type SousEnsemblesStatus = "idle" | "loading" | "yes" | "no";
 
-async function loadUfMapGeojson(projectId: string): Promise<{
-  subsets: FeatureCollection<Geometry, GeoJsonProperties> | null;
-  parcelles: FeatureCollection<Geometry, GeoJsonProperties> | null;
-}> {
-  const [subsets, parcelles] = await Promise.allSettled([
-    fetchUfSubsetsGeojson(projectId),
-    fetchUfParcellesGeojson(projectId),
-  ]);
-  return {
-    subsets: subsets.status === "fulfilled" ? subsets.value : null,
-    parcelles: parcelles.status === "fulfilled" ? parcelles.value : null,
-  };
+async function loadUfMapGeojson(
+  projectId: string,
+): Promise<FeatureCollection<Geometry, GeoJsonProperties> | null> {
+  try {
+    return await fetchUfParcellesGeojson(projectId);
+  } catch {
+    return null;
+  }
 }
 
 export interface EtudeResultatsProps {
@@ -220,7 +218,6 @@ export function EtudeResultats({
   const [openStudyError, setOpenStudyError] = useState(false);
   const [filterLoadingStage, setFilterLoadingStage] = useState<FilterLoadingStage>("idle");
   const [ufResults, setUfResults] = useState<UfFilterResponse | null>(null);
-  const [ufGeojson, setUfGeojson] = useState<FeatureCollection<Geometry, GeoJsonProperties> | null>(null);
   const [ufParcellesGeojson, setUfParcellesGeojson] = useState<FeatureCollection<Geometry, GeoJsonProperties> | null>(null);
   const [ufScrollTarget, setUfScrollTarget] = useState<string | null>(null);
   const [ilotsResults, setIlotsResults] = useState<IlotsRpgResponse | null>(null);
@@ -256,12 +253,8 @@ export function EtudeResultats({
   const [mapFocusNonce, setMapFocusNonce] = useState(0);
   /** Survol tableau — highlight carte sans bouger la caméra. */
   const [hoverIdu, setHoverIdu] = useState<string | null>(null);
-  /** Sous-ensemble UF sélectionné — liaison table ↔ carte. */
-  const [linkedSubsetId, setLinkedSubsetId] = useState<string | null>(null);
   const [linkedUfId, setLinkedUfId] = useState<string | null>(null);
-  const [hoverSubsetId, setHoverSubsetId] = useState<string | null>(null);
   const [hoverUfId, setHoverUfId] = useState<string | null>(null);
-  const [scrollToSubsetId, setScrollToSubsetId] = useState<string | null>(null);
   const [scrollUfTableNonce, setScrollUfTableNonce] = useState(0);
   const [distanceMaxKm, setDistanceMaxKm] = useState<number>(0);
   const [distanceCursorKm, setDistanceCursorKm] = useState<number>(0);
@@ -309,7 +302,24 @@ export function EtudeResultats({
     return getStudyProfile(normalizeStudyType(current?.study_type));
   }, [projects, projectId]);
 
+  const [filterLayerDefs, setFilterLayerDefs] = useState<FilterLayerApiDef[] | null>(null);
+
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    void fetchFilterMapLayers(projectId)
+      .then((layers) => {
+        if (import.meta.env.DEV) {
+          console.debug("[filter-layers]", layers.map((d) => [d.groupe, d.key]));
+        }
+        if (!cancelled) setFilterLayerDefs(layers);
+      })
+      .catch(() => { if (!cancelled) setFilterLayerDefs(null); });
+    return () => { cancelled = true; };
+  }, [projectId, results?.pool_run_id]);
+
   const mapLayerKeys = useMemo(() => {
+    if (filterLayerDefs?.length) return filterLayerDefs.map((d) => d.key);
     const hasFauna = (lastFilterOptions?.faune_criteria?.length ?? 0) > 0;
     const keys = getMapLayerKeys(currentStudyProfile.id, hasFauna);
     if (
@@ -344,7 +354,13 @@ export function EtudeResultats({
     lastFilterOptions?.surfaces_hydros_max_dist_m,
     lastFilterOptions?.zone_humide_mode,
     lastFilterOptions?.zones_humides_probables_mode,
+    filterLayerDefs,
   ]);
+
+  const mapLayerDefs = useMemo((): ResultsLayerDef[] => {
+    if (filterLayerDefs?.length) return layerDefsFromFilterLayers(filterLayerDefs);
+    return getResultsLayerDefs(mapLayerKeys);
+  }, [filterLayerDefs, mapLayerKeys]);
 
   const isZhStudy = currentStudyProfile.id === "zones_humides_intra";
   const showZoneHumideColumn =
@@ -432,15 +448,9 @@ export function EtudeResultats({
         if (cancelled) return;
         setUfResults(uf);
         setSousEnsemblesStatus("yes");
-        const hasSubsets = (uf.unites_foncieres ?? []).some(
-          (u) => (u.sous_ensembles ?? []).length > 0,
-        );
-        if (hasSubsets) {
+        if ((uf.unites_foncieres ?? []).length > 0) {
           const ufGeo = await loadUfMapGeojson(projectId);
-          if (!cancelled) {
-            setUfGeojson(ufGeo.subsets);
-            setUfParcellesGeojson(ufGeo.parcelles);
-          }
+          if (!cancelled) setUfParcellesGeojson(ufGeo);
         }
       })
       .catch((err) => {
@@ -574,22 +584,14 @@ export function EtudeResultats({
             const ufRaw = stored.last_results_uf;
             if (ufRaw && typeof ufRaw === "object") {
               setUfResults(ufRaw as UfFilterResponse);
-              const hasSubsets = (ufRaw as UfFilterResponse).unites_foncieres?.some(
-                (u) => (u.sous_ensembles ?? []).length > 0,
-              );
-              if (hasSubsets) {
+              if ((ufRaw as UfFilterResponse).unites_foncieres?.length) {
                 const ufGeo = await loadUfMapGeojson(projectId);
-                if (active) {
-                  setUfGeojson(ufGeo.subsets);
-                  setUfParcellesGeojson(ufGeo.parcelles);
-                }
-              } else {
-                setUfGeojson(null);
+                if (active) setUfParcellesGeojson(ufGeo);
+              } else if (active) {
                 setUfParcellesGeojson(null);
               }
             } else {
               setUfResults(null);
-              setUfGeojson(null);
               setUfParcellesGeojson(null);
             }
             const ilotsRaw = stored.last_results_ilots_rpg;
@@ -605,7 +607,6 @@ export function EtudeResultats({
           } catch {
             if (active) {
               setUfResults(null);
-              setUfGeojson(null);
               setUfParcellesGeojson(null);
             }
           }
@@ -723,15 +724,9 @@ export function EtudeResultats({
         const ufRaw = stored.last_results_uf;
         if (ufRaw && typeof ufRaw === "object" && !cancelled) {
           setUfResults(ufRaw as UfFilterResponse);
-          const hasSubsets = (ufRaw as UfFilterResponse).unites_foncieres?.some(
-            (u) => (u.sous_ensembles ?? []).length > 0,
-          );
-          if (hasSubsets) {
+          if ((ufRaw as UfFilterResponse).unites_foncieres?.length) {
             const ufGeo = await loadUfMapGeojson(projectId);
-            if (!cancelled) {
-              setUfGeojson(ufGeo.subsets);
-              setUfParcellesGeojson(ufGeo.parcelles);
-            }
+            if (!cancelled) setUfParcellesGeojson(ufGeo);
           }
         }
         const ilotsRaw = stored.last_results_ilots_rpg;
@@ -788,7 +783,9 @@ export function EtudeResultats({
     thematicPrefetchSeqRef.current += 1;
     const prefetchSeq = thematicPrefetchSeqRef.current;
     setThematicPreloadLoading(true);
-    void prefetchAllResultsThematicLayers(pid, runId, mapLayerKeys)
+    const critereKeys = mapLayerDefs.filter((d) => d.groupe === "critere").flatMap((d) => [d.key, ...(d.companionKey ? [d.companionKey] : [])]);
+    const keys = critereKeys.length ? critereKeys : mapLayerDefs.map((d) => d.key);
+    void prefetchAllResultsThematicLayers(pid, runId, keys)
       .then((data) => {
         if (projectIdRef.current !== pid) return;
         setThematicPreload(data);
@@ -797,7 +794,7 @@ export function EtudeResultats({
         if (thematicPrefetchSeqRef.current !== prefetchSeq) return;
         setThematicPreloadLoading(false);
       });
-  }, [projectId, initialRunId, results?.pool_run_id, results?.parcelles?.length, mapLayerKeys]);
+  }, [projectId, initialRunId, results?.pool_run_id, results?.parcelles?.length, mapLayerDefs]);
 
   /** Métriques pool (filter_enrich, scores…) — bulk par run_id. */
   useEffect(() => {
@@ -968,15 +965,17 @@ export function EtudeResultats({
     setUfResults(uf);
     setSousEnsemblesStatus("yes");
     try {
-      const ufGeo = await loadUfMapGeojson(projectId);
-      setUfGeojson(ufGeo.subsets);
-      setUfParcellesGeojson(ufGeo.parcelles);
+      setUfParcellesGeojson(await loadUfMapGeojson(projectId));
     } catch {
       /* la carte UF se rechargera à l'ouverture de l'onglet */
     }
+    const rejet =
+      created.verdict === false ? ` — ne passe pas le filtre (${created.motif_rejet})` : "";
+    const surface =
+      created.surface_ha == null ? "" : ` (${created.surface_ha.toLocaleString("fr-FR")} ha)`;
     setToolNotice({
       title: "Unité foncière",
-      body: `${created.nb_parcelles} parcelles groupées (${created.surface_ha.toLocaleString("fr-FR")} ha). Elles figurent dans le pool des unités foncières.`,
+      body: `${created.nb_parcelles} parcelles groupées${surface}. Elles figurent dans le pool des unités foncières.${rejet}`,
     });
   }
 
@@ -992,13 +991,10 @@ export function EtudeResultats({
         ...prev,
         unites_foncieres: unites,
         total_uf: unites.length,
-        total_sous_ensembles: unites.reduce((n, u) => n + (u.sous_ensembles?.length ?? 0), 0),
       };
     });
     try {
-      const ufGeo = await loadUfMapGeojson(projectId);
-      setUfGeojson(ufGeo.subsets);
-      setUfParcellesGeojson(ufGeo.parcelles);
+      setUfParcellesGeojson(await loadUfMapGeojson(projectId));
     } catch {
       /* carte éventuellement vide si plus d'UF */
     }
@@ -1168,38 +1164,6 @@ export function EtudeResultats({
     }
   }
 
-  function findUfIdForSubset(subsetId: string): string | null {
-    for (const uf of ufResults?.unites_foncieres ?? []) {
-      if ((uf.sous_ensembles ?? []).some((ss) => ss.subset_id === subsetId)) {
-        return uf.uf_id;
-      }
-    }
-    return null;
-  }
-
-  function handleMapSubsetClick(subsetId: string) {
-    setMainResultsTab("unites");
-    if (ufSubView !== "classement") {
-      setUfSubView("classement");
-    }
-    if (!splitMapVisible) {
-      setSplitMapVisible(true);
-    }
-    setLinkedSubsetId(subsetId);
-    setLinkedUfId(findUfIdForSubset(subsetId));
-    setScrollToSubsetId(subsetId);
-    setUfScrollTarget(null);
-    setScrollUfTableNonce((n) => n + 1);
-  }
-
-  function handleTableSubsetActivate(subsetId: string) {
-    setLinkedSubsetId(subsetId);
-    setLinkedUfId(findUfIdForSubset(subsetId));
-    if (!splitMapVisible) {
-      setSplitMapVisible(true);
-    }
-  }
-
   function handleMapUfClick(ufId: string) {
     setMainResultsTab("unites");
     if (ufSubView !== "classement") {
@@ -1209,40 +1173,16 @@ export function EtudeResultats({
       setSplitMapVisible(true);
     }
     setLinkedUfId(ufId);
-    setLinkedSubsetId(null);
-    setScrollToSubsetId(null);
     setUfScrollTarget(ufId);
     setScrollUfTableNonce((n) => n + 1);
   }
 
   function handleTableUfActivate(ufId: string) {
     setLinkedUfId(ufId);
-    setLinkedSubsetId(null);
     if (!splitMapVisible) {
       setSplitMapVisible(true);
     }
   }
-
-  const subsetScores = useMemo(() => {
-    if (!ufResults) return null;
-    const m: Record<string, number> = {};
-    for (const uf of ufResults.unites_foncieres ?? []) {
-      for (const ss of uf.sous_ensembles ?? []) {
-        const scoreEco = ss.score_eco as { total_score?: number } | undefined;
-        if (typeof scoreEco?.total_score === "number") {
-          m[ss.subset_id] = scoreEco.total_score;
-        }
-      }
-    }
-    if (Object.keys(m).length > 0) return m;
-    for (const uf of ufResults.unites_foncieres ?? []) {
-      const n = (uf.sous_ensembles ?? []).length;
-      for (const [idx, ss] of (uf.sous_ensembles ?? []).entries()) {
-        m[ss.subset_id] = Math.max(1, n - idx);
-      }
-    }
-    return m;
-  }, [ufResults]);
 
   // Curseur distance : on adapte la borne max à la distance maximale observée
   // dans les parcelles retournées (donc "jusqu'au rayon de l'AOI" de facto).
@@ -1409,23 +1349,20 @@ export function EtudeResultats({
     const parcelles = displayedParcelles;
     if (!ufResults?.unites_foncieres?.length) return parcelles;
 
-    const subsetCandidates = ufResults.unites_foncieres.flatMap((uf) =>
-      (uf.sous_ensembles ?? []).map((ss, idx) => {
-        const firstIdu = ss.idus?.[0] ?? "";
-        const ref = parseIduParts(firstIdu);
-        return {
-          rank: parcelles.length + idx + 1 + uf.rang * 1000,
-          idu: `UF:${ss.subset_id}`,
-          code_insee: ref.codeInsee || "UF",
-          section: ref.section || "",
-          numero: ref.numero || "",
-          surface_ha: Number(ss.surface_ha ?? 0),
-          miller: Number(ss.miller ?? 0),
-          distance_km: Number(ss.distance_centre_km ?? 0),
-          dist_hydro_m: ss.dist_hydro_m ?? null,
-        };
-      }),
-    );
+    const subsetCandidates = ufResults.unites_foncieres.map((uf, idx) => {
+      const ref = parseIduParts(uf.parcelles?.[0]?.idu ?? "");
+      return {
+        rank: parcelles.length + idx + 1 + uf.rang * 1000,
+        idu: `UF:${uf.uf_id}`,
+        code_insee: ref.codeInsee || "UF",
+        section: ref.section || "",
+        numero: ref.numero || "",
+        surface_ha: Number(uf.surface_ha ?? 0),
+        miller: Number(uf.miller ?? 0),
+        distance_km: Number(uf.distance_centre_km ?? 0),
+        dist_hydro_m: null,
+      };
+    });
 
     return [...parcelles, ...subsetCandidates];
   }, [displayedParcelles, ufResults]);
@@ -1452,9 +1389,7 @@ export function EtudeResultats({
     : (loadingStatusText ?? "Calcul des métriques en cours…");
 
   const activeRunId = initialRunId ?? results?.pool_run_id ?? null;
-  const hasCombinedRanking = (ufResults?.unites_foncieres ?? []).some(
-    (u) => (u.sous_ensembles ?? []).length > 0,
-  );
+  const hasCombinedRanking = (ufResults?.unites_foncieres ?? []).length > 0;
   const ufRunning = pipelineProgress.uf.status === "running";
   const ilotsRunning = pipelineProgress.ilots.status === "running";
   const isSplitParcelView = mainResultsTab === "parcelles" || mainResultsTab === "combine";
@@ -1489,7 +1424,7 @@ export function EtudeResultats({
     foncierGeojson,
     thematicPreload,
     thematicPreloadLoading,
-    mapLayerKeys,
+    mapLayerDefs,
   };
 
   const parcellesMapPanel = (
@@ -1515,15 +1450,11 @@ export function EtudeResultats({
   const ufMapPanel = (
     <EtudeResultatsUnitesMap
       {...mapShared}
-      ufGeojson={ufGeojson}
+      ufResults={ufResults}
       parcellesGeojson={ufParcellesGeojson}
-      subsetScores={subsetScores}
-      focusSubsetId={linkedSubsetId}
-      focusUfId={linkedSubsetId ? null : linkedUfId}
-      hoverSubsetId={hoverSubsetId}
+      focusUfId={linkedUfId}
       hoverUfId={hoverUfId}
       hoverParcelleIdu={hoverParcelleIdu}
-      onSubsetClick={handleMapSubsetClick}
       onUfClick={handleMapUfClick}
       onParcelleHover={setHoverParcelleIdu}
     />
@@ -1758,7 +1689,13 @@ export function EtudeResultats({
                     scrollTableNonce={scrollTableNonce}
                     selectedIdu={linkedIdu}
                     hoverIdu={hoverIdu}
-                    onRowActivate={handleTableRowActivate}
+                    onRowActivate={(idu) => {
+                      if (idu.startsWith("UF:")) {
+                        handleMapUfClick(idu.slice(3));
+                        return;
+                      }
+                      handleTableRowActivate(idu);
+                    }}
                     onHover={setHoverIdu}
                     showZoneHumideColumn={showZoneHumideColumn}
                     showDistHydroColumn={showDistHydroColumn}
@@ -1851,15 +1788,11 @@ export function EtudeResultats({
                   <EtudeResultatsUnitesTable
                     ufResults={ufResults}
                     projectId={projectId}
-                    selectedSubsetId={linkedSubsetId}
-                    scrollToSubsetId={scrollToSubsetId}
                     scrollToUfId={ufScrollTarget}
                     scrollTableNonce={scrollUfTableNonce}
                     hoverParcelleIdu={hoverParcelleIdu}
-                    onSubsetActivate={handleTableSubsetActivate}
                     onUfActivate={handleTableUfActivate}
                     onRemoveUf={handleRemoveUf}
-                    onSubsetHover={setHoverSubsetId}
                     onUfHover={setHoverUfId}
                     onParcelleHover={setHoverParcelleIdu}
                     exportJauge={exportJaugeFrom({

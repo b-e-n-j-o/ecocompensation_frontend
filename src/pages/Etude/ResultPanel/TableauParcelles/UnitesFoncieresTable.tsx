@@ -1,8 +1,19 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { auditUfCombinations, type UfCombinationsAudit } from "../../../../api";
+/**
+ * UnitesFoncieresTable.tsx — résultats UF v2 : une carte par terrain.
+ *
+ * Un terrain = parcelles contiguës d'une même personne morale qui passent le filtre
+ * (après retrait des parcelles exclues). Onglets : Parcelles · Critères · Occupation du sol
+ * · Propriétaire. Plus de combinaisons.
+ */
+import { useEffect, useMemo, useState } from "react";
 import { ExportEtudeMenu } from "../ExportEtudeMenu";
 import { ResultInfoNote } from "./ResultInfoNote";
-import type { SousEnsembleResult, UfFilterResponse } from "../../../../types";
+import {
+  CESBIO_LIBELLE_COLORS,
+  type UfCritereDetail,
+  type UfFilterResponse,
+  type UniteFoncieresResult,
+} from "../../../../types";
 import {
   FilterEnrichBlock,
   PersonnesMoralesBlock,
@@ -10,151 +21,141 @@ import {
   parsePersonnesMoralesPayload,
   type ParcelScorePayload,
 } from "./RankingLine";
-import {
-  getBestScore,
-  getUfParcelles,
-  parcelleLabelFromIdu,
-  type UfAvecParcelles,
-  type UfParcelle,
-} from "./ufParcelles";
+import { parcelleLabelFromIdu } from "./ufParcelles";
 
 const UF_PAGE_SIZE = 50;
+type UfTab = "parcelles" | "criteres" | "sol" | "proprietaire";
 
-type UfTab = "parcelles" | "combinaisons" | "proprietaire";
+/** Libellés plus lisibles que ceux de l'entonnoir backend. */
+const LABEL_OVERRIDES: Record<string, string> = {
+  cesbio_libelles: "Occupation du sol (classes du filtre)",
+  search_mode: "Hors emprise du projet",
+  surface: "Surface minimale",
+  biodiversite: "Faune / flore",
+  miller: "Compacité (Miller)",
+};
 
-interface UnitesFoncieresTableProps {
-  ufResults: UfFilterResponse;
-  projectId: string | null;
-  selectedSubsetId?: string | null;
-  scrollToSubsetId?: string | null;
-  scrollTableNonce?: number;
-  onSubsetActivate?: (subsetId: string) => void;
-  onUfActivate?: (ufId: string) => void;
-  onSubsetHover?: (subsetId: string | null) => void;
-  onUfHover?: (ufId: string | null) => void;
-  /** Clic sur l'emprise d'une UF dans la carte : ouvre et fait défiler jusqu'à cette UF. */
-  scrollToUfId?: string | null;
-  /** Parcelle survolée (tableau ou carte), synchronisée avec SousEnsemblesMap. */
-  hoverParcelleIdu?: string | null;
-  onParcelleHover?: (idu: string | null) => void;
-  onRemoveUf?: (ufId: string) => Promise<void> | void;
-  exportJauge?: import("../ExportEtudeMenu").ExportJauge | null;
+/** Clés de l'entonnoir (diagnostic) -> texte. */
+const DIAG_LABELS: Record<string, string> = {
+  isolee: "parcelle isolée (aucune voisine de la même société)",
+  bloc_trop_petit: "bloc sous la surface minimale",
+  isolee_apres_exclusions: "isolée après retrait des parcelles exclues",
+  bloc_trop_petit_apres_exclusions: "bloc trop petit après retrait des parcelles exclues",
+  search_mode: "emprise du projet",
+  geomce: "mesure compensatoire existante (GEOMCE)",
+  preemption_ens: "zone de préemption ENS",
+  ens: "espace naturel sensible",
+  natura_2000: "Natura 2000",
+  znieff_1: "ZNIEFF de type 1",
+  znieff_2: "ZNIEFF de type 2",
+  ebc: "espace boisé classé",
+  cesbio_libelles: "occupation du sol hors classes du filtre",
+  zone_humide_mode: "zone humide",
+  zones_humides_probables_mode: "zone humide probable",
+  surface: "surface minimale",
+  biodiversite: "faune / flore",
+  miller: "compacité",
+};
+
+function critereLabel(uf: UniteFoncieresResult, key: string): string {
+  return LABEL_OVERRIDES[key] ?? uf.criteres?.[key]?.label ?? DIAG_LABELS[key] ?? key;
 }
 
-function scoreLabel(score: ParcelScorePayload | undefined): string {
-  if (!score) return "—";
-  return `${score.total_score}/${score.max_score}`;
+function sortedFauna(fd: Record<string, number> | undefined): [string, number][] {
+  return Object.entries(fd ?? {})
+    .filter(([, d]) => Number.isFinite(d) && d >= 0)
+    .sort((a, b) => a[1] - b[1]);
 }
 
-function faunaDistancesOfUf(sousEnsembles: SousEnsembleResult[]): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const ss of sousEnsembles) {
-    const fauna = ss.fauna_distances ?? {};
-    for (const [name, raw] of Object.entries(fauna)) {
-      const n = typeof raw === "number" ? raw : Number(raw);
-      if (!name.trim() || !Number.isFinite(n) || n < 0) continue;
-      const prev = out[name.trim()];
-      if (prev == null || n < prev) out[name.trim()] = n;
-    }
-  }
-  return out;
+function topClasses(profile: UniteFoncieresResult["veg_profile"], n = 2): [string, number][] {
+  return Object.entries(profile ?? {})
+    .map(([k, v]) => [k, Number(v?.pct ?? 0)] as [string, number])
+    .filter(([, pct]) => pct > 0)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, n);
 }
 
-function UniteEnrichissement({ uf }: { uf: { nb_parcelles?: number; veg_libelles?: string[]; veg_profile?: SousEnsembleResult["veg_profile"]; sous_ensembles: SousEnsembleResult[] } }) {
-  const n = uf.nb_parcelles ?? uf.sous_ensembles.reduce((acc, ss) => acc + (ss.idus?.length ?? ss.k ?? 0), 0);
-  const fauna_distances = faunaDistancesOfUf(uf.sous_ensembles);
-  const enrichPayload = {
-    veg_libelles: uf.veg_libelles ?? [],
-    veg_profile: uf.veg_profile,
-    fauna_distances,
-  };
-  const hasProfile = Object.keys(uf.veg_profile ?? {}).length > 0;
-  const hasSol = enrichPayload.veg_libelles.length > 0 || hasProfile;
-  const hasFaune = Object.keys(fauna_distances).length > 0;
-  const bestSs = uf.sous_ensembles.reduce<SousEnsembleResult | null>((best, ss) => {
-    const score = (ss.score_eco as ParcelScorePayload | undefined)?.total_score ?? -1;
-    const bestScore = (best?.score_eco as ParcelScorePayload | undefined)?.total_score ?? -1;
-    return score > bestScore ? ss : best;
-  }, null);
-  const scorePayload = bestSs?.score_eco as ParcelScorePayload | undefined;
+const chipStyle: React.CSSProperties = {
+  display: "inline-flex", alignItems: "center", gap: 4, padding: "1px 7px",
+  borderRadius: 999, fontSize: 11, background: "#f1f5f9", color: "#334155",
+  border: "1px solid #e2e8f0", whiteSpace: "nowrap",
+};
 
+/** Résumé d'un coup d'œil sous le titre : faune, occupation dominante, zone humide. */
+function CritereChips({ uf }: { uf: UniteFoncieresResult }) {
+  const fauna = sortedFauna(uf.fauna_distances);
+  const classes = topClasses(uf.veg_profile);
+  const zh = uf.zone_humide_ha ?? 0;
+  if (!fauna.length && !classes.length && zh <= 0) return null;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+      {fauna.map(([name, d]) => (
+        <span key={name} style={chipStyle} title={`Observation la plus proche du terrain`}>
+          🦎 {name} · {d} m
+        </span>
+      ))}
+      {classes.map(([lib, pct]) => (
+        <span key={lib} style={chipStyle}>
+          <span style={{ width: 8, height: 8, borderRadius: 2, background: CESBIO_LIBELLE_COLORS[lib] ?? "#9ca3af" }} />
+          {lib} {pct.toFixed(0)} %
+        </span>
+      ))}
+      {zh > 0 && <span style={chipStyle}>💧 ZH {zh.toFixed(2)} ha</span>}
+    </div>
+  );
+}
+
+function CritereRow({ uf, k, d }: { uf: UniteFoncieresResult; k: string; d: UfCritereDetail }) {
+  const idus = d.idus ?? [];
+  let detail = "";
+  if (d.type === "surface") detail = `${d.valeur_ha?.toFixed(2)} ha`;
+  else if (d.type === "zh_surface") detail = `${d.valeur_ha?.toFixed(2)} ha de zone humide`;
+  else if (d.type === "forme") detail = `${d.valeur?.toFixed(3)}${d.seuil != null ? ` (seuil ${d.seuil})` : ""}${d.bloquant ? "" : " · indicatif"}`;
+  else if (d.type === "eliminatoire") detail = d.ok ? "aucune parcelle concernée" : `${idus.length} parcelle(s) en cause`;
+  else if (d.type === "combinaison") detail = [d.faune_ok != null ? `faune ${d.faune_ok ? "✓" : "✗"}` : "", d.flore_ok != null ? `flore ${d.flore_ok ? "✓" : "✗"}` : ""].filter(Boolean).join(" · ");
+  else detail = d.ok ? `porté par ${idus.length} parcelle(s)` : "aucune parcelle";
+  const neutral = d.type === "forme" && !d.bloquant;
+  return (
+    <tr className="ranking-row">
+      <td style={{ width: 24, color: neutral ? "#64748b" : d.ok ? "#15803d" : "#b91c1c", fontWeight: 700 }}>
+        {neutral ? "i" : d.ok ? "✓" : "✗"}
+      </td>
+      <td>{critereLabel(uf, k)}</td>
+      <td className="mono" style={{ color: "#475569" }} title={idus.join(", ")}>{detail}</td>
+    </tr>
+  );
+}
+
+function CriteresTab({ uf }: { uf: UniteFoncieresResult }) {
+  const entries = Object.entries(uf.criteres ?? {});
+  if (!entries.length) return <p className="ranking-line-empty">Détail des critères non disponible.</p>;
   return (
     <>
-      <section className="ranking-metric-block" style={{ marginBottom: 10 }}>
-        <h4 className="ranking-metric-title">Occupation du sol de l&apos;unité foncière</h4>
-        <p className="ranking-line-empty" style={{ marginTop: 0 }}>
-          Mesurée en additionnant chaque parcelle de l&apos;unité ({n} parcelles), pas sous-ensemble par sous-ensemble.
-        </p>
-        {hasSol ? (
-          <FilterEnrichBlock payload={enrichPayload} part="sol" />
-        ) : (
-          <p className="ranking-line-empty">
-            Profil CESBIO non encore calculé pour cette unité. Il apparaît après un nouveau filtrage.
-          </p>
-        )}
-      </section>
-      {hasFaune ? (
-        <section className="ranking-metric-block" style={{ marginBottom: 10 }}>
-          <FilterEnrichBlock payload={enrichPayload} part="faune" />
-        </section>
-      ) : (
-        <p className="ranking-line-empty">Aucune distance d&apos;espèce calculée pour cette unité.</p>
-      )}
-      {scorePayload ? (
-        <section className="ranking-metric-block" style={{ marginBottom: 10 }}>
-          <h4 className="ranking-metric-title">Score écologique</h4>
-          <ScoreBlock payload={scorePayload} />
-        </section>
-      ) : null}
+      <p className="filter-enrich-fauna-hint" style={{ margin: "6px 0" }}>
+        {uf.source === "manuel"
+          ? "Unité dessinée à la main : chaque critère du filtre est vérifié sur ses parcelles."
+          : "Les parcelles qui touchaient une exclusion ont été retirées avant de former ce terrain. Les autres critères sont satisfaits dès qu'une parcelle du terrain les remplit."}
+      </p>
+      <table className="ranking-table">
+        <tbody>
+          {entries.map(([k, d]) => <CritereRow key={k} uf={uf} k={k} d={d} />)}
+        </tbody>
+      </table>
     </>
   );
 }
 
-/** Présence d'une parcelle dans les combinaisons : 5 pastilles + k/n. */
-function PresenceDots({ p, total }: { p: UfParcelle; total: number }) {
-  const filled = Math.round(p.presence * 5);
-  return (
-    <span
-      style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-      title={`Présente dans ${p.nb_combinaisons} combinaison(s) sur ${total}`}
-    >
-      <span aria-hidden style={{ letterSpacing: 1, color: p.noyau ? "#1e3a8a" : "#3b82f6" }}>
-        {"●".repeat(filled)}
-        <span style={{ color: "#cbd5e1" }}>{"●".repeat(5 - filled)}</span>
-      </span>
-      <span className="mono">{p.nb_combinaisons}/{total}</span>
-      {p.noyau && (
-        <span
-          style={{
-            padding: "1px 6px", borderRadius: 999, fontSize: 10, fontWeight: 700,
-            background: "rgba(30, 58, 138, 0.12)", color: "#1e3a8a",
-          }}
-        >
-          Noyau
-        </span>
-      )}
-    </span>
-  );
-}
-
-function UfParcellesTable({
-  parcelles,
-  total,
-  hoverIdu,
-  onHover,
-}: {
-  parcelles: UfParcelle[];
-  total: number;
-  hoverIdu: string | null;
-  onHover?: (idu: string | null) => void;
+function ParcellesTab({ uf, hoverIdu, onHover }: {
+  uf: UniteFoncieresResult; hoverIdu: string | null; onHover?: (idu: string | null) => void;
 }) {
+  const parcelles = uf.parcelles ?? [];
   return (
     <table className="ranking-table uf-parcelles-table">
       <thead>
         <tr>
           <th>Parcelle</th>
           <th className="col-surf">Surface</th>
-          <th title="Nombre de combinaisons retenues contenant la parcelle">Présence</th>
+          <th title="Critères du filtre que cette parcelle apporte au terrain">Apporte</th>
           <th title="Parcelle également retenue dans l'onglet Parcelles">Pool</th>
         </tr>
       </thead>
@@ -169,13 +170,16 @@ function UfParcellesTable({
               onMouseLeave={() => onHover?.(null)}
             >
               <td className="mono" title={p.idu}>
-                {label}
-                {insee ? <span className="unit"> · {insee}</span> : null}
+                {label}{insee ? <span className="unit"> · {insee}</span> : null}
               </td>
-              <td className="col-surf mono">
-                {p.surface_ha != null ? <>{p.surface_ha.toFixed(2)}<span className="unit"> ha</span></> : <span className="na">—</span>}
+              <td className="col-surf mono">{p.surface_ha.toFixed(2)}<span className="unit"> ha</span></td>
+              <td>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                  {p.criteres_portes.length
+                    ? p.criteres_portes.map((k) => <span key={k} style={chipStyle}>{critereLabel(uf, k)}</span>)
+                    : <span className="na">—</span>}
+                </div>
               </td>
-              <td><PresenceDots p={p} total={total} /></td>
               <td className="mono">{p.in_pool ? "oui" : "—"}</td>
             </tr>
           );
@@ -185,96 +189,109 @@ function UfParcellesTable({
   );
 }
 
-function SousEnsembleDetail({ ss }: { ss: SousEnsembleResult }) {
-  const enrichPayload = {
-    veg_libelles: ss.veg_libelles ?? [],
-    veg_profile: ss.veg_profile,
-    fauna_distances: ss.fauna_distances ?? {},
-  };
-  const hasEnrich = Object.keys(enrichPayload.fauna_distances).length > 0;
-  const scorePayload = ss.score_eco as ParcelScorePayload | undefined;
-
+function SolTab({ uf, onShowOnMap }: { uf: UniteFoncieresResult; onShowOnMap?: () => void }) {
+  const payload = { veg_libelles: uf.veg_libelles ?? [], veg_profile: uf.veg_profile, fauna_distances: uf.fauna_distances ?? {} };
+  const hasSol = payload.veg_libelles.length > 0 || Object.keys(uf.veg_profile ?? {}).length > 0;
+  const hasFaune = sortedFauna(uf.fauna_distances).length > 0;
   return (
-    <div className="ranking-line-detail uf-subset-detail" role="region" aria-label={`Détail ${ss.subset_id}`}>
-      {hasEnrich ? (
-        <section className="ranking-metric-block">
-          <h4 className="ranking-metric-title">Faune du sous-ensemble</h4>
-          <FilterEnrichBlock payload={enrichPayload} part="faune" />
+    <>
+      <section className="ranking-metric-block" style={{ marginBottom: 10 }}>
+        <h4 className="ranking-metric-title">Occupation du sol du terrain</h4>
+        <p className="ranking-line-empty" style={{ marginTop: 0 }}>
+          Somme des {uf.nb_parcelles} parcelles.{" "}
+          {onShowOnMap && (
+            <button type="button" className="cz-btn cz-btn--ghost" onClick={onShowOnMap}>Voir sur la carte</button>
+          )}
+        </p>
+        {hasSol ? <FilterEnrichBlock payload={payload} part="sol" /> : <p className="ranking-line-empty">Profil non calculé.</p>}
+      </section>
+      {hasFaune && (
+        <section className="ranking-metric-block" style={{ marginBottom: 10 }}>
+          <FilterEnrichBlock payload={payload} part="faune" />
         </section>
-      ) : (
-        <p className="ranking-line-empty">Enrichissement CESBIO / faune non disponible pour ce sous-ensemble.</p>
       )}
-      {scorePayload ? (
+      {uf.score_eco && (
         <section className="ranking-metric-block">
           <h4 className="ranking-metric-title">Score écologique</h4>
-          <ScoreBlock payload={scorePayload} />
+          <ScoreBlock payload={uf.score_eco as unknown as ParcelScorePayload} />
         </section>
-      ) : null}
-    </div>
+      )}
+    </>
   );
+}
+
+/** Entonnoir de construction des terrains (usage interne). */
+function DiagnosticNote({ diag }: { diag?: Record<string, number> }) {
+  if (!diag || !Object.keys(diag).length) return null;
+  const COMPTEURS = new Set(["ppm_aoi", "ppm_siren_multi", "terrains_evalues", "terrains_retenus", "manuels", "secondes"]);
+  const retraits = Object.entries(diag)
+    .filter(([k, v]) => v > 0 && !COMPTEURS.has(k) && !k.startsWith("rejet:"))
+    .map(([k, v]) => [k.replace(/^elimine:/, ""), v] as [string, number]);
+  const rejets = Object.entries(diag)
+    .filter(([k, v]) => k.startsWith("rejet:") && v > 0)
+    .map(([k, v]) => [k.slice(6), v] as [string, number]);
+  return (
+    <details style={{ margin: "8px 12px 0", fontSize: 12, color: "#475569" }}>
+      <summary style={{ cursor: "pointer" }}>Comment ces terrains ont été obtenus</summary>
+      <ul style={{ margin: "6px 0 0 16px", padding: 0 }}>
+        <li>{(diag.ppm_aoi ?? 0).toLocaleString("fr-FR")} parcelles de personnes morales dans la zone d&apos;étude,
+          dont {(diag.ppm_siren_multi ?? 0).toLocaleString("fr-FR")} appartenant à une société qui en possède au moins deux.</li>
+        {retraits.map(([k, v]) => (
+          <li key={k}>{v.toLocaleString("fr-FR")} parcelle(s) écartée(s) : {DIAG_LABELS[k] ?? k}</li>
+        ))}
+        <li>{diag.terrains_evalues ?? 0} terrain(s) évalué(s), {diag.terrains_retenus ?? 0} retenu(s).</li>
+        {rejets.map(([k, v]) => <li key={k}>{v} terrain(s) rejeté(s) : {DIAG_LABELS[k] ?? k}</li>)}
+        {diag.secondes != null && <li>Calcul en {diag.secondes} s.</li>}
+      </ul>
+    </details>
+  );
+}
+
+interface UnitesFoncieresTableProps {
+  ufResults: UfFilterResponse;
+  projectId: string | null;
+  scrollTableNonce?: number;
+  /** Clic sur l'emprise d'une UF dans la carte : ouvre et fait défiler jusqu'à cette UF. */
+  scrollToUfId?: string | null;
+  onUfActivate?: (ufId: string) => void;
+  onUfHover?: (ufId: string | null) => void;
+  hoverParcelleIdu?: string | null;
+  onParcelleHover?: (idu: string | null) => void;
+  onRemoveUf?: (ufId: string) => Promise<void> | void;
+  exportJauge?: import("../ExportEtudeMenu").ExportJauge | null;
 }
 
 export function UnitesFoncieresTable({
   ufResults,
   projectId,
-  selectedSubsetId = null,
-  scrollToSubsetId = null,
   scrollTableNonce = 0,
-  onSubsetActivate,
+  scrollToUfId = null,
   onUfActivate,
-  onSubsetHover,
   onUfHover,
   hoverParcelleIdu = null,
   onParcelleHover,
-  scrollToUfId = null,
   onRemoveUf,
   exportJauge = null,
 }: UnitesFoncieresTableProps) {
   const [expandedUfId, setExpandedUfId] = useState<string | null>(null);
-  const [expandedSubsetId, setExpandedSubsetId] = useState<string | null>(null);
-  const [hoveredSubsetId, setHoveredSubsetId] = useState<string | null>(null);
   const [visibleUfCount, setVisibleUfCount] = useState(UF_PAGE_SIZE);
   const [ufTab, setUfTab] = useState<UfTab>("parcelles");
-  const [auditK, setAuditK] = useState(5);
-  const [auditLoading, setAuditLoading] = useState(false);
-  const [audit, setAudit] = useState<UfCombinationsAudit | null>(null);
-  const [auditError, setAuditError] = useState<string | null>(null);
   const [removingUfId, setRemovingUfId] = useState<string | null>(null);
-  const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
+
+  const ufs = useMemo(() => ufResults.unites_foncieres ?? [], [ufResults]);
 
   useEffect(() => {
     setVisibleUfCount(UF_PAGE_SIZE);
     setExpandedUfId(null);
-    setExpandedSubsetId(null);
     setUfTab("parcelles");
   }, [ufResults]);
 
-  const ufs = ufResults.unites_foncieres as UfAvecParcelles[];
-
-  useEffect(() => {
-    if (!scrollToSubsetId) return;
-    const ufIdx = ufs.findIndex((uf) =>
-      (uf.sous_ensembles ?? []).some((ss) => ss.subset_id === scrollToSubsetId),
-    );
-    if (ufIdx >= 0) {
-      setVisibleUfCount((c) => Math.max(c, ufIdx + 1));
-      setExpandedUfId(ufs[ufIdx].uf_id);
-      setExpandedSubsetId(scrollToSubsetId);
-      setUfTab("combinaisons");
-    }
-    const idToScroll = scrollToSubsetId;
-    requestAnimationFrame(() => {
-      rowRefs.current.get(idToScroll)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    });
-  }, [scrollToSubsetId, scrollTableNonce, ufs]);
-
   useEffect(() => {
     if (!scrollToUfId) return;
-    const ufIdx = ufs.findIndex((uf) => uf.uf_id === scrollToUfId);
-    if (ufIdx < 0) return;
-    setVisibleUfCount((c) => Math.max(c, ufIdx + 1));
+    const idx = ufs.findIndex((uf) => uf.uf_id === scrollToUfId);
+    if (idx < 0) return;
+    setVisibleUfCount((c) => Math.max(c, idx + 1));
     setExpandedUfId(scrollToUfId);
-    setExpandedSubsetId(null);
     setUfTab("parcelles");
     const id = scrollToUfId;
     window.setTimeout(() => {
@@ -282,16 +299,7 @@ export function UnitesFoncieresTable({
     }, 50);
   }, [scrollToUfId, scrollTableNonce, ufs]);
 
-  const ufCount = ufResults.total_uf ?? ufResults.unites_foncieres.length;
-
-  const parcellesByUf = useMemo(() => {
-    const out: Record<string, UfParcelle[]> = {};
-    for (const uf of ufs) out[uf.uf_id] = getUfParcelles(uf);
-    return out;
-  }, [ufs]);
-
   const visibleUfs = ufs.slice(0, visibleUfCount);
-  const hasMoreUf = ufs.length > visibleUfCount;
 
   return (
     <div className="ranking-wrap">
@@ -299,350 +307,155 @@ export function UnitesFoncieresTable({
         <div className="ranking-chrome__bar">
           {projectId && <ExportEtudeMenu projectId={projectId} page="uf" jauge={exportJauge} />}
           <span className="ranking-count mono">
-            {Math.min(visibleUfCount, ufs.length)} / {ufCount} UF
+            {Math.min(visibleUfCount, ufs.length)} / {ufResults.total_uf ?? ufs.length} UF
           </span>
-          {projectId && (
-            <form
-              style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto" }}
-              onSubmit={(e) => {
-                e.preventDefault();
-                setAuditLoading(true);
-                setAuditError(null);
-                auditUfCombinations(projectId, auditK)
-                  .then(setAudit)
-                  .catch((err: Error) => setAuditError(err.message))
-                  .finally(() => setAuditLoading(false));
-              }}
-            >
-              <label style={{ fontSize: 12, color: "#475569" }}>
-                Taille max des combinaisons
-                <input
-                  type="number"
-                  min={2}
-                  max={15}
-                  value={auditK}
-                  onChange={(e) => setAuditK(Number(e.target.value))}
-                  style={{ width: 52, marginLeft: 6 }}
-                />
-              </label>
-              <button type="submit" className="ranking-btn-select-mode" disabled={auditLoading}>
-                {auditLoading ? "Comptage…" : "Estimer"}
-              </button>
-            </form>
-          )}
         </div>
-        {audit && (
-          <p className="ranking-line-empty" style={{ margin: "8px 12px 0" }}>
-            De 2 à {audit.max_k} parcelles : {audit.n_combinaisons_surface_ok.toLocaleString("fr-FR")} combinaisons
-            qui passent la surface minimale ({audit.n_combinaisons.toLocaleString("fr-FR")} avant ce filtre),
-            sur {audit.n_uf.toLocaleString("fr-FR")} UF, en {audit.secondes}s.
-            {audit.n_uf_au_dela_du_plafond_actuel > 0
-              ? ` ${audit.n_uf_au_dela_du_plafond_actuel} UF ont plus de ${audit.cap_parcelles_uf_actuel} parcelles : elles sont ignorées par le calcul actuel.`
-              : ""}
-            {" "}Les résultats affichés ne sont pas modifiés.
-          </p>
-        )}
-        {auditError && (
-          <p className="ranking-line-empty" style={{ margin: "8px 12px 0" }}>{auditError}</p>
-        )}
         <ResultInfoNote>
           <p>
-            Une unité foncière regroupe les parcelles cadastrales d&apos;une même société
-            (personne morale), quand elles se touchent. C&apos;est le terrain qu&apos;on peut
-            envisager d&apos;acheter ou de conventionner auprès d&apos;un seul propriétaire.
+            Une unité foncière est un terrain d&apos;un seul tenant appartenant à une même société
+            (personne morale) : les parcelles qui se touchent et qui ne sont pas exclues par le filtre.
+            C&apos;est ce qu&apos;on peut demander à ce propriétaire.
           </p>
           <p>
-            La surface, l&apos;occupation du sol et les distances aux observations de faune
-            portent sur l&apos;ensemble de ces parcelles réunies. Ce n&apos;est pas une moyenne
-            des parcelles prises une par une. Le score écologique et la distance au projet
-            servent à classer les unités.
-          </p>
-          <p>
-            En ouvrant une unité, les parcelles listées sont celles qui la composent.
-            Les combinaisons sont des regroupements plus petits, à l&apos;intérieur de la
-            même propriété, qui respectent aussi les critères du filtre.
+            Une parcelle qui touche une zone d&apos;exclusion (mesure compensatoire existante, ENS,
+            Natura 2000…) ou qui n&apos;a pas l&apos;occupation du sol recherchée est retirée avant de
+            former le terrain. Les critères de proximité (faune, flore, eau) sont remplis dès qu&apos;une
+            parcelle du terrain les remplit : l&apos;onglet « Critères » indique lesquelles.
           </p>
         </ResultInfoNote>
+        <DiagnosticNote diag={ufResults.diagnostic} />
       </div>
 
       <div className="ranking-table-scroll uf-foncieres-scroll" style={{ padding: 12 }}>
         {ufs.length === 0 ? (
-          <div className="uf-empty-msg">Aucun résultat UF.</div>
+          <div className="uf-empty-msg">Aucune unité foncière ne passe le filtre.</div>
         ) : (
           <>
-          {visibleUfs.map((uf) => {
-            const isExpanded = expandedUfId === uf.uf_id;
-            const pmPayload = uf.pm_prospect
-              ? parsePersonnesMoralesPayload(uf.pm_prospect as Record<string, unknown>)
-              : null;
-            const isProspect = pmPayload?.compensation_deja_realisee === true;
-            const parcelles = parcellesByUf[uf.uf_id] ?? [];
-            const nbComb = uf.nb_combinaisons ?? uf.sous_ensembles.length;
-            const nbNoyau = uf.nb_parcelles_noyau ?? parcelles.filter((p) => p.noyau).length;
-            const surface = uf.surface_ha_parcelles ?? null;
-            const best = getBestScore(uf);
+            {visibleUfs.map((uf) => {
+              const isExpanded = expandedUfId === uf.uf_id;
+              const pm = uf.pm_prospect ? parsePersonnesMoralesPayload(uf.pm_prospect as Record<string, unknown>) : null;
+              const isProspect = pm?.compensation_deja_realisee === true;
+              const isManuel = uf.source === "manuel";
+              const fails = uf.verdict === false;
+              const score = uf.score_eco;
+              const nbParc = uf.parcelles?.length ?? uf.nb_parcelles;
 
-            return (
-              <div
-                key={uf.uf_id}
-                id={`uf-block-${uf.uf_id}`}
-                style={{ marginBottom: 12 }}
-                onMouseEnter={() => onUfHover?.(uf.uf_id)}
-                onMouseLeave={() => {
-                  onUfHover?.(null);
-                  onSubsetHover?.(null);
-                  onParcelleHover?.(null);
-                }}
-              >
+              return (
                 <div
-                  style={{
-                    width: "100%",
-                    textAlign: "left",
-                    background: "white",
-                    border: "1px solid #e2e8f0",
-                    borderRadius: 8,
-                    padding: "10px 12px",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: 10,
-                  }}
+                  key={uf.uf_id}
+                  id={`uf-block-${uf.uf_id}`}
+                  style={{ marginBottom: 12 }}
+                  onMouseEnter={() => onUfHover?.(uf.uf_id)}
+                  onMouseLeave={() => { onUfHover?.(null); onParcelleHover?.(null); }}
                 >
-                <button
-                  type="button"
-                  onClick={() => {
-                    const nextExpanded = !isExpanded;
-                    setExpandedUfId(nextExpanded ? uf.uf_id : null);
-                    setExpandedSubsetId(null);
-                    setUfTab("parcelles");
-                    onUfActivate?.(uf.uf_id);
-                  }}
-                  style={{
-                    flex: 1,
-                    textAlign: "left",
-                    background: "transparent",
-                    border: "none",
-                    padding: 0,
-                    cursor: "pointer",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: 10,
-                  }}
-                >
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <div className="uf-foncier-title">
-                      UF #{uf.rang}
-                      {uf.denomination ? ` · ${uf.denomination}` : ` · ${uf.uf_id}`}
-                      {isProspect && (
-                        <span className="uf-prospect-badge" title="Personne morale ayant déjà compensé (autre foncier)">
-                          Prospect compensation
-                        </span>
-                      )}
-                    </div>
-                    <div className="uf-foncier-meta">
-                      {parcelles.length} parcelles retenues
-                      {nbNoyau > 0 ? ` (dont ${nbNoyau} incontournable${nbNoyau > 1 ? "s" : ""})` : ""}
-                      {surface != null ? ` · ${surface.toFixed(1)} ha` : ""}
-                      {best ? ` · meilleur score éco ${best.total_score}/${best.max_score}` : ""}
-                      {` · dist centre ${uf.distance_centre_km.toFixed(1)} km`}
-                    </div>
-                    {uf.siren && (
-                      <div className="uf-foncier-pm" title={[uf.denomination, uf.siren].filter(Boolean).join(" · ")}>
-                        <span className="mono">SIREN {uf.siren}</span>
-                      </div>
-                    )}
-                  </div>
-                  <span className="uf-foncier-toggle">
-                    {isExpanded ? "−" : "+"}
-                  </span>
-                </button>
-                {onRemoveUf ? (
-                  <button
-                    type="button"
-                    className="cz-btn cz-btn--ghost"
-                    disabled={removingUfId === uf.uf_id}
-                    title="Retirer cette unité foncière du classement"
-                    onClick={async (ev) => {
-                      ev.stopPropagation();
-                      const label = uf.denomination ? `UF #${uf.rang} · ${uf.denomination}` : `UF #${uf.rang}`;
-                      if (!window.confirm(`Retirer ${label} du classement des unités foncières ?`)) return;
-                      setRemovingUfId(uf.uf_id);
-                      try {
-                        await onRemoveUf(uf.uf_id);
-                        if (expandedUfId === uf.uf_id) setExpandedUfId(null);
-                      } finally {
-                        setRemovingUfId(null);
-                      }
-                    }}
-                  >
-                    {removingUfId === uf.uf_id ? "…" : "Retirer"}
-                  </button>
-                ) : null}
-                </div>
-
-                {isExpanded && (
-                  <div style={{ paddingTop: 8 }}>
-                    <div className="ranking-line-tabs" role="tablist" aria-label="Détail de l'unité foncière">
-                      {([
-                        ["parcelles", `Parcelles (${parcelles.length})`],
-                        ["combinaisons", `Combinaisons (${nbComb})`],
-                        ["proprietaire", "Propriétaire"],
-                      ] as [UfTab, string][]).map(([id, label]) => (
-                        <button
-                          key={id}
-                          type="button"
-                          role="tab"
-                          className={`ranking-line-tab${ufTab === id ? " is-active" : ""}`}
-                          aria-selected={ufTab === id}
-                          onClick={() => setUfTab(id)}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-
-                    {ufTab === "parcelles" && (
-                      <>
-                        <p className="filter-enrich-fauna-hint" style={{ margin: "6px 0" }}>
-                          Parcelles de la société retenues dans au moins une combinaison valide.
-                          Les parcelles <strong>« Noyau »</strong> sont présentes dans toutes les combinaisons :
-                          elles sont incontournables. Les autres sont optionnelles.
-                        </p>
-                        <UniteEnrichissement uf={uf} />
-                        <UfParcellesTable
-                          parcelles={parcelles}
-                          total={nbComb}
-                          hoverIdu={hoverParcelleIdu}
-                          onHover={onParcelleHover}
-                        />
-                      </>
-                    )}
-
-                    {ufTab === "proprietaire" && (
-                      pmPayload ? (
-                        <div style={{ marginTop: 6 }}>
-                          <PersonnesMoralesBlock payload={pmPayload} />
+                  <div style={{
+                    background: "white", border: `1px solid ${fails ? "#fecaca" : "#e2e8f0"}`, borderRadius: 8,
+                    padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+                  }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExpandedUfId(isExpanded ? null : uf.uf_id);
+                        setUfTab("parcelles");
+                        onUfActivate?.(uf.uf_id);
+                      }}
+                      style={{
+                        flex: 1, textAlign: "left", background: "transparent", border: "none", padding: 0,
+                        cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+                      }}
+                    >
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <div className="uf-foncier-title">
+                          UF #{uf.rang} · {uf.denomination || uf.uf_id}
+                          {isManuel && <span className="uf-prospect-badge" style={{ background: "#e0e7ff", color: "#3730a3" }}>Ajout manuel</span>}
+                          {fails && (
+                            <span className="uf-prospect-badge" style={{ background: "#fee2e2", color: "#b91c1c" }}
+                              title="Ce terrain ne passe pas le filtre">
+                              Ne passe pas : {uf.motif_rejet ? critereLabel(uf, uf.motif_rejet) : "?"}
+                            </span>
+                          )}
+                          {isProspect && (
+                            <span className="uf-prospect-badge" title="Personne morale ayant déjà compensé (autre foncier)">
+                              Prospect compensation
+                            </span>
+                          )}
                         </div>
-                      ) : (
-                        <p className="ranking-line-empty">Informations propriétaire non disponibles.</p>
-                      )
-                    )}
-
-                    {ufTab === "combinaisons" && (
-                    <>
-                    <p className="filter-enrich-fauna-hint" style={{ margin: "6px 0" }}>
-                      Regroupements de parcelles contiguës qui respectent chacun les critères du filtre
-                      (surface, forme, végétation, faune). La liste des parcelles en est la synthèse.
-                    </p>
-                    <table className="ranking-table">
-                      <thead>
-                        <tr>
-                          <th className="col-rank">#</th>
-                          <th className="col-idu">subset_id</th>
-                          <th className="col-uf-nb-parcelles">Parcelles</th>
-                          <th className="col-dist">Dist.</th>
-                          <th className="col-surf">Surface</th>
-                          <th className="col-miller">Miller</th>
-                          <th className="col-score">Score éco</th>
-                          <th className="col-detail" aria-label="Détail" />
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {uf.sous_ensembles.map((ss, idx) => {
-                          const detailOpen = expandedSubsetId === ss.subset_id;
-                          const isSelected = selectedSubsetId === ss.subset_id;
-                          const isHovered = hoveredSubsetId === ss.subset_id;
-                          return (
-                            <Fragment key={ss.subset_id}>
-                              <tr
-                                key={ss.subset_id}
-                                ref={(el) => {
-                                  if (el) rowRefs.current.set(ss.subset_id, el);
-                                  else rowRefs.current.delete(ss.subset_id);
-                                }}
-                                className={`ranking-row${detailOpen ? " ranking-row--expanded" : ""}${isSelected ? " selected" : ""}${isHovered ? " hovered" : ""}`}
-                                onClick={() => {
-                                  const open = !detailOpen;
-                                  setExpandedSubsetId(open ? ss.subset_id : null);
-                                  onSubsetActivate?.(ss.subset_id);
-                                }}
-                                onMouseEnter={() => {
-                                  setHoveredSubsetId(ss.subset_id);
-                                  onSubsetHover?.(ss.subset_id);
-                                }}
-                                onMouseLeave={() => {
-                                  setHoveredSubsetId(null);
-                                  onSubsetHover?.(null);
-                                }}
-                                style={{ cursor: "pointer" }}
-                              >
-                                <td className="col-rank">
-                                  <span className="rank-badge mono">{idx + 1}</span>
-                                </td>
-                                <td className="col-idu">
-                                  <div className="idu-cell">
-                                    <span className="idu-main mono">{ss.subset_id}</span>
-                                  </div>
-                                </td>
-                                <td className="col-uf-nb-parcelles mono">
-                                  {ss.idus?.length ?? ss.k}<span className="unit"> parc.</span>
-                                </td>
-                                <td className="col-dist mono">
-                                  {ss.distance_centre_km.toFixed(3)}<span className="unit"> km</span>
-                                </td>
-                                <td className="col-surf mono">
-                                  {ss.surface_ha.toFixed(1)}<span className="unit"> ha</span>
-                                </td>
-                                <td className="col-miller mono">{ss.miller.toFixed(3)}</td>
-                                <td className="col-score mono">{scoreLabel(ss.score_eco as ParcelScorePayload | undefined)}</td>
-                                <td className="col-detail mono" style={{ color: "#64748b" }}>
-                                  {detailOpen ? "▾" : "▸"}
-                                </td>
-                              </tr>
-                              {detailOpen && (
-                                <tr
-                                  key={`${ss.subset_id}-detail`}
-                                  className="ranking-row-detail"
-                                  onMouseEnter={() => {
-                                    setHoveredSubsetId(ss.subset_id);
-                                    onSubsetHover?.(ss.subset_id);
-                                  }}
-                                  onMouseLeave={() => {
-                                    setHoveredSubsetId(null);
-                                    onSubsetHover?.(null);
-                                  }}
-                                >
-                                  <td colSpan={8}>
-                                    <SousEnsembleDetail ss={ss} />
-                                  </td>
-                                </tr>
-                              )}
-                            </Fragment>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                    </>
+                        <div className="uf-foncier-meta">
+                          {nbParc} parcelles
+                          {uf.surface_ha != null ? ` · ${uf.surface_ha.toFixed(1)} ha` : ""}
+                          {score ? ` · score éco ${score.total_score}/${score.max_score}` : ""}
+                          {` · ${uf.distance_centre_km.toFixed(1)} km du projet`}
+                        </div>
+                        <CritereChips uf={uf} />
+                        {uf.siren && !isManuel && (
+                          <div className="uf-foncier-pm"><span className="mono">SIREN {uf.siren}</span></div>
+                        )}
+                      </div>
+                      <span className="uf-foncier-toggle">{isExpanded ? "−" : "+"}</span>
+                    </button>
+                    {onRemoveUf && (
+                      <button
+                        type="button"
+                        className="cz-btn cz-btn--ghost"
+                        disabled={removingUfId === uf.uf_id}
+                        title="Retirer cette unité foncière du classement"
+                        onClick={async (ev) => {
+                          ev.stopPropagation();
+                          if (!window.confirm(`Retirer UF #${uf.rang} · ${uf.denomination || uf.uf_id} du classement ?`)) return;
+                          setRemovingUfId(uf.uf_id);
+                          try {
+                            await onRemoveUf(uf.uf_id);
+                            if (expandedUfId === uf.uf_id) setExpandedUfId(null);
+                          } finally {
+                            setRemovingUfId(null);
+                          }
+                        }}
+                      >
+                        {removingUfId === uf.uf_id ? "…" : "Retirer"}
+                      </button>
                     )}
                   </div>
-                )}
+
+                  {isExpanded && (
+                    <div style={{ paddingTop: 8 }}>
+                      <div className="ranking-line-tabs" role="tablist" aria-label="Détail de l'unité foncière">
+                        {([
+                          ["parcelles", `Parcelles (${nbParc})`],
+                          ["criteres", "Critères"],
+                          ["sol", "Occupation du sol"],
+                          ["proprietaire", "Propriétaire"],
+                        ] as [UfTab, string][]).map(([id, label]) => (
+                          <button
+                            key={id}
+                            type="button"
+                            role="tab"
+                            className={`ranking-line-tab${ufTab === id ? " is-active" : ""}`}
+                            aria-selected={ufTab === id}
+                            onClick={() => setUfTab(id)}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      {ufTab === "parcelles" && <ParcellesTab uf={uf} hoverIdu={hoverParcelleIdu} onHover={onParcelleHover} />}
+                      {ufTab === "criteres" && <CriteresTab uf={uf} />}
+                      {ufTab === "sol" && <SolTab uf={uf} onShowOnMap={() => onUfActivate?.(uf.uf_id)} />}
+                      {ufTab === "proprietaire" && (pm
+                        ? <div style={{ marginTop: 6 }}><PersonnesMoralesBlock payload={pm} /></div>
+                        : <p className="ranking-line-empty">Informations propriétaire non disponibles.</p>)}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {ufs.length > visibleUfCount && (
+              <div className="ranking-load-more" style={{ marginTop: 4, padding: "0 0 4px" }}>
+                <button type="button" className="btn-load-more"
+                  onClick={() => setVisibleUfCount((c) => Math.min(c + UF_PAGE_SIZE, ufs.length))}>
+                  Afficher plus (+{Math.min(UF_PAGE_SIZE, ufs.length - visibleUfCount)} UF)
+                </button>
               </div>
-            );
-          })}
-          {hasMoreUf && (
-            <div className="ranking-load-more" style={{ marginTop: 4, padding: "0 0 4px" }}>
-              <button
-                type="button"
-                className="btn-load-more"
-                onClick={() =>
-                  setVisibleUfCount((c) => Math.min(c + UF_PAGE_SIZE, ufs.length))
-                }
-              >
-                Afficher plus (+{Math.min(UF_PAGE_SIZE, ufs.length - visibleUfCount)} UF)
-              </button>
-            </div>
-          )}
+            )}
           </>
         )}
       </div>

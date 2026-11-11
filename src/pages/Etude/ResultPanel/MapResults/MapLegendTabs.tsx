@@ -17,10 +17,24 @@ interface MapLegendTabsProps {
 
 export function MapLegendTabs({ tabs, defaultTabId }: MapLegendTabsProps) {
   const [activeId, setActiveId] = useState(defaultTabId ?? tabs[0]?.id ?? "");
+  const [collapsed, setCollapsed] = useState(false);
 
   if (tabs.length === 0) return null;
 
   const active = tabs.some((tab) => tab.id === activeId) ? activeId : tabs[0].id;
+
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        className="map-legende map-legende--collapsed"
+        onClick={() => setCollapsed(false)}
+        title="Ouvrir la légende"
+      >
+        Légende
+      </button>
+    );
+  }
 
   return (
     <div className="map-legende map-legende--tabs">
@@ -42,6 +56,14 @@ export function MapLegendTabs({ tabs, defaultTabId }: MapLegendTabsProps) {
             </button>
           );
         })}
+        <button
+          type="button"
+          className="map-legende__collapse"
+          onClick={() => setCollapsed(true)}
+          title="Réduire la légende"
+        >
+          −
+        </button>
       </div>
       {tabs.map((tab) => (
         <div

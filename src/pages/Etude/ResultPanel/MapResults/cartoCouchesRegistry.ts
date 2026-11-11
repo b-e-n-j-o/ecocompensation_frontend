@@ -9,6 +9,7 @@
  */
 
 import type { FeatureCollection, Geometry, GeoJsonProperties } from "geojson";
+import { CESBIO_LIBELLE_COLORS } from "../../../../types";
 
 /** Données préchargées après filtrage (toutes les couches RESULTS_LAYERS en parallèle). */
 export type ResultsThematicPreload = Record<
@@ -34,6 +35,53 @@ export interface ResultsLayerDef {
     discriminantField?: string;
     /** Champs affichés dans le popup au survol */
     popupFields: { field: string; label: string }[];
+    groupe?: "exclusion" | "critere" | "contexte";
+    /** Couche buffer chargée et affichée avec celle-ci (faune / flore). */
+    companionKey?: string;
+  }
+
+  export type FilterLayerApiDef = {
+    key: string;
+    label: string;
+    groupe: "exclusion" | "critere" | "contexte";
+    color: string;
+    discriminant?: string | null;
+    popup_fields?: { field: string; label: string }[];
+    geom_type?: string;
+  };
+
+const COMPANION_OF: Record<string, string> = { fauna: "fauna_buffer", flore: "flore_buffer" };
+const BUFFER_KEYS = new Set(Object.values(COMPANION_OF));
+
+function defFromApi(api: FilterLayerApiDef): ResultsLayerDef {
+  const local = ALL_RESULTS_LAYERS.find((d) => d.key === api.key);
+  const line = api.geom_type === "line";
+  return {
+    key: api.key,
+    label: api.label,
+    fillColor: local?.fillColor ?? api.color,
+    lineColor: local?.lineColor ?? api.color,
+    fillOpacity: local?.fillOpacity ?? (line ? 0 : 0.28),
+    lineWidth: local?.lineWidth ?? (line ? 2 : 1.2),
+    discriminantField: api.discriminant ?? undefined,
+    popupFields: api.popup_fields ?? [],
+    groupe: api.groupe,
+    companionKey: COMPANION_OF[api.key],
+  };
+}
+
+  /** L'API décrit les couches actives. Le registre local n'apporte que le style déjà choisi. */
+  export function layerDefsFromFilterLayers(apiDefs: FilterLayerApiDef[]): ResultsLayerDef[] {
+    const byKey = new Map(apiDefs.map((d) => [d.key, d]));
+    return apiDefs
+      .filter((api) => !BUFFER_KEYS.has(api.key) || !byKey.has(api.key.replace(/_buffer$/, "")))
+      .map((api) => {
+        const def = defFromApi(api);
+        if (def.companionKey && !byKey.has(def.companionKey)) {
+          return { ...def, companionKey: undefined };
+        }
+        return def;
+      });
   }
   
   export type LayerLoadState = "idle" | "loading" | "loaded" | "error";
@@ -43,6 +91,7 @@ export interface ResultsLayerDef {
     loadState: LayerLoadState;
     geojson: { type: "FeatureCollection"; features: { properties?: Record<string, unknown> | null }[] } | null;
     error: string | null;
+    truncated?: boolean;
     /** Valeurs discriminantes actuellement actives ; null/undefined = toutes. */
     selectedValues?: string[] | null;
   }
@@ -77,6 +126,7 @@ export interface ResultsLayerDef {
       lineColor: "#c2410c",
       fillOpacity: 0.15,
       lineWidth: 1.5,
+      companionKey: "fauna_buffer",
       discriminantField: "nom_vernaculaire",
       popupFields: [
         { field: "nom_vernaculaire", label: "Nom vernaculaire" },
@@ -134,7 +184,7 @@ export const ZH_RESULTS_LAYERS: ResultsLayerDef[] = [
     ],
   },
   {
-    key: "espaces_naturels_sensibles_ens",
+    key: "ens",
     label: "Espaces naturels sensibles (ENS)",
     fillColor: "#4ade80",
     lineColor: "#15803d",
@@ -202,25 +252,32 @@ export const ALL_RESULTS_LAYERS: ResultsLayerDef[] = [
 ];
 
 export function getResultsLayerDefs(keys: string[]): ResultsLayerDef[] {
+  const set = new Set(keys);
   return keys
-    .map((key) => ALL_RESULTS_LAYERS.find((d) => d.key === key))
+    .filter((key) => !BUFFER_KEYS.has(key) || !set.has(key.replace(/_buffer$/, "")))
+    .map((key) => {
+      const def = ALL_RESULTS_LAYERS.find((d) => d.key === key);
+      if (!def) return undefined;
+      const companion = COMPANION_OF[key];
+      return companion && set.has(companion) ? { ...def, companionKey: companion } : def;
+    })
     .filter((d): d is ResultsLayerDef => !!d);
 }
 
-/** Construit l'état initial des couches thématiques */
-export function buildInitialThematic(layerKeys?: string[]): Record<string, ThematicLayerState> {
-  const defs = layerKeys ? getResultsLayerDefs(layerKeys) : ALL_RESULTS_LAYERS;
-  return Object.fromEntries(
-    defs.map((d) => [
-      d.key,
-      { visible: false, loadState: "idle" as LayerLoadState, geojson: null, error: null },
-    ]),
-  );
+/** Construit l'état initial des couches thématiques à partir des définitions affichées. */
+export function buildInitialThematic(defs: ResultsLayerDef[] = ALL_RESULTS_LAYERS): Record<string, ThematicLayerState> {
+  const idle = { visible: false, loadState: "idle" as LayerLoadState, geojson: null, error: null };
+  const out: Record<string, ThematicLayerState> = {};
+  for (const d of defs) {
+    out[d.key] = { ...idle };
+    if (d.companionKey) out[d.companionKey] = { ...idle };
+  }
+  return out;
 }
 
 /** @deprecated Utiliser buildInitialThematic(keys) */
 export function buildInitialThematicLegacy(): Record<string, ThematicLayerState> {
-  return buildInitialThematic(RESULTS_LAYERS.map((d) => d.key));
+  return buildInitialThematic(RESULTS_LAYERS);
 }
   
   /** Extrait les valeurs distinctes d'un champ dans un GeoJSON */
@@ -263,8 +320,38 @@ export function buildInitialThematicLegacy(): Record<string, ThematicLayerState>
     const values = extractDistinctValues(geojson, field);
     const expr: unknown[] = ["match", ["to-string", ["get", field]]];
     values.forEach((val, i) => {
-      expr.push(val, DISCRIMINANT_PALETTE[i % DISCRIMINANT_PALETTE.length]);
+      const cesbio = field === "libelle_prio" ? CESBIO_LIBELLE_COLORS[val] : undefined;
+      expr.push(val, cesbio ?? DISCRIMINANT_PALETTE[i % DISCRIMINANT_PALETTE.length]);
     });
     expr.push(fallbackColor);
     return expr;
   }
+
+export function mapLayerKeysToEnsure(defs: ResultsLayerDef[]): string[] {
+  const keys: string[] = [];
+  for (const d of defs) {
+    keys.push(d.key);
+    if (d.companionKey) keys.push(d.companionKey);
+  }
+  return keys;
+}
+
+export function companionOf(defs: ResultsLayerDef[], key: string): string | undefined {
+  return defs.find((d) => d.key === key)?.companionKey;
+}
+
+export function styleForLayerKey(defs: ResultsLayerDef[], key: string): ResultsLayerDef {
+  return (
+    defs.find((d) => d.key === key)
+    ?? ALL_RESULTS_LAYERS.find((d) => d.key === key)
+    ?? {
+      key,
+      label: key,
+      fillColor: "#94a3b8",
+      lineColor: "#64748b",
+      fillOpacity: 0.15,
+      lineWidth: 1,
+      popupFields: [],
+    }
+  );
+}

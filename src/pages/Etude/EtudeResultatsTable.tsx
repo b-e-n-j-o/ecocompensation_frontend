@@ -59,14 +59,10 @@ type CombinedTableProps = Omit<RankingShared, "projectId"> & {
 type UnitesTableProps = {
   ufResults: UfFilterResponse;
   projectId: string | null;
-  selectedSubsetId: string | null;
-  scrollToSubsetId: string | null;
   scrollToUfId?: string | null;
   scrollTableNonce: number;
   hoverParcelleIdu?: string | null;
-  onSubsetActivate: (subsetId: string) => void;
   onUfActivate: (ufId: string) => void;
-  onSubsetHover: (subsetId: string | null) => void;
   onUfHover: (ufId: string | null) => void;
   onParcelleHover?: (idu: string | null) => void;
   onRemoveUf?: (ufId: string) => Promise<void> | void;
@@ -251,14 +247,10 @@ export function EtudeResultatsCombinedTable({
 export function EtudeResultatsUnitesTable({
   ufResults,
   projectId,
-  selectedSubsetId,
-  scrollToSubsetId,
   scrollToUfId = null,
   scrollTableNonce,
   hoverParcelleIdu = null,
-  onSubsetActivate,
   onUfActivate,
-  onSubsetHover,
   onUfHover,
   onParcelleHover,
   onRemoveUf,
@@ -270,15 +262,11 @@ export function EtudeResultatsUnitesTable({
         <UnitesFoncieresTable
           ufResults={ufResults}
           projectId={projectId}
-          selectedSubsetId={selectedSubsetId}
-          scrollToSubsetId={scrollToSubsetId}
           scrollToUfId={scrollToUfId}
           scrollTableNonce={scrollTableNonce}
           hoverParcelleIdu={hoverParcelleIdu}
-          onSubsetActivate={onSubsetActivate}
           onUfActivate={onUfActivate}
           onRemoveUf={onRemoveUf}
-          onSubsetHover={onSubsetHover}
           onUfHover={onUfHover}
           onParcelleHover={onParcelleHover}
           exportJauge={exportJauge}
