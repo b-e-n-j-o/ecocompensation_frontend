@@ -28,6 +28,8 @@ import {
   fetchIlotsRpgGeojson,
   startIlotsRpgDurete,
   fetchIlotsRpgDureteJob,
+  startUfDurete,
+  fetchUfDureteJob,
   fetchSousEnsemblesStatus,
   prefetchAllResultsThematicLayers,
   fetchPoolIndesirables,
@@ -288,6 +290,7 @@ export function EtudeResultats({
   const [indesirableMetricsByIdu, setIndesirableMetricsByIdu] = useState<Record<string, ParcelPoolMetricRow[]>>({});
   const [dureteFonciereLoading, setDureteFonciereLoading] = useState(false);
   const [ilotsDureteLoading, setIlotsDureteLoading] = useState(false);
+  const [ufDureteLoading, setUfDureteLoading] = useState(false);
   const [ilotsDureteProgress, setIlotsDureteProgress] = useState<{
     done: number;
     total: number;
@@ -957,6 +960,35 @@ export function EtudeResultats({
     } finally {
       setIlotsDureteLoading(false);
       setIlotsDureteProgress(null);
+    }
+  }
+
+  async function handleRunUfDurete(ufId?: string) {
+    if (!projectId) return;
+    setUfDureteLoading(true);
+    try {
+      const started = await startUfDurete(projectId, ufId ? [ufId] : null);
+      const deadline = Date.now() + 30 * 60_000;
+      while (Date.now() < deadline) {
+        const job = await fetchUfDureteJob(projectId, started.job_id);
+        if (job.status === "ok") {
+          setUfResults(await fetchUfResults(projectId));
+          return;
+        }
+        if (job.status === "error") {
+          throw new Error(job.error || "Échec du calcul de dureté des unités foncières.");
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      throw new Error("Le calcul de dureté des unités foncières dépasse 30 minutes.");
+    } catch (e) {
+      setToolNotice({
+        title: "Dureté foncière",
+        body: e instanceof Error ? e.message : "Échec du calcul de dureté foncière.",
+        error: true,
+      });
+    } finally {
+      setUfDureteLoading(false);
     }
   }
 
@@ -1844,6 +1876,7 @@ export function EtudeResultats({
                     showDistHydroColumn={showDistHydroColumn}
                     showSurfaceHydroColumn={showSurfaceHydroColumn}
                     showFloraColumn={((appliedFilterConfig ?? readFilterConfig(results.filter_config))?.flora_criteria?.length ?? 0) > 0}
+                    filterConfig={appliedFilterConfig ?? readFilterConfig(results.filter_config)}
                     indesirableParcelles={indesirableParcelles}
                     indesirableMetricsByIdu={indesirableMetricsByIdu}
                     onRestoreIndesirable={handleRestoreIndesirable}
@@ -1882,6 +1915,7 @@ export function EtudeResultats({
                     showZoneHumideColumn={showZoneHumideColumn}
                     showDistHydroColumn={showDistHydroColumn}
                     showSurfaceHydroColumn={showSurfaceHydroColumn}
+                    filterConfig={appliedFilterConfig ?? readFilterConfig(results.filter_config)}
                   />
                   }
                   map={<SplitMapFrame>{parcellesMapPanel}</SplitMapFrame>}
@@ -1998,6 +2032,10 @@ export function EtudeResultats({
                     onEcarter={handleEcarterUfParcelle}
                     onReinclure={handleReinclureUfParcelle}
                     onAddPickToUf={handleAddPickToUf}
+                    onRunDurete={handleRunUfDurete}
+                    dureteLoading={ufDureteLoading}
+                    onRunUrbanisme={handleRunUrbanisme}
+                    urbanismeLoading={urbanismeLoading}
                   />
                   }
                   map={<SplitMapFrame>{ufMapPanel}</SplitMapFrame>}

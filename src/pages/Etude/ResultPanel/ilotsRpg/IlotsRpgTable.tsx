@@ -31,9 +31,9 @@ const PAGE_SIZE = 50;
 type DetailTab = "composition" | "especes" | "sol" | "score" | "proprietaire" | "durete";
 
 const DETAIL_TABS: { id: DetailTab; label: string }[] = [
-  { id: "composition", label: "Composition" },
+  { id: "composition", label: "Composition RPG" },
   { id: "especes", label: "Espèces animales" },
-  { id: "sol", label: "Végétation" },
+  { id: "sol", label: "Occ. du sol" },
   { id: "score", label: "Scoring" },
   { id: "proprietaire", label: "Propriétaire" },
   { id: "durete", label: "Dureté foncière" },
@@ -210,6 +210,8 @@ function IlotDetail({
   hoverParcelleIdu,
   onParcelleHover,
   onParcelleClick,
+  onRunDurete,
+  dureteLoading,
 }: {
   il: IlotRpgResult;
   showZoneHumide: boolean;
@@ -217,6 +219,8 @@ function IlotDetail({
   hoverParcelleIdu: string | null;
   onParcelleHover?: (idu: string | null) => void;
   onParcelleClick?: (idu: string) => void;
+  onRunDurete?: (numIlots?: string[]) => void | Promise<void>;
+  dureteLoading?: boolean;
 }) {
   const [tab, setTab] = useState<DetailTab>("composition");
   const enrich = {
@@ -233,19 +237,6 @@ function IlotDetail({
         <span className="ranking-line-idu__label">Îlot RPG</span>
         <span className="mono">{il.num_ilot}</span>
       </p>
-      <section className="ranking-metric-block">
-        <h4 className="ranking-metric-title">Occupation du sol de l&apos;îlot</h4>
-        <p className="ranking-line-empty" style={{ marginTop: 0 }}>
-          Mesurée sur l&apos;union des {il.nb_parcelles} parcelles de l&apos;îlot, pas en moyenne des parcelles.
-        </p>
-        {(il.veg_libelles?.length || Object.keys(il.veg_profile ?? {}).length || Object.keys(il.fauna_distances ?? {}).length) ? (
-          <FilterEnrichBlock payload={enrich} part="sol" />
-        ) : (
-          <p className="ranking-line-empty">
-            Profil CESBIO non encore calculé pour cet îlot. Il apparaît après un nouveau filtrage.
-          </p>
-        )}
-      </section>
       <div className="ranking-line-tabs" role="tablist" aria-label="Détail de l'îlot">
         {DETAIL_TABS.map((t) => (
           <button
@@ -319,17 +310,35 @@ function IlotDetail({
       {tab === "score" && (scorePayload
         ? <ScoreBlock payload={scorePayload} />
         : <p className="ranking-line-empty">Score écologique non calculé pour cet îlot.</p>)}
-      {tab === "durete" && <DureteIlotPanel il={il} />}
+      {tab === "durete" && (
+        <DureteIlotPanel
+          il={il}
+          loading={dureteLoading}
+          onCalculate={onRunDurete && il.nb_pm > 0 ? () => void onRunDurete([il.num_ilot]) : undefined}
+        />
+      )}
       {tab === "proprietaire" && (
-        <div style={{ display: "grid", gap: 8 }}>
+        <div style={{ display: "grid", gap: 12 }}>
           <p className="ranking-line-empty" style={{ margin: 0 }}>
-            {il.pm_unique
-              ? "Une seule personne morale détient au moins 95 % de la surface de l'îlot."
-              : il.nb_pm > 0
-                ? `${il.nb_pm} personne(s) morale(s) parmi les propriétaires ; la PM dominante détient la plus grande surface. Le reste est détenu par des personnes physiques ou non identifié.`
+            {il.nb_pm > 1
+              ? `${il.nb_pm} personnes morales se partagent le foncier. Le reste est détenu par des personnes physiques ou non identifié.`
+              : il.nb_pm === 1
+                ? "Une personne morale est identifiée sur cet îlot."
                 : "Aucune personne morale identifiée (propriétaires personnes physiques ou non identifiés)."}
           </p>
-          {pmPayload ? <PersonnesMoralesBlock payload={pmPayload} /> : null}
+          {(il.proprietaires?.length ? il.proprietaires : pmPayload ? [il.pm_prospect] : []).map((raw, i) => {
+            if (!raw || typeof raw !== "object") return null;
+            const payload = parsePersonnesMoralesPayload(raw as Record<string, unknown>);
+            const pct = (raw as { surface_pct?: number | null }).surface_pct;
+            return (
+              <div key={payload.siren || i}>
+                {pct != null && (
+                  <p className="filter-enrich-fauna-hint" style={{ marginBottom: 4 }}>{pct} % du foncier</p>
+                )}
+                <PersonnesMoralesBlock payload={payload} />
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -353,7 +362,6 @@ export function IlotsRpgTable({
   exportJauge = null,
   onRunDurete,
   dureteLoading = false,
-  dureteProgress = null,
 }: IlotsRpgTableProps) {
   const parcelles = useMemo(() => parcellesByIlot(geojson), [geojson]);
   const [sortKey, setSortKey] = useState<IlotsRpgSortKey>("rang");
@@ -445,11 +453,14 @@ export function IlotsRpgTable({
                   setChecked(new Set());
                 }}
               >
-                {dureteLoading && dureteProgress && dureteProgress.total > 0
-                  ? `Dureté ${dureteProgress.done}/${dureteProgress.total}`
-                  : dureteLoading
-                    ? "Dureté…"
-                    : "Dureté foncière"}
+                {dureteLoading ? (
+                  <>
+                    <span className="parcelles-map-spinner" aria-hidden="true" />
+                    {" "}Calcul de la dureté foncière en arrière plan...
+                  </>
+                ) : (
+                  "Dureté foncière"
+                )}
               </button>
               {selectingDurete && (
                 <>
@@ -599,6 +610,8 @@ export function IlotsRpgTable({
                           hoverParcelleIdu={hoverParcelleIdu}
                           onParcelleHover={onParcelleHover}
                           onParcelleClick={onParcelleClick}
+                          onRunDurete={onRunDurete}
+                          dureteLoading={dureteLoading}
                         />
                       </td>
                     </tr>

@@ -494,6 +494,18 @@ export interface UniteFoncieresResult {
     surface_deja_en_mc_m2?: number | null;
   };
   parcelles?: UfParcelleResult[];
+  durete_fonciere?: {
+    eligible: boolean;
+    reason: string | null;
+    score_final: number | null;
+    niveau_durete: string | null;
+    explication: string | null;
+    siren: string | null;
+    denomination: string | null;
+    forme_juridique?: string | null;
+    detail_axes?: Record<string, unknown> | null;
+    intersects_arrachage_vigne?: boolean;
+  } | null;
 }
 
 export interface UfFilterResponse {
@@ -563,6 +575,10 @@ export interface IlotRpgResult {
   zone_humide_ha: number;
   score_eco?: IlotRpgScoreEco;
   pm_prospect?: UniteFoncieresResult["pm_prospect"] | null;
+  proprietaires?: Array<NonNullable<UniteFoncieresResult["pm_prospect"]> & {
+    surface_ha?: number;
+    surface_pct?: number | null;
+  }>;
   durete_fonciere?: IlotRpgDurete | null;
 }
 

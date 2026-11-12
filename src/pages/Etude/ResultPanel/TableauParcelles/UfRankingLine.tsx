@@ -3,9 +3,8 @@
  * La sélection et le retrait d'une parcelle servent à composer une UF à la main.
  * Ce n'est pas le statut « indésirable » du pool de parcelles.
  */
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import {
-  CESBIO_LIBELLE_COLORS,
   type UfCritereDetail,
   type UniteFoncieresResult,
 } from "../../../../types";
@@ -16,9 +15,29 @@ import {
   parsePersonnesMoralesPayload,
   type ParcelScorePayload,
 } from "./RankingLine";
+import { DureteFoncierePanel } from "./RankingLineDurete";
 import { parcelleLabelFromIdu } from "./ufParcelles";
+import { dureteBadgeStyle, type DureteFonciereMetric } from "../../../../utils/poolMetrics";
+import { ecoBadgeStyle } from "../ilotsRpg/labels";
 
-type UfTab = "parcelles" | "criteres" | "sol" | "proprietaire";
+type UfTab =
+  | "score" | "especes" | "flore" | "sol" | "zh" | "hydros" | "environnement"
+  | "durete" | "urbanisme" | "parcelles" | "criteres" | "proprietaire";
+
+const UF_TABS: [UfTab, string][] = [
+  ["score", "Scoring & Filtrage"],
+  ["especes", "Espèces animales"],
+  ["flore", "Flore"],
+  ["sol", "Occupation du sol"],
+  ["zh", "Zones humides"],
+  ["hydros", "Hydros"],
+  ["environnement", "Environnement"],
+  ["durete", "Dureté foncière"],
+  ["urbanisme", "Urbanisme"],
+  ["parcelles", "Parcelles"],
+  ["criteres", "Critères"],
+  ["proprietaire", "Propriétaire"],
+];
 
 const LABEL_OVERRIDES: Record<string, string> = {
   cesbio_libelles: "Occupation du sol (classes du filtre)",
@@ -38,42 +57,11 @@ function sortedFauna(fd: Record<string, number> | undefined): [string, number][]
     .sort((a, b) => a[1] - b[1]);
 }
 
-function topClasses(profile: UniteFoncieresResult["veg_profile"], n = 2): [string, number][] {
-  return Object.entries(profile ?? {})
-    .map(([k, v]) => [k, Number(v?.pct ?? 0)] as [string, number])
-    .filter(([, pct]) => pct > 0)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, n);
-}
-
 const chipStyle: React.CSSProperties = {
   display: "inline-flex", alignItems: "center", gap: 4, padding: "1px 7px",
   borderRadius: 999, fontSize: 11, background: "#f1f5f9", color: "#334155",
   border: "1px solid #e2e8f0", whiteSpace: "nowrap",
 };
-
-function CritereChips({ uf }: { uf: UniteFoncieresResult }) {
-  const fauna = sortedFauna(uf.fauna_distances);
-  const classes = topClasses(uf.veg_profile);
-  const zh = uf.zone_humide_ha ?? 0;
-  if (!fauna.length && !classes.length && zh <= 0) return null;
-  return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-      {fauna.map(([name, d]) => (
-        <span key={name} style={chipStyle} title="Observation la plus proche du terrain">
-          🦎 {name} · {d} m
-        </span>
-      ))}
-      {classes.map(([lib, pct]) => (
-        <span key={lib} style={chipStyle}>
-          <span style={{ width: 8, height: 8, borderRadius: 2, background: CESBIO_LIBELLE_COLORS[lib] ?? "#9ca3af" }} />
-          {lib} {pct.toFixed(0)} %
-        </span>
-      ))}
-      {zh > 0 && <span style={chipStyle}>💧 ZH {zh.toFixed(2)} ha</span>}
-    </div>
-  );
-}
 
 function CritereRow({ uf, k, d }: { uf: UniteFoncieresResult; k: string; d: UfCritereDetail }) {
   const idus = d.idus ?? [];
@@ -100,8 +88,8 @@ function CriteresTab({ uf }: { uf: UniteFoncieresResult }) {
   const entries = Object.entries(uf.criteres ?? {});
   if (!entries.length) return <p className="ranking-line-empty">Détail des critères non disponible.</p>;
   return (
-    <>
-      <p className="filter-enrich-fauna-hint" style={{ margin: "6px 0" }}>
+    <div>
+      <p className="filter-enrich-fauna-hint" style={{ margin: "0 0 6px" }}>
         {uf.source === "manuel"
           ? "Unité assemblée à la main : les métriques sont recalculées sur les parcelles retenues."
           : "Les parcelles qui touchaient une exclusion ont été retirées avant de former ce terrain. Les autres critères sont satisfaits dès qu'une parcelle du terrain les remplit."}
@@ -111,38 +99,40 @@ function CriteresTab({ uf }: { uf: UniteFoncieresResult }) {
           {entries.map(([k, d]) => <CritereRow key={k} uf={uf} k={k} d={d} />)}
         </tbody>
       </table>
-    </>
+    </div>
   );
 }
 
+function scoreForDisplay(uf: UniteFoncieresResult): UniteFoncieresResult["score_eco"] {
+  const score = uf.score_eco;
+  if (!score?.breakdown) return score;
+  const especes = score.breakdown.especes as { nearest_species?: string } | undefined;
+  if (especes?.nearest_species) return score;
+  const closest = sortedFauna(uf.fauna_distances)[0];
+  if (!closest) return score;
+  return {
+    ...score,
+    breakdown: {
+      ...score.breakdown,
+      especes: { ...especes, nearest_species: closest[0] },
+    },
+  };
+}
+
 function SolTab({ uf, onShowOnMap }: { uf: UniteFoncieresResult; onShowOnMap?: () => void }) {
-  const payload = { veg_libelles: uf.veg_libelles ?? [], veg_profile: uf.veg_profile, fauna_distances: uf.fauna_distances ?? {} };
+  const payload = { veg_libelles: uf.veg_libelles ?? [], veg_profile: uf.veg_profile };
   const hasSol = payload.veg_libelles.length > 0 || Object.keys(uf.veg_profile ?? {}).length > 0;
-  const hasFaune = sortedFauna(uf.fauna_distances).length > 0;
   return (
-    <>
-      <section className="ranking-metric-block" style={{ marginBottom: 10 }}>
-        <h4 className="ranking-metric-title">Occupation du sol du terrain</h4>
-        <p className="ranking-line-empty" style={{ marginTop: 0 }}>
-          Somme des {uf.nb_parcelles} parcelles.{" "}
-          {onShowOnMap && (
-            <button type="button" className="cz-btn cz-btn--ghost" onClick={onShowOnMap}>Voir sur la carte</button>
-          )}
-        </p>
-        {hasSol ? <FilterEnrichBlock payload={payload} part="sol" /> : <p className="ranking-line-empty">Profil non calculé.</p>}
-      </section>
-      {hasFaune && (
-        <section className="ranking-metric-block" style={{ marginBottom: 10 }}>
-          <FilterEnrichBlock payload={payload} part="faune" />
-        </section>
-      )}
-      {uf.score_eco && (
-        <section className="ranking-metric-block">
-          <h4 className="ranking-metric-title">Score écologique</h4>
-          <ScoreBlock payload={uf.score_eco as unknown as ParcelScorePayload} />
-        </section>
-      )}
-    </>
+    <section className="ranking-metric-block" style={{ marginBottom: 10 }}>
+      <h4 className="ranking-metric-title">Occupation du sol du terrain</h4>
+      <p className="ranking-line-empty" style={{ marginTop: 0 }}>
+        Somme des {uf.nb_parcelles} parcelles.{" "}
+        {onShowOnMap && (
+          <button type="button" className="cz-btn cz-btn--ghost" onClick={onShowOnMap}>Voir sur la carte</button>
+        )}
+      </p>
+      {hasSol ? <FilterEnrichBlock payload={payload} part="sol" /> : <p className="ranking-line-empty">Profil non calculé.</p>}
+    </section>
   );
 }
 
@@ -167,6 +157,10 @@ export interface UfRankingLineProps {
   onReinclure: (idu: string) => void;
   onAddPick: () => void;
   onRemoveUf?: (ufId: string) => Promise<void> | void;
+  onRunDurete?: (ufId: string) => void | Promise<void>;
+  dureteLoading?: boolean;
+  onRunUrbanisme?: (idus: string[]) => void | Promise<void>;
+  urbanismeLoading?: boolean;
 }
 
 export function UfRankingLine({
@@ -190,8 +184,12 @@ export function UfRankingLine({
   onReinclure,
   onAddPick,
   onRemoveUf,
+  onRunDurete,
+  dureteLoading = false,
+  onRunUrbanisme,
+  urbanismeLoading = false,
 }: UfRankingLineProps) {
-  const [tab, setTab] = useState<UfTab>("parcelles");
+  const [tab, setTab] = useState<UfTab>("score");
   const [removing, setRemoving] = useState(false);
   const isManuel = uf.source === "manuel";
   const parcelles = uf.parcelles ?? [];
@@ -204,81 +202,83 @@ export function UfRankingLine({
   const fails = uf.verdict === false;
   const score = uf.score_eco;
   const nbParc = parcelles.length || uf.nb_parcelles;
+  const closestFauna = sortedFauna(uf.fauna_distances)[0];
+  const eco = ecoBadgeStyle(score?.total_score, score?.max_score);
+  const durete = uf.durete_fonciere?.score_final;
+  const dureteStyle = dureteBadgeStyle(durete);
 
   useEffect(() => {
-    if (expanded) setTab("parcelles");
+    if (expanded) setTab("score");
   }, [expanded, uf.uf_id]);
 
   return (
-    <div
-      id={`uf-block-${uf.uf_id}`}
-      style={{ marginBottom: 12 }}
-      onMouseEnter={() => onHoverUf?.(uf.uf_id)}
-      onMouseLeave={() => { onHoverUf?.(null); onHoverParcelle?.(null); }}
-    >
-      <div style={{
-        background: "white", border: `1px solid ${fails ? "#fecaca" : "#e2e8f0"}`, borderRadius: 8,
-        padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
-      }}>
-        <button
-          type="button"
-          onClick={() => { onToggle(); onActivate?.(uf.uf_id); }}
-          style={{
-            flex: 1, textAlign: "left", background: "transparent", border: "none", padding: 0,
-            cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
-          }}
-        >
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <div className="uf-foncier-title">
-              UF #{uf.rang} · {uf.denomination || uf.uf_id}
-              {isManuel && <span className="uf-prospect-badge uf-handmade-badge">Assemblée à la main</span>}
-              {fails && (
-                <span className="uf-prospect-badge" style={{ background: "#fee2e2", color: "#b91c1c" }}
-                  title="Ce terrain ne passe pas le filtre">
-                  Ne passe pas : {uf.motif_rejet ? critereLabel(uf, uf.motif_rejet) : "?"}
-                </span>
-              )}
-              {isProspect && (
-                <span className="uf-prospect-badge" title="Personne morale ayant déjà compensé (autre foncier)">
-                  Prospect compensation
-                </span>
-              )}
-            </div>
-            <div className="uf-foncier-meta">
-              {nbParc} parcelles
-              {assembleMode && ecartees.length > 0 ? ` · ${ecartees.length} écartée(s) de votre composition` : ""}
-              {assembleMode && pickedHere > 0 ? ` · ${pickedHere} dans la sélection` : ""}
-              {uf.surface_ha != null ? ` · ${uf.surface_ha.toFixed(1)} ha` : ""}
-              {score ? ` · score éco ${score.total_score}/${score.max_score}` : ""}
-              {` · ${uf.distance_centre_km.toFixed(1)} km du projet`}
-            </div>
-            <CritereChips uf={uf} />
-            {uf.siren && !isManuel && (
-              <div className="uf-foncier-pm"><span className="mono">SIREN {uf.siren}</span></div>
+    <Fragment>
+      <tr
+        id={`uf-block-${uf.uf_id}`}
+        className={`ranking-row${expanded ? " ranking-row--expanded" : ""}${fails ? " ranking-row--fail" : ""}`}
+        style={{ cursor: "pointer" }}
+        onMouseEnter={() => onHoverUf?.(uf.uf_id)}
+        onMouseLeave={() => { onHoverUf?.(null); onHoverParcelle?.(null); }}
+        onClick={() => { onToggle(); onActivate?.(uf.uf_id); }}
+      >
+        <td>
+          <div className="uf-foncier-title">
+            {uf.denomination || uf.uf_id}
+            {isManuel && <span className="uf-prospect-badge uf-handmade-badge">Assemblée à la main</span>}
+            {fails && (
+              <span className="uf-prospect-badge" style={{ background: "#fee2e2", color: "#b91c1c" }}>
+                Ne passe pas
+              </span>
             )}
+            {isProspect && <span className="uf-prospect-badge">Prospect</span>}
           </div>
-          <span className="uf-foncier-toggle">{expanded ? "−" : "+"}</span>
-        </button>
+          {assembleMode && (ecartees.length > 0 || pickedHere > 0) && (
+            <div className="uf-foncier-meta">
+              {ecartees.length > 0 ? `${ecartees.length} écartée(s)` : ""}
+              {ecartees.length > 0 && pickedHere > 0 ? " · " : ""}
+              {pickedHere > 0 ? `${pickedHere} sélectionnée(s)` : ""}
+            </div>
+          )}
+        </td>
+        <td className="mono">{nbParc}</td>
+        <td className="mono">{uf.surface_ha != null ? <>{uf.surface_ha.toFixed(1)}<span className="unit"> ha</span></> : "—"}</td>
+        <td>
+          <span className="mono" style={{ fontWeight: 700, color: eco.fg }}>
+            {score ? `${score.total_score}/${score.max_score}` : "—"}
+          </span>
+        </td>
+        <td>{closestFauna ? closestFauna[0] : <span className="na">—</span>}</td>
+        <td className="mono">
+          {closestFauna ? <>{closestFauna[1].toLocaleString("fr-FR")}<span className="unit"> m</span></> : <span className="na">—</span>}
+        </td>
+        <td className="mono">{uf.distance_centre_km.toFixed(1)}<span className="unit"> km</span></td>
+        <td className="mono" style={{ color: durete != null ? dureteStyle.fg : undefined, fontWeight: 700 }}>
+          {durete != null ? Math.round(durete) : <span className="na">—</span>}
+        </td>
+        <td className="col-detail mono" style={{ color: "#64748b" }}>{expanded ? "▾" : "▸"}</td>
         {onRemoveUf && (
-          <button
-            type="button"
-            className="cz-btn cz-btn--ghost"
-            disabled={removing || busy}
-            title="Retirer cette unité foncière du classement"
-            onClick={async (ev) => {
-              ev.stopPropagation();
-              if (!window.confirm(`Retirer UF #${uf.rang} · ${uf.denomination || uf.uf_id} du classement ?`)) return;
-              setRemoving(true);
-              try { await onRemoveUf(uf.uf_id); } finally { setRemoving(false); }
-            }}
-          >
-            {removing ? "…" : "Retirer"}
-          </button>
+          <td className="col-indesirable" onClick={(ev) => ev.stopPropagation()}>
+            <button
+              type="button"
+              className="ranking-btn-indesirable"
+              disabled={removing || busy}
+              title="Retirer cette unité du classement"
+              aria-label={`Retirer UF ${uf.rang} du classement`}
+              onClick={async () => {
+                if (!window.confirm(`Retirer UF #${uf.rang} · ${uf.denomination || uf.uf_id} du classement ?`)) return;
+                setRemoving(true);
+                try { await onRemoveUf(uf.uf_id); } finally { setRemoving(false); }
+              }}
+            >
+              {removing ? "…" : "🗑"}
+            </button>
+          </td>
         )}
-      </div>
-
+      </tr>
       {expanded && (
-        <div style={{ paddingTop: 8 }}>
+        <tr className="ranking-row-detail">
+          <td colSpan={onRemoveUf ? 10 : 9}>
+        <div>
           <div className="uf-compose-tools">
             {assembleMode ? (
               <button
@@ -317,12 +317,7 @@ export function UfRankingLine({
             )}
           </div>
           <div className="ranking-line-tabs" role="tablist" aria-label="Détail de l'unité foncière">
-            {([
-              ["parcelles", `Parcelles (${nbParc})`],
-              ["criteres", "Critères"],
-              ["sol", "Occupation du sol"],
-              ["proprietaire", "Propriétaire"],
-            ] as [UfTab, string][]).map(([id, label]) => (
+            {UF_TABS.map(([id, label]) => (
               <button
                 key={id}
                 type="button"
@@ -331,11 +326,89 @@ export function UfRankingLine({
                 aria-selected={tab === id}
                 onClick={() => setTab(id)}
               >
-                {label}
+                {id === "parcelles" ? `Parcelles (${nbParc})` : label}
               </button>
             ))}
           </div>
 
+          {tab === "score" && (
+            <div className="ranking-score-split">
+              <section className="ranking-score-pane">
+                <h4 className="ranking-score-pane__title">Scores</h4>
+              <div style={{ display: "grid", gap: 8 }}>
+                {uf.score_eco ? (
+                  <ScoreBlock payload={scoreForDisplay(uf) as unknown as ParcelScorePayload} />
+                ) : (
+                  <p className="ranking-line-empty">Score écologique non calculé pour cette unité.</p>
+                )}
+                {uf.durete_fonciere?.score_final != null ? (
+                  <p className="ranking-line-empty">
+                    Dureté foncière : {Math.round(uf.durete_fonciere.score_final)}
+                    {uf.durete_fonciere.niveau_durete ? ` · ${uf.durete_fonciere.niveau_durete}` : ""}
+                    {" "}
+                    <button type="button" className="ranking-line-run" onClick={() => setTab("durete")}>Voir le détail</button>
+                  </p>
+                ) : (
+                  <div className="ranking-line-empty-action">
+                    <p className="ranking-line-empty">Score de dureté foncière non calculé pour cette unité.</p>
+                    {onRunDurete && uf.siren && !isManuel && (
+                      <button type="button" className="ranking-btn-durete" disabled={dureteLoading} onClick={() => void onRunDurete(uf.uf_id)}>
+                        {dureteLoading ? "Calcul…" : "Calculer la dureté"}
+                      </button>
+                    )}
+                  </div>
+                )}
+                <div className="ranking-line-empty-action">
+                  <p className="ranking-line-empty">Score urbanistique non calculé pour cette unité.</p>
+                  {onRunUrbanisme && (
+                    <button
+                      type="button"
+                      className="ranking-line-run"
+                      disabled={urbanismeLoading || parcelles.length === 0}
+                      onClick={() => void onRunUrbanisme(parcelles.map((p) => p.idu))}
+                    >
+                      {urbanismeLoading ? "Calcul…" : "Calculer le score urba"}
+                    </button>
+                  )}
+                </div>
+                <p className="ranking-line-empty">Score composite non calculé pour cette unité.</p>
+              </div>
+              </section>
+              <section className="ranking-score-pane">
+                <h4 className="ranking-score-pane__title">Résumé de filtrage</h4>
+                <CriteresTab uf={uf} />
+              </section>
+            </div>
+          )}
+          {tab === "especes" && (
+            sortedFauna(uf.fauna_distances).length
+              ? <FilterEnrichBlock payload={{ fauna_distances: uf.fauna_distances }} part="faune" />
+              : <p className="ranking-line-empty">Aucune espèce animale enregistrée pour cette unité.</p>
+          )}
+          {tab === "flore" && <p className="ranking-line-empty">Aucune observation flore enregistrée pour cette unité.</p>}
+          {tab === "sol" && <SolTab uf={uf} onShowOnMap={() => onActivate?.(uf.uf_id)} />}
+          {tab === "zh" && (
+            uf.zone_humide_ha != null
+              ? <FilterEnrichBlock payload={{ zone_humide_ha: uf.zone_humide_ha, zone_humide_intersects: uf.zone_humide_ha > 0 }} part="zh" parcelSurfaceHa={uf.surface_ha} />
+              : <p className="ranking-line-empty">Aucune zone humide établie enregistrée pour cette unité.</p>
+          )}
+          {tab === "hydros" && <p className="ranking-line-empty">Aucun cours d&apos;eau ni surface d&apos;eau retenu pour cette unité.</p>}
+          {tab === "environnement" && <p className="ranking-line-empty">Aucun indicateur environnemental (EBC, ZNIEFF) calculé pour cette unité. Les exclusions du filtre sont dans Scoring.</p>}
+          {tab === "urbanisme" && (
+            <div className="ranking-line-empty-action">
+              <p className="ranking-line-empty">Score urbanistique non calculé pour cette unité.</p>
+              {onRunUrbanisme && (
+                <button
+                  type="button"
+                  className="ranking-line-run"
+                  disabled={urbanismeLoading || parcelles.length === 0}
+                  onClick={() => void onRunUrbanisme(parcelles.map((p) => p.idu))}
+                >
+                  {urbanismeLoading ? "Calcul…" : "Calculer le score urba"}
+                </button>
+              )}
+            </div>
+          )}
           {tab === "parcelles" && (
             <>
               {assembleMode && (
@@ -445,8 +518,40 @@ export function UfRankingLine({
           {tab === "proprietaire" && (pm
             ? <div style={{ marginTop: 6 }}><PersonnesMoralesBlock payload={pm} /></div>
             : <p className="ranking-line-empty">Informations propriétaire non disponibles.</p>)}
+          {tab === "durete" && (
+            <div style={{ marginTop: 6 }}>
+              {!uf.siren || isManuel ? (
+                <p className="ranking-line-empty">Dureté calculable pour une unité d&apos;une personne morale identifiée.</p>
+              ) : uf.durete_fonciere?.score_final != null ? (
+                <DureteFoncierePanel payload={uf.durete_fonciere as DureteFonciereMetric} />
+              ) : (
+                <>
+                  <p className="ranking-line-empty">Dureté non calculée pour cette unité.</p>
+                  {onRunDurete && (
+                    <button
+                      type="button"
+                      className="ranking-btn-durete"
+                      disabled={dureteLoading}
+                      onClick={() => void onRunDurete(uf.uf_id)}
+                    >
+                      {dureteLoading ? (
+                        <>
+                          <span className="parcelles-map-spinner" aria-hidden="true" />
+                          {" "}Calcul de la dureté foncière en arrière plan...
+                        </>
+                      ) : (
+                        "Calculer la dureté"
+                      )}
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </div>
+          </td>
+        </tr>
       )}
-    </div>
+    </Fragment>
   );
 }

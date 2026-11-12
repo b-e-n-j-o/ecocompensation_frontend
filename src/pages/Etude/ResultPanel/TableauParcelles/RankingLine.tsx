@@ -1,6 +1,8 @@
 // ─── RankingLine — détail enrichissement filter_v2 ────────────────────────────
 import { useEffect, useState } from "react";
 import { CESBIO_LIBELLE_COLORS, type ParcelPoolMetricRow } from "../../../../types";
+import { exclusionLabel } from "../../../../constants/nationalExclusionLayers";
+import type { FilterConfig } from "../../../FiltrageParam/FilterCatalog";
 import {
   type ArrachageVignesMetric,
   type CompositeScoreMetric,
@@ -612,6 +614,7 @@ type ParcelScoreBreakdownItem = {
   distance_km?: number;
   bucket?: string;
   nearest_observation_distance_m?: number;
+  nearest_species?: string;
   buffer_radius_max_m?: number;
   buffer_half_m?: number;
   label?: string;
@@ -653,6 +656,7 @@ export function parseParcelScorePayload(v: Record<string, unknown>): ParcelScore
           : typeof rec.dist_m === "number" && Number.isFinite(rec.dist_m)
             ? rec.dist_m
             : undefined,
+      nearest_species: typeof rec.nearest_species === "string" ? rec.nearest_species : undefined,
       label: typeof rec.label === "string" ? rec.label : undefined,
     };
   };
@@ -686,60 +690,34 @@ export function ScoreBlock({ payload }: { payload: ParcelScorePayload }) {
           : "rgba(107,114,128,0.12)";
 
   const es = payload.breakdown.especes;
-  const esDetail = (() => {
-    const r = es.reason;
-    if (r === "intersection") return "Observation dans la parcelle";
-    if (r === "within_half_buffer") {
-      const d = es.nearest_observation_distance_m;
-      const h = es.buffer_half_m;
-      return `Plus proche observation ≤ demi-buffer (${d != null ? `${Math.round(d)} m` : "?"} / ${h != null ? `${Math.round(h)} m` : "?"})`;
-    }
-    if (r === "within_buffer") {
-      const d = es.nearest_observation_distance_m;
-      const b = es.buffer_radius_max_m;
-      return `Plus proche observation dans le buffer (${d != null ? `${Math.round(d)} m` : "?"} ≤ ${b != null ? `${Math.round(b)} m` : "?"})`;
-    }
-    if (r === "beyond_buffer") return "Observation au-delà du buffer du filtre";
-    if (r === "no_faune_criteria") return "Aucune espèce ciblée dans le filtre";
-    if (r === "no_buffer_in_filter") return "Buffer non défini (mode filtre sans rayon)";
-    if (r === "no_observation") return "Pas d'observation géolocalisée pour les espèces du filtre";
-    const sp = (es as { nearest_species?: string }).nearest_species;
-    if (sp && es.nearest_observation_distance_m != null) {
-      return `Plus proche : ${sp} (${Math.round(es.nearest_observation_distance_m)} m)`;
-    }
-    return "Hors critères";
-  })();
+  const species = es.nearest_species?.trim();
+  const niveau = (points: number, max: number) => {
+    if (points <= 0 || max <= 0) return "absent";
+    const ratio = points / max;
+    if (ratio >= 0.99) return "fort";
+    if (ratio >= 0.5) return "moyen";
+    return "faible";
+  };
 
   const fl = payload.breakdown.flore;
-  const flDetail = (() => {
-    if (!fl) return "";
-    if (fl.reason === "intersection") return `Observation dans la parcelle${fl.label ? ` (${fl.label})` : ""}`;
-    if (fl.reason === "within_radius") {
-      return `Dans le rayon du filtre${fl.label ? ` : ${fl.label}` : ""}${fl.nearest_observation_distance_m != null ? ` (${Math.round(fl.nearest_observation_distance_m)} m)` : ""}`;
-    }
-    if (fl.reason === "beyond_radius") return "Aucune observation dans le rayon du filtre";
-    if (fl.reason === "no_flore_criteria") return "Aucun taxon ciblé dans le filtre";
-    return "Hors critères";
-  })();
-
   const lines: { label: string; points: number; detail: string }[] = [
     {
-      label: "Espèces faune (proximité)",
+      label: species ? `Espèces faune · ${species}` : "Espèces faune",
       points: es.points,
-      detail: esDetail,
+      detail: niveau(es.points, 3),
     },
     ...(fl
       ? [{
-          label: "Flore (rayon du filtre)",
+          label: fl.label ? `Flore · ${fl.label}` : "Flore",
           points: fl.points,
-          detail: flDetail,
+          detail: niveau(fl.points, 1),
         }]
       : []),
     ...(payload.breakdown.distance
       ? [{
           label: "Distance au projet",
           points: payload.breakdown.distance.points,
-          detail: `${payload.breakdown.distance.distance_km?.toFixed(1) ?? "?"} km (${payload.breakdown.distance.bucket ?? "n/a"})`,
+          detail: niveau(payload.breakdown.distance.points, 3),
         }]
       : []),
   ];
@@ -975,8 +953,134 @@ function ArrachageVignesBlock({ payload }: { payload: ArrachageVignesMetric }) {
   );
 }
 
+function ParcelFilterRecap({
+  payload,
+  filterConfig,
+  surfaceHa,
+}: {
+  payload: FilterEnrichPayload | null;
+  filterConfig: FilterConfig | null;
+  surfaceHa?: number | null;
+}) {
+  const faunaDist = payload?.fauna_distances ?? {};
+  const floraDist = payload?.flora_distances ?? {};
+  const rows: { key: string; mark: string; color: string; label: string; detail: string }[] = [];
+  const push = (key: string, ok: boolean | "info", label: string, detail: string) => {
+    rows.push({
+      key,
+      mark: ok === "info" ? "i" : ok ? "✓" : "✗",
+      color: ok === "info" ? "#64748b" : ok ? "#15803d" : "#b91c1c",
+      label,
+      detail,
+    });
+  };
+
+  for (const key of filterConfig?.excluded_layers ?? []) {
+    push(key, true, `Hors ${exclusionLabel(key)}`, "non concernée");
+  }
+  if (filterConfig?.search_mode && filterConfig.search_mode !== "within_foncier") {
+    push("emprise", true, "Hors emprise du projet", "non concernée");
+  }
+
+  for (const [i, c] of (filterConfig?.fauna_criteria ?? []).entries()) {
+    const dist = faunaDist[c.species];
+    const ok = dist != null && dist >= 0 && dist <= c.dist_m;
+    push(
+      `faune-${i}`,
+      dist == null ? "info" : ok,
+      `Faune : ${c.species} ≤ ${c.dist_m.toLocaleString("fr-FR")} m`,
+      dist == null ? "distance non relevée" : `${Math.round(dist).toLocaleString("fr-FR")} m`,
+    );
+  }
+  const floraCriteria = filterConfig?.flora_criteria ?? [];
+  if (floraCriteria.length) {
+    for (const [i, c] of floraCriteria.entries()) {
+      const name = c.label || c.taxon_key;
+      const dist = floraDist[name] ?? floraDist[c.taxon_key];
+      const ok = dist != null && dist >= 0 && dist <= c.dist_m;
+      push(
+        `flore-${i}`,
+        dist == null ? "info" : ok,
+        `Flore : ${name} ≤ ${c.dist_m.toLocaleString("fr-FR")} m`,
+        dist == null ? "distance non relevée" : `${Math.round(dist).toLocaleString("fr-FR")} m`,
+      );
+    }
+  } else {
+    for (const [name, dist] of Object.entries(floraDist)) {
+      if (!Number.isFinite(dist)) continue;
+      push(`flore-${name}`, true, `Flore : ${name}`, `${Math.round(dist).toLocaleString("fr-FR")} m`);
+    }
+  }
+
+  if (filterConfig?.min_area_ha != null) {
+    const ha = surfaceHa;
+    push(
+      "surface",
+      ha == null ? "info" : ha >= filterConfig.min_area_ha,
+      "Surface minimale",
+      ha == null ? `seuil ${filterConfig.min_area_ha} ha` : `${ha.toFixed(2)} ha`,
+    );
+  }
+  if (filterConfig?.miller_thresh != null) {
+    push("miller", "info", "Compacité (Miller)", `seuil ${filterConfig.miller_thresh} · indicatif`);
+  }
+
+  const accepted = filterConfig?.cesbio_libelles ?? [];
+  const present = payload?.veg_libelles ?? [];
+  if (accepted.length || present.length) {
+    const hit = accepted.length === 0 || present.some((lib) => accepted.includes(lib));
+    push(
+      "sol",
+      accepted.length ? hit : true,
+      "Occupation du sol (classes du filtre)",
+      present.length ? present.slice(0, 3).join(", ") : "aucune classe relevée",
+    );
+  }
+
+  const zhMode = filterConfig?.zone_humide_mode;
+  if (zhMode && zhMode !== "ignore") {
+    const ha = payload?.zone_humide_ha;
+    push(
+      "zh",
+      zhMode === "exclude" ? !(ha != null && ha > 0) : true,
+      zhMode === "exclude" ? "Hors zone humide" : "Zone humide",
+      ha != null && ha > 0 ? `${ha.toFixed(2)} ha` : "aucune intersection",
+    );
+  }
+  if (typeof filterConfig?.troncons_hydros_max_dist_m === "number" && payload?.dist_hydro_m != null) {
+    push(
+      "hydro",
+      payload.dist_hydro_m <= filterConfig.troncons_hydros_max_dist_m,
+      "Cours d'eau",
+      `${Math.round(payload.dist_hydro_m).toLocaleString("fr-FR")} m`,
+    );
+  }
+
+  if (!rows.length) {
+    return <p className="ranking-line-empty">Critères du filtre non disponibles pour cette parcelle.</p>;
+  }
+  return (
+    <div>
+      <p className="filter-enrich-fauna-hint" style={{ margin: "0 0 6px" }}>
+        Mêmes critères que le filtre de l&apos;étude. Une parcelle du classement les a déjà passés.
+      </p>
+      <table className="ranking-table">
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.key} className="ranking-row">
+              <td style={{ width: 24, color: r.color, fontWeight: 700 }}>{r.mark}</td>
+              <td>{r.label}</td>
+              <td className="mono" style={{ color: "#475569" }}>{r.detail}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 const DETAIL_TABS: { id: DetailTab; label: string }[] = [
-  { id: "score", label: "Scoring" },
+  { id: "score", label: "Scoring & Filtrage" },
   { id: "especes", label: "Espèces animales" },
   { id: "flore", label: "Flore" },
   { id: "sol", label: "Occupation du sol" },
@@ -1011,6 +1115,7 @@ export interface RankingLineProps {
   noPoolRun?: boolean;
   /** Surface parcelle (ha) — pour le % d’intersection zone humide. */
   parcelSurfaceHa?: number | null;
+  filterConfig?: FilterConfig | null;
   onRunDureteFonciere?: (idu: string) => void | Promise<void>;
   onRunUrbanisme?: (idu: string) => void | Promise<void>;
   /** Zoome la carte sur cette parcelle. */
@@ -1029,6 +1134,7 @@ export function RankingLine({
   metricsLoading,
   noPoolRun = false,
   parcelSurfaceHa = null,
+  filterConfig = null,
   onRunDureteFonciere,
   onRunUrbanisme,
   onShowOnMap,
@@ -1216,6 +1322,9 @@ export function RankingLine({
       )}
 
       {tab === "score" && (
+        <div className="ranking-score-split">
+        <section className="ranking-score-pane">
+          <h4 className="ranking-score-pane__title">Scores</h4>
         <div style={{ display: "grid", gap: 8 }}>
           {scorePayload ? <ScoreBlock payload={scorePayload} /> : (
             <p className="ranking-line-empty">Score écologique non calculé pour cette parcelle.</p>
@@ -1268,6 +1377,12 @@ export function RankingLine({
           {compositePayload ? <CompositeScoreBlock payload={compositePayload} /> : (
             <p className="ranking-line-empty">Score composite non calculé pour cette parcelle.</p>
           )}
+        </div>
+        </section>
+        <section className="ranking-score-pane">
+          <h4 className="ranking-score-pane__title">Résumé de filtrage</h4>
+          <ParcelFilterRecap payload={filterEnrichPayload} filterConfig={filterConfig} surfaceHa={parcelSurfaceHa} />
+        </section>
         </div>
       )}
 

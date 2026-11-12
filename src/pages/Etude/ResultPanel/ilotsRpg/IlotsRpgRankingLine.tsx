@@ -67,11 +67,28 @@ export function DureteIlotCell({ il }: { il: IlotRpgResult }) {
   );
 }
 
-export function DureteIlotPanel({ il }: { il: IlotRpgResult }) {
+export function DureteIlotPanel({
+  il,
+  onCalculate,
+  loading = false,
+}: {
+  il: IlotRpgResult;
+  onCalculate?: () => void;
+  loading?: boolean;
+}) {
   const d = il.durete_fonciere;
   const [openSiren, setOpenSiren] = useState<string | null>(null);
   if (!d) {
-    return <p className="ranking-line-empty">Dureté non calculée pour cet îlot.</p>;
+    return (
+      <div className="filter-enrich-block">
+        <p className="ranking-line-empty">Dureté non calculée pour cet îlot.</p>
+        {onCalculate && (
+          <button type="button" className="ranking-btn-durete" disabled={loading} onClick={onCalculate}>
+            {loading ? "Calcul…" : "Calculer la dureté"}
+          </button>
+        )}
+      </div>
+    );
   }
   if (!d.pms.length) {
     return <p className="ranking-line-empty">{dureteSkipReasonLabel(d.reason ?? "not_pm")}</p>;

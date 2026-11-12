@@ -923,6 +923,33 @@ export async function fetchUfResults(
   return res.json();
 }
 
+export async function startUfDurete(
+  projectId: string,
+  ufIds?: string[] | null,
+): Promise<{ job_id: string; status: string }> {
+  const res = await fetch(`${API}/api/projects/${projectId}/uf/recompute-durete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(ufIds?.length ? { uf_ids: ufIds } : {}),
+  });
+  if (!res.ok) await throwHttpError(res);
+  return res.json();
+}
+
+export async function fetchUfDureteJob(
+  projectId: string,
+  jobId: string,
+): Promise<{
+  status: string;
+  error?: string;
+  done_sirens?: number;
+  total_sirens?: number;
+}> {
+  const res = await fetch(`${API}/api/projects/${projectId}/uf/recompute-durete/jobs/${jobId}`);
+  if (!res.ok) await throwHttpError(res);
+  return res.json();
+}
+
 export async function fetchIlotsRpgResults(projectId: string): Promise<import("./types").IlotsRpgResponse> {
   const res = await fetch(`${API}/api/projects/${projectId}/ilots-rpg`);
   if (!res.ok) await throwHttpError(res);

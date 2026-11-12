@@ -85,6 +85,10 @@ interface UnitesFoncieresTableProps {
   onEcarter?: (ufId: string, idu: string) => void;
   onReinclure?: (ufId: string, idu: string) => void;
   onAddPickToUf?: (ufId: string) => void;
+  onRunDurete?: (ufId?: string) => void | Promise<void>;
+  dureteLoading?: boolean;
+  onRunUrbanisme?: (idus: string[]) => void | Promise<void>;
+  urbanismeLoading?: boolean;
 }
 
 export function UnitesFoncieresTable({
@@ -110,16 +114,21 @@ export function UnitesFoncieresTable({
   onEcarter,
   onReinclure,
   onAddPickToUf,
+  onRunDurete,
+  dureteLoading = false,
+  onRunUrbanisme,
+  urbanismeLoading = false,
 }: UnitesFoncieresTableProps) {
   const [expandedUfId, setExpandedUfId] = useState<string | null>(null);
   const [visibleUfCount, setVisibleUfCount] = useState(UF_PAGE_SIZE);
 
   const ufs = useMemo(() => ufResults.unites_foncieres ?? [], [ufResults]);
+  const ufIdsKey = ufs.map((u) => u.uf_id).join("|");
 
   useEffect(() => {
     setVisibleUfCount(UF_PAGE_SIZE);
     setExpandedUfId(null);
-  }, [ufResults]);
+  }, [ufIdsKey]);
 
   useEffect(() => {
     if (!scrollToUfId) return;
@@ -140,6 +149,23 @@ export function UnitesFoncieresTable({
       <div className="ranking-chrome">
         <div className="ranking-chrome__bar">
           {projectId && <ExportEtudeMenu projectId={projectId} page="uf" jauge={exportJauge} />}
+          {onRunDurete && (
+            <button
+              type="button"
+              className="ranking-btn-durete"
+              disabled={dureteLoading || !ufs.some((u) => u.siren && u.source !== "manuel")}
+              onClick={() => void onRunDurete()}
+            >
+              {dureteLoading ? (
+                <>
+                  <span className="parcelles-map-spinner" aria-hidden="true" />
+                  {" "}Calcul de la dureté foncière en arrière plan...
+                </>
+              ) : (
+                "Dureté foncière"
+              )}
+            </button>
+          )}
           <span className="ranking-count mono">
             {Math.min(visibleUfCount, ufs.length)} / {ufResults.total_uf ?? ufs.length} UF
           </span>
@@ -159,11 +185,26 @@ export function UnitesFoncieresTable({
         <DiagnosticNote diag={ufResults.diagnostic} />
       </div>
 
-      <div className="ranking-table-scroll uf-foncieres-scroll" style={{ padding: 12 }}>
+      <div className="ranking-table-scroll uf-foncieres-scroll">
         {ufs.length === 0 ? (
           <div className="uf-empty-msg">Aucune unité foncière ne passe le filtre.</div>
         ) : (
-          <>
+          <table className="ranking-table">
+            <thead>
+              <tr>
+                <th>Unité foncière</th>
+                <th>Parcelles</th>
+                <th>Surface</th>
+                <th>Score éco</th>
+                <th>Espèce</th>
+                <th>Dist. espèce</th>
+                <th>Dist. projet</th>
+                <th>Dureté</th>
+                <th className="col-detail" aria-label="Détail" />
+                {onRemoveUf && <th className="col-indesirable" aria-label="Retirer" />}
+              </tr>
+            </thead>
+            <tbody>
             {visibleUfs.map((uf) => (
               <UfRankingLine
                 key={uf.uf_id}
@@ -187,17 +228,22 @@ export function UnitesFoncieresTable({
                 onReinclure={(idu) => onReinclure?.(uf.uf_id, idu)}
                 onAddPick={() => onAddPickToUf?.(uf.uf_id)}
                 onRemoveUf={onRemoveUf}
+                onRunDurete={onRunDurete}
+                dureteLoading={dureteLoading}
+                onRunUrbanisme={onRunUrbanisme}
+                urbanismeLoading={urbanismeLoading}
               />
             ))}
-            {ufs.length > visibleUfCount && (
-              <div className="ranking-load-more" style={{ marginTop: 4, padding: "0 0 4px" }}>
-                <button type="button" className="btn-load-more"
-                  onClick={() => setVisibleUfCount((c) => Math.min(c + UF_PAGE_SIZE, ufs.length))}>
-                  Afficher plus (+{Math.min(UF_PAGE_SIZE, ufs.length - visibleUfCount)} UF)
-                </button>
-              </div>
-            )}
-          </>
+            </tbody>
+          </table>
+        )}
+        {ufs.length > visibleUfCount && (
+          <div className="ranking-load-more" style={{ marginTop: 4, padding: "0 0 4px" }}>
+            <button type="button" className="btn-load-more"
+              onClick={() => setVisibleUfCount((c) => Math.min(c + UF_PAGE_SIZE, ufs.length))}>
+              Afficher plus (+{Math.min(UF_PAGE_SIZE, ufs.length - visibleUfCount)} UF)
+            </button>
+          </div>
         )}
       </div>
     </div>

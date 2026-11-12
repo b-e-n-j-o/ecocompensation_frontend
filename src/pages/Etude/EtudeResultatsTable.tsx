@@ -4,6 +4,7 @@ import { RankingTable } from "./ResultPanel/TableauParcelles/RankingTable";
 import { UnitesFoncieresTable } from "./ResultPanel/TableauParcelles/UnitesFoncieresTable";
 import type { ExportJauge } from "./ResultPanel/ExportEtudeMenu";
 import type { FilterResponse, ParcelleResult, ParcelPoolMetricRow, RankingSortKey, UfFilterResponse } from "../../types";
+import type { FilterConfig } from "./FiltrageParam/FilterCatalog";
 
 type RankingShared = {
   projectId: string | null;
@@ -23,6 +24,7 @@ type RankingShared = {
   showDistHydroColumn: boolean;
   showSurfaceHydroColumn: boolean;
   showFloraColumn?: boolean;
+  filterConfig?: FilterConfig | null;
 };
 
 type ParcellesTableProps = RankingShared & {
@@ -79,6 +81,10 @@ type UnitesTableProps = {
   onEcarter?: (ufId: string, idu: string) => void;
   onReinclure?: (ufId: string, idu: string) => void;
   onAddPickToUf?: (ufId: string) => void;
+  onRunDurete?: (ufId?: string) => void | Promise<void>;
+  dureteLoading?: boolean;
+  onRunUrbanisme?: (idus: string[]) => void | Promise<void>;
+  urbanismeLoading?: boolean;
 };
 
 export function EtudeResultatsParcellesTable({
@@ -118,6 +124,7 @@ export function EtudeResultatsParcellesTable({
   showDistHydroColumn,
   showSurfaceHydroColumn,
   showFloraColumn = false,
+  filterConfig = null,
   indesirableParcelles,
   indesirableMetricsByIdu,
   onRestoreIndesirable,
@@ -159,6 +166,7 @@ export function EtudeResultatsParcellesTable({
             showDistHydroColumn={showDistHydroColumn}
             showSurfaceHydroColumn={showSurfaceHydroColumn}
             showFloraColumn={showFloraColumn}
+            filterConfig={filterConfig}
             poolFilters={{
               hideDistanceFilter,
               distanceMaxKm,
@@ -224,6 +232,7 @@ export function EtudeResultatsCombinedTable({
   showZoneHumideColumn,
   showDistHydroColumn,
   showSurfaceHydroColumn,
+  filterConfig = null,
 }: CombinedTableProps) {
   return (
     <div className="results-split__table-fill">
@@ -249,6 +258,7 @@ export function EtudeResultatsCombinedTable({
             showZoneHumideColumn={showZoneHumideColumn}
             showDistHydroColumn={showDistHydroColumn}
             showSurfaceHydroColumn={showSurfaceHydroColumn}
+            filterConfig={filterConfig}
           />
         </div>
       </div>
@@ -279,6 +289,10 @@ export function EtudeResultatsUnitesTable({
   onEcarter,
   onReinclure,
   onAddPickToUf,
+  onRunDurete,
+  dureteLoading = false,
+  onRunUrbanisme,
+  urbanismeLoading = false,
 }: UnitesTableProps) {
   return (
     <div className="results-split__table-fill">
@@ -306,6 +320,10 @@ export function EtudeResultatsUnitesTable({
           onEcarter={onEcarter}
           onReinclure={onReinclure}
           onAddPickToUf={onAddPickToUf}
+          onRunDurete={onRunDurete}
+          dureteLoading={dureteLoading}
+          onRunUrbanisme={onRunUrbanisme}
+          urbanismeLoading={urbanismeLoading}
         />
       </div>
     </div>

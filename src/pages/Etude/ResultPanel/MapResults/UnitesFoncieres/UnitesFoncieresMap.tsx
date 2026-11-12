@@ -57,6 +57,12 @@ const PARC = {
   pick: "uf-parcelles-pick",
   pickFill: "uf-parcelles-pick-fill",
 } as const;
+const EMP = {
+  src: "uf-emprises",
+  fill: "uf-emprises-fill",
+  line: "uf-emprises-line",
+  active: "uf-emprises-active",
+} as const;
 const PICK_COLOR = "#4f46e5";
 const FAUNE_COLOR = "#f97316";
 const NONE = "___none___";
@@ -160,6 +166,7 @@ export function UnitesFoncieresMap({
   const [solVisible, setSolVisible] = useState(true);
   const [solLegendCollapsed, setSolLegendCollapsed] = useState(false);
   const [ufVisible, setUfVisible] = useState(true);
+  const [parcVisible, setParcVisible] = useState(true);
   const [pmSourceVisible, setPmSourceVisible] = useState(false);
   const [pmColorByName, setPmColorByName] = useState(true);
   const [pmGeojson, setPmGeojson] = useState<FeatureCollection | null>(null);
@@ -195,6 +202,12 @@ export function UnitesFoncieresMap({
         };
       }),
     };
+  }, [parcellesGeojson]);
+
+  const emprises = useMemo<FC | null>(() => {
+    const raw = (parcellesGeojson as (FC & { emprises?: FC }) | null)?.emprises;
+    if (!raw?.features) return null;
+    return raw;
   }, [parcellesGeojson]);
 
   const pmCategories = useMemo(() => {
@@ -310,6 +323,30 @@ export function UnitesFoncieresMap({
     return () => { m.off("mousemove", onMove); popup.remove(); };
   }, [styleReady, activeLayers]);
 
+  // ── Emprise fusionnée de chaque unité foncière ──────────────────────────────
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !styleReady || !emprises) return;
+    const src = m.getSource(EMP.src) as maplibregl.GeoJSONSource | undefined;
+    if (src) src.setData(emprises);
+    else {
+      m.addSource(EMP.src, { type: "geojson", data: emprises });
+      const before = m.getLayer(PARC.fill) ? PARC.fill : undefined;
+      m.addLayer({ id: EMP.fill, type: "fill", source: EMP.src,
+        paint: { "fill-color": scoreColorExpression(), "fill-opacity": 0.5 } }, before);
+      m.addLayer({ id: EMP.line, type: "line", source: EMP.src,
+        paint: { "line-color": "#0f172a", "line-width": 1.6, "line-opacity": 0.9 } }, before);
+      m.addLayer({ id: EMP.active, type: "line", source: EMP.src, filter: byUf(null),
+        paint: { "line-color": "#fde68a", "line-width": 3 } }, before);
+      m.on("click", EMP.fill, (e) => {
+        const ufId = e.features?.[0]?.properties?.uf_id;
+        if (ufId != null) onUfClickRef.current?.(String(ufId));
+      });
+      m.on("mousemove", EMP.fill, () => { m.getCanvas().style.cursor = "pointer"; });
+      m.on("mouseleave", EMP.fill, () => { m.getCanvas().style.removeProperty("cursor"); });
+    }
+  }, [styleReady, emprises]);
+
   // ── Parcelles des terrains ──────────────────────────────────────────────────
   useEffect(() => {
     const m = map.current;
@@ -320,9 +357,9 @@ export function UnitesFoncieresMap({
     } else {
       m.addSource(PARC.src, { type: "geojson", data: parcelles });
       m.addLayer({ id: PARC.fill, type: "fill", source: PARC.src,
-        paint: { "fill-color": scoreColorExpression(), "fill-opacity": 0.45 } });
+        paint: { "fill-color": "#ffffff", "fill-opacity": 0.01 } });
       m.addLayer({ id: PARC.line, type: "line", source: PARC.src,
-        paint: { "line-color": "#ffffff", "line-width": 0.8, "line-opacity": 0.85 } });
+        paint: { "line-color": "#f8fafc", "line-width": 1.1, "line-opacity": 0.95 } });
       m.addLayer({ id: PARC.faune, type: "line", source: PARC.src,
         filter: byUfFaune(null),
         paint: { "line-color": FAUNE_COLOR, "line-width": 3 } });
@@ -391,19 +428,26 @@ export function UnitesFoncieresMap({
   useEffect(() => {
     const m = map.current;
     if (!m || !styleReady) return;
-    const vis = ufVisible ? "visible" : "none";
-    for (const id of [PARC.fill, PARC.line, PARC.faune, PARC.active, PARC.hover, PARC.pick, PARC.pickFill]) {
-      if (m.getLayer(id)) m.setLayoutProperty(id, "visibility", vis);
+    const visUf = ufVisible ? "visible" : "none";
+    const visParc = parcVisible ? "visible" : "none";
+    for (const id of [EMP.fill, EMP.line, EMP.active]) {
+      if (m.getLayer(id)) m.setLayoutProperty(id, "visibility", visUf);
     }
-  }, [styleReady, ufVisible, parcelles]);
+    for (const id of [PARC.fill, PARC.line, PARC.faune, PARC.active, PARC.hover, PARC.pick, PARC.pickFill]) {
+      if (m.getLayer(id)) m.setLayoutProperty(id, "visibility", visParc);
+    }
+  }, [styleReady, ufVisible, parcVisible, parcelles, emprises]);
 
   // ── Terrain actif : opacité, contours, survol parcelle ──────────────────────
   useEffect(() => {
     const m = map.current;
     if (!m || !styleReady || !m.getLayer(PARC.fill)) return;
-    m.setPaintProperty(PARC.fill, "fill-opacity", activeUfId
-      ? ["case", ["==", ["get", "uf_id"], activeUfId], solVisible && solData?.features.length ? 0.08 : 0.55, 0.15]
-      : 0.45);
+    if (m.getLayer(EMP.fill)) {
+      m.setPaintProperty(EMP.fill, "fill-opacity", activeUfId
+        ? ["case", ["==", ["get", "uf_id"], activeUfId], 0.62, 0.28]
+        : 0.5);
+    }
+    if (m.getLayer(EMP.active)) m.setFilter(EMP.active, byUf(activeUfId));
     m.setFilter(PARC.active, byUf(activeUfId));
     m.setFilter(PARC.faune, byUfFaune(activeUfId));
     m.setFilter(PARC.hover, ["==", ["get", "idu"], hoverParcelleIdu ?? NONE]);
@@ -628,6 +672,11 @@ export function UnitesFoncieresMap({
           onToggle: () => setUfVisible((v) => !v),
         }}
         extraLayers={[{
+          label: "Parcelles",
+          visible: parcVisible,
+          onToggle: () => setParcVisible((v) => !v),
+          color: "#f8fafc",
+        }, {
           label: PM_PARCELLES_LABEL,
           visible: pmSourceVisible,
           onToggle: () => setPmSourceVisible((v) => !v),

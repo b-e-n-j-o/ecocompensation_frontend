@@ -2,6 +2,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { ExportEtudeMenu, exportJaugeFrom } from "../ExportEtudeMenu";
 import type { ParcelleResult, ParcelPoolMetricRow, RankingSortKey } from "../../../../types";
+import type { FilterConfig } from "../../../FiltrageParam/FilterCatalog";
 import {
   type FaunaTableEntry,
   compositeBadgeStyle,
@@ -102,6 +103,7 @@ interface RankingTableProps {
     surfaceMaxHa: number;
     onSurfaceMinChange: (ha: number) => void;
   };
+  filterConfig?: FilterConfig | null;
 }
 
 function getEcologicalScore(metrics: ParcelPoolMetricRow[] | undefined): { score: number; max: number } | null {
@@ -232,6 +234,7 @@ export function RankingTable({
   showSurfaceHydroColumn = false,
   showFloraColumn = false,
   poolFilters,
+  filterConfig = null,
 }: RankingTableProps) {
   const [hoveredIdu, setHoveredIdu] = useState<string | null>(null);
   const [expandedIdus, setExpandedIdus] = useState<Set<string>>(() => new Set());
@@ -1120,6 +1123,7 @@ export function RankingTable({
                           metricsLoading={poolMetricsLoading}
                           noPoolRun={!poolRunId}
                           parcelSurfaceHa={p.surface_ha}
+                          filterConfig={filterConfig}
                           onRunDureteFonciere={
                             onRunDureteFonciere ? (targetIdu) => onRunDureteFonciere([targetIdu]) : undefined
                           }
