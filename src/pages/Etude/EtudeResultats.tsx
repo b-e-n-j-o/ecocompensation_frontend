@@ -26,6 +26,8 @@ import {
   fetchUfResults,
   fetchIlotsRpgResults,
   fetchIlotsRpgGeojson,
+  startIlotsRpgDurete,
+  fetchIlotsRpgDureteJob,
   fetchSousEnsemblesStatus,
   prefetchAllResultsThematicLayers,
   fetchPoolIndesirables,
@@ -285,6 +287,12 @@ export function EtudeResultats({
   const [indesirableParcellesStored, setIndesirableParcellesStored] = useState<FilterResponse["parcelles"]>([]);
   const [indesirableMetricsByIdu, setIndesirableMetricsByIdu] = useState<Record<string, ParcelPoolMetricRow[]>>({});
   const [dureteFonciereLoading, setDureteFonciereLoading] = useState(false);
+  const [ilotsDureteLoading, setIlotsDureteLoading] = useState(false);
+  const [ilotsDureteProgress, setIlotsDureteProgress] = useState<{
+    done: number;
+    total: number;
+    remaining: number;
+  } | null>(null);
   const [dureteProgress, setDureteProgress] = useState<{
     done: number;
     total: number;
@@ -910,6 +918,45 @@ export function EtudeResultats({
         setDureteFonciereLoading(false);
         setDureteProgress(null);
       }
+    }
+  }
+
+  async function handleRunIlotsDurete(numIlots?: string[]) {
+    if (!projectId) return;
+    const guess = numIlots?.length || ilotsResults?.ilots.length || 0;
+    setIlotsDureteLoading(true);
+    setIlotsDureteProgress({ done: 0, total: guess, remaining: guess });
+    try {
+      const started = await startIlotsRpgDurete(projectId, numIlots);
+      const deadline = Date.now() + 30 * 60_000;
+      while (Date.now() < deadline) {
+        const job = await fetchIlotsRpgDureteJob(projectId, started.job_id);
+        const total = job.total_sirens ?? job.total_ilots ?? guess;
+        const done = job.done_sirens ?? job.done_ilots ?? 0;
+        setIlotsDureteProgress({
+          done,
+          total,
+          remaining: Math.max(0, total - done),
+        });
+        if (job.status === "ok") {
+          setIlotsResults(await fetchIlotsRpgResults(projectId));
+          return;
+        }
+        if (job.status === "error") {
+          throw new Error(job.error || "Échec du calcul de dureté des îlots.");
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      throw new Error("Le calcul de dureté des îlots dépasse 30 minutes.");
+    } catch (e) {
+      setToolNotice({
+        title: "Dureté foncière des îlots",
+        body: e instanceof Error ? e.message : "Échec du calcul de dureté foncière.",
+        error: true,
+      });
+    } finally {
+      setIlotsDureteLoading(false);
+      setIlotsDureteProgress(null);
     }
   }
 
@@ -1862,6 +1909,9 @@ export function EtudeResultats({
                           hoverParcelleIdu={hoverParcelleIdu}
                           onParcelleHover={setHoverParcelleIdu}
                           projectId={projectId}
+                          onRunDurete={handleRunIlotsDurete}
+                          dureteLoading={ilotsDureteLoading}
+                          dureteProgress={ilotsDureteProgress}
                           exportJauge={exportJaugeFrom({
                             hideDistanceFilter: currentStudyProfile.hideDistanceFilter,
                             distanceMaxKm,

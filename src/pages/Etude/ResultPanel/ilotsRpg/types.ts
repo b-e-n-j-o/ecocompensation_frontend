@@ -1,50 +1,18 @@
 // Types du module « Îlots agricoles RPG » (miroir de backend rpg_ilots/pool.py et api.py).
 import type { FeatureCollection, GeoJsonProperties, Geometry } from "geojson";
 
-export interface IlotRpgScoreEco {
-  total_score: number;
-  max_score: number;
-  breakdown?: Record<string, unknown>;
-}
-
-export interface IlotRpgResult {
-  rang: number;
-  num_ilot: string;
-  idus: string[];
-  nb_parcelles: number;
-  surface_ha: number;
-  miller: number;
-  distance_centre_km: number;
-  cat_dominante: string | null;        // TA | CP | PP | NA | SB | null (non cultivé)
-  code_group_dominant: number | null;
-  code_cultu_dominant: string | null;
-  part_pp: number;                     // 0..1
-  part_jachere: number;
-  part_vigne: number;
-  nb_pm: number;
-  pm_dominant: string | null;          // SIREN de la PM détenant le plus de surface
-  pm_unique: boolean;                  // 1 PM détient >= 95 % de la surface
-  veg_libelles: string[];
-  veg_profile?: Record<string, { area_m2?: number; pct?: number }>;
-  fauna_distances: Record<string, number>;
-  dist_fauna_m: number | null;
-  zone_humide_ha: number;
-  score_eco?: IlotRpgScoreEco;
-  pm_prospect?: Record<string, unknown> | null;
-}
-
-export interface IlotsRpgResponse {
-  source: "rpg_ilots";
-  millesime: string;
-  total_candidats: number;
-  total_ilots: number;
-  ilots: IlotRpgResult[];
-}
+export type {
+  IlotRpgDurete,
+  IlotRpgDuretePm,
+  IlotRpgResult,
+  IlotRpgScoreEco,
+  IlotsRpgResponse,
+} from "../../../../types";
 
 /** GET /api/projects/{id}/geojson/ilots-rpg : entités kind = "uf" | "parcelle" | "ilot_rpg". */
 export type IlotsRpgGeojson = FeatureCollection<Geometry, GeoJsonProperties>;
 
-export type IlotsRpgSortKey = "rang" | "score" | "surface" | "nb_parcelles" | "distance";
+export type IlotsRpgSortKey = "rang" | "score" | "surface" | "nb_parcelles" | "distance" | "durete";
 
 /** Détail d'une parcelle cadastrale d'un îlot (propriétés des entités kind="parcelle" du GeoJSON). */
 export interface IlotRpgParcelle {

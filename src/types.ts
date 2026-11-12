@@ -511,6 +511,34 @@ export interface IlotRpgScoreEco {
   breakdown?: Record<string, unknown>;
 }
 
+export interface IlotRpgDuretePm {
+  siren: string | null;
+  denomination: string | null;
+  forme_juridique?: string | null;
+  surface_ha: number;
+  surface_pct: number | null;
+  score_final: number | null;
+  score_llm_base?: number | null;
+  niveau_durete: string | null;
+  explication: string | null;
+  detail_axes?: Record<string, unknown> | null;
+  statut?: string | null;
+  eligible?: boolean;
+  reason?: string | null;
+  intersects_arrachage_vigne?: boolean;
+  from_cache?: boolean;
+}
+
+export interface IlotRpgDurete {
+  eligible: boolean;
+  reason: string | null;
+  score_final: number | null;
+  niveau_durete: string | null;
+  surface_pm_pct: number | null;
+  surface_scored_pct?: number | null;
+  pms: IlotRpgDuretePm[];
+}
+
 export interface IlotRpgResult {
   rang: number;
   num_ilot: string;
@@ -535,6 +563,7 @@ export interface IlotRpgResult {
   zone_humide_ha: number;
   score_eco?: IlotRpgScoreEco;
   pm_prospect?: UniteFoncieresResult["pm_prospect"] | null;
+  durete_fonciere?: IlotRpgDurete | null;
 }
 
 export interface IlotsRpgResponse {

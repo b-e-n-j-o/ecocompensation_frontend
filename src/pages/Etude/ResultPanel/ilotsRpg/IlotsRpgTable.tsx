@@ -6,6 +6,7 @@
  * Liaison carte : onIlotActivate / onIlotHover / selectedIlotId / hoverIlotId / scrollToIlotId.
  */
 import { Fragment, useEffect, useMemo, useState } from "react";
+import { DureteIlotCell, DureteIlotPanel } from "./IlotsRpgRankingLine";
 import {
   FilterEnrichBlock,
   PersonnesMoralesBlock,
@@ -26,9 +27,8 @@ import {
 } from "./types";
 
 const PAGE_SIZE = 50;
-const COL_COUNT = 10;
 
-type DetailTab = "composition" | "especes" | "sol" | "score" | "proprietaire";
+type DetailTab = "composition" | "especes" | "sol" | "score" | "proprietaire" | "durete";
 
 const DETAIL_TABS: { id: DetailTab; label: string }[] = [
   { id: "composition", label: "Composition" },
@@ -36,6 +36,7 @@ const DETAIL_TABS: { id: DetailTab; label: string }[] = [
   { id: "sol", label: "Végétation" },
   { id: "score", label: "Scoring" },
   { id: "proprietaire", label: "Propriétaire" },
+  { id: "durete", label: "Dureté foncière" },
 ];
 
 export interface IlotsRpgTableProps {
@@ -55,6 +56,9 @@ export interface IlotsRpgTableProps {
   onParcelleHover?: (idu: string | null) => void;
   projectId?: string | null;
   exportJauge?: import("../ExportEtudeMenu").ExportJauge | null;
+  onRunDurete?: (numIlots?: string[]) => void | Promise<void>;
+  dureteLoading?: boolean;
+  dureteProgress?: { done: number; total: number; remaining: number } | null;
 }
 
 function sortValue(il: IlotRpgResult, key: IlotsRpgSortKey): number {
@@ -63,6 +67,7 @@ function sortValue(il: IlotRpgResult, key: IlotsRpgSortKey): number {
     case "surface": return il.surface_ha;
     case "nb_parcelles": return il.nb_parcelles;
     case "distance": return il.distance_centre_km;
+    case "durete": return il.durete_fonciere?.score_final ?? -1;
     default: return il.rang;
   }
 }
@@ -115,7 +120,7 @@ function ProprietaireCell({ il }: { il: IlotRpgResult }) {
 }
 
 function ProspectCell({ il }: { il: IlotRpgResult }) {
-  const pm = il.pm_prospect ? parsePersonnesMoralesPayload(il.pm_prospect) : null;
+  const pm = il.pm_prospect ? parsePersonnesMoralesPayload(il.pm_prospect as Record<string, unknown>) : null;
   if (!pm || !pm.intersects_pm_database) return <Pill bg="#e5e7eb" fg="#374151">—</Pill>;
   return pm.compensation_deja_realisee
     ? <Pill bg="rgba(180, 83, 9, 0.14)" fg="#b45309" title="La PM dominante a déjà compensé sur un autre foncier">Oui</Pill>
@@ -219,7 +224,7 @@ function IlotDetail({
     veg_profile: il.veg_profile,
     fauna_distances: il.fauna_distances ?? {},
   };
-  const pmPayload = il.pm_prospect ? parsePersonnesMoralesPayload(il.pm_prospect) : null;
+  const pmPayload = il.pm_prospect ? parsePersonnesMoralesPayload(il.pm_prospect as Record<string, unknown>) : null;
   const scorePayload = il.score_eco as unknown as ParcelScorePayload | undefined;
 
   return (
@@ -314,6 +319,7 @@ function IlotDetail({
       {tab === "score" && (scorePayload
         ? <ScoreBlock payload={scorePayload} />
         : <p className="ranking-line-empty">Score écologique non calculé pour cet îlot.</p>)}
+      {tab === "durete" && <DureteIlotPanel il={il} />}
       {tab === "proprietaire" && (
         <div style={{ display: "grid", gap: 8 }}>
           <p className="ranking-line-empty" style={{ margin: 0 }}>
@@ -345,6 +351,9 @@ export function IlotsRpgTable({
   onParcelleHover,
   projectId = null,
   exportJauge = null,
+  onRunDurete,
+  dureteLoading = false,
+  dureteProgress = null,
 }: IlotsRpgTableProps) {
   const parcelles = useMemo(() => parcellesByIlot(geojson), [geojson]);
   const [sortKey, setSortKey] = useState<IlotsRpgSortKey>("rang");
@@ -352,6 +361,13 @@ export function IlotsRpgTable({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [selectingDurete, setSelectingDurete] = useState(false);
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const pmIlots = useMemo(
+    () => results.ilots.filter((il) => il.nb_pm > 0).map((il) => il.num_ilot),
+    [results.ilots],
+  );
+  const colCount = 11 + (selectingDurete ? 1 : 0);
 
   const ilots = useMemo(() => {
     const list = [...(results.ilots ?? [])];
@@ -418,6 +434,45 @@ export function IlotsRpgTable({
       <div className="ranking-chrome">
         <div className="ranking-chrome__bar">
           {projectId && <ExportEtudeMenu projectId={projectId} page="ilots" jauge={exportJauge} />}
+          {onRunDurete && (
+            <>
+              <button
+                type="button"
+                className="ranking-btn-durete"
+                disabled={dureteLoading || pmIlots.length === 0}
+                onClick={() => {
+                  setSelectingDurete((v) => !v);
+                  setChecked(new Set());
+                }}
+              >
+                {dureteLoading && dureteProgress && dureteProgress.total > 0
+                  ? `Dureté ${dureteProgress.done}/${dureteProgress.total}`
+                  : dureteLoading
+                    ? "Dureté…"
+                    : "Dureté foncière"}
+              </button>
+              {selectingDurete && (
+                <>
+                  <button
+                    type="button"
+                    className="ranking-btn-durete"
+                    disabled={dureteLoading || checked.size === 0}
+                    onClick={() => void onRunDurete([...checked])}
+                  >
+                    Calculer la sélection ({checked.size})
+                  </button>
+                  <button
+                    type="button"
+                    className="ranking-btn-durete"
+                    disabled={dureteLoading || pmIlots.length === 0}
+                    onClick={() => void onRunDurete(pmIlots)}
+                  >
+                    Tous les îlots avec PM ({pmIlots.length})
+                  </button>
+                </>
+              )}
+            </>
+          )}
           <span className="ranking-filter__current" title="Îlots agricoles déclarés à la PAC, convertis en parcelles cadastrales">
             Îlots agricoles RPG {results.millesime}
           </span>
@@ -453,8 +508,10 @@ export function IlotsRpgTable({
         <table className="ranking-table">
           <thead>
             <tr>
+              {selectingDurete && <th className="col-select">✓</th>}
               <SortTh label="#" k="rang" className="col-rank" title="Rang (score éco puis surface)" />
               <SortTh label="Score éco" k="score" className="col-eco" />
+              <SortTh label="Dureté" k="durete" className="col-durete" title="Dureté foncière, moyenne pondérée des personnes morales" />
               <th className="col-culture">Culture</th>
               <SortTh label="Surface" k="surface" className="col-surf" />
               <SortTh label="Parcelles" k="nb_parcelles" className="col-uf-nb-parcelles" />
@@ -468,7 +525,7 @@ export function IlotsRpgTable({
           <tbody>
             {!visible.length && (
               <tr>
-                <td colSpan={COL_COUNT} className="ranking-empty">
+                <td colSpan={colCount} className="ranking-empty">
                   Aucun îlot agricole ne passe les critères du filtre.
                 </td>
               </tr>
@@ -491,12 +548,30 @@ export function IlotsRpgTable({
                       onIlotActivate?.(il.num_ilot);
                     }}
                   >
+                    {selectingDurete && (
+                      <td className="col-select" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          disabled={il.nb_pm <= 0}
+                          checked={checked.has(il.num_ilot)}
+                          onChange={() => {
+                            setChecked((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(il.num_ilot)) next.delete(il.num_ilot);
+                              else next.add(il.num_ilot);
+                              return next;
+                            });
+                          }}
+                        />
+                      </td>
+                    )}
                     <td className="col-rank"><span className="rank-badge mono">{il.rang}</span></td>
                     <td className="col-eco">
                       <Pill bg={eco.bg} fg={eco.fg} title="Score écologique">
                         {il.score_eco ? `${il.score_eco.total_score}/${il.score_eco.max_score}` : "—"}
                       </Pill>
                     </td>
+                    <td className="col-durete"><DureteIlotCell il={il} /></td>
                     <td className="col-culture"><CultureCell il={il} /></td>
                     <td className="col-surf mono">{il.surface_ha.toFixed(1)}<span className="unit"> ha</span></td>
                     <td className="col-uf-nb-parcelles mono">{il.nb_parcelles}<span className="unit"> parc.</span></td>
@@ -516,7 +591,7 @@ export function IlotsRpgTable({
                       onMouseEnter={() => hover(il.num_ilot)}
                       onMouseLeave={() => hover(null)}
                     >
-                      <td colSpan={COL_COUNT} className="ranking-cell-detail">
+                      <td colSpan={colCount} className="ranking-cell-detail">
                         <IlotDetail
                           il={il}
                           showZoneHumide={showZoneHumide}

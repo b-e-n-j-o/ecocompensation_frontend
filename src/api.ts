@@ -929,6 +929,39 @@ export async function fetchIlotsRpgResults(projectId: string): Promise<import(".
   return res.json();
 }
 
+export async function startIlotsRpgDurete(
+  projectId: string,
+  numIlots?: string[] | null,
+): Promise<{ job_id: string; status: string }> {
+  const res = await fetch(`${API}/api/projects/${projectId}/ilots-rpg/recompute-durete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(numIlots?.length ? { num_ilots: numIlots } : {}),
+  });
+  if (!res.ok) await throwHttpError(res);
+  return res.json();
+}
+
+export async function fetchIlotsRpgDureteJob(
+  projectId: string,
+  jobId: string,
+): Promise<{
+  status: string;
+  phase?: string;
+  error?: string;
+  done_ilots?: number;
+  total_ilots?: number;
+  remaining_ilots?: number;
+  done_sirens?: number;
+  total_sirens?: number;
+}> {
+  const res = await fetch(
+    `${API}/api/projects/${projectId}/ilots-rpg/recompute-durete/jobs/${jobId}`,
+  );
+  if (!res.ok) await throwHttpError(res);
+  return res.json();
+}
+
 export async function fetchIlotsRpgGeojson(
   projectId: string,
 ): Promise<FeatureCollection<Geometry, GeoJsonProperties>> {
