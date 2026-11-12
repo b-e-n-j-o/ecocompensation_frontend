@@ -67,6 +67,18 @@ type UnitesTableProps = {
   onParcelleHover?: (idu: string | null) => void;
   onRemoveUf?: (ufId: string) => Promise<void> | void;
   exportJauge?: ExportJauge | null;
+  pickedIdus?: string[];
+  ecarteesByUf?: Record<string, string[]>;
+  assembleUfId?: string | null;
+  assembleBusy?: boolean;
+  onEnterAssemble?: (ufId: string) => void;
+  onExitAssemble?: () => void;
+  onTogglePick?: (idu: string) => void;
+  onClearPick?: () => void;
+  onAssemble?: () => void;
+  onEcarter?: (ufId: string, idu: string) => void;
+  onReinclure?: (ufId: string, idu: string) => void;
+  onAddPickToUf?: (ufId: string) => void;
 };
 
 export function EtudeResultatsParcellesTable({
@@ -255,6 +267,18 @@ export function EtudeResultatsUnitesTable({
   onParcelleHover,
   onRemoveUf,
   exportJauge = null,
+  pickedIdus = [],
+  ecarteesByUf = {},
+  assembleUfId = null,
+  assembleBusy = false,
+  onEnterAssemble,
+  onExitAssemble,
+  onTogglePick,
+  onClearPick,
+  onAssemble,
+  onEcarter,
+  onReinclure,
+  onAddPickToUf,
 }: UnitesTableProps) {
   return (
     <div className="results-split__table-fill">
@@ -270,6 +294,18 @@ export function EtudeResultatsUnitesTable({
           onUfHover={onUfHover}
           onParcelleHover={onParcelleHover}
           exportJauge={exportJauge}
+          pickedIdus={pickedIdus}
+          ecarteesByUf={ecarteesByUf}
+          assembleUfId={assembleUfId}
+          assembleBusy={assembleBusy}
+          onEnterAssemble={onEnterAssemble}
+          onExitAssemble={onExitAssemble}
+          onTogglePick={onTogglePick}
+          onClearPick={onClearPick}
+          onAssemble={onAssemble}
+          onEcarter={onEcarter}
+          onReinclure={onReinclure}
+          onAddPickToUf={onAddPickToUf}
         />
       </div>
     </div>

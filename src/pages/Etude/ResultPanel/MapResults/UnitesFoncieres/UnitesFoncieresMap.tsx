@@ -54,7 +54,10 @@ const PARC = {
   active: "uf-parcelles-active",
   faune: "uf-parcelles-faune",
   hover: "uf-parcelles-hover",
+  pick: "uf-parcelles-pick",
+  pickFill: "uf-parcelles-pick-fill",
 } as const;
+const PICK_COLOR = "#4f46e5";
 const FAUNE_COLOR = "#f97316";
 const NONE = "___none___";
 
@@ -96,6 +99,13 @@ interface UnitesFoncieresMapProps {
   onUfClick?: (ufId: string) => void;
   hoverParcelleIdu?: string | null;
   onParcelleHover?: (idu: string | null) => void;
+  pickedIdus?: string[];
+  assembleMode?: boolean;
+  assembleBusy?: boolean;
+  onToggleParcelle?: (idu: string) => void;
+  onAssemble?: () => void;
+  onClearPick?: () => void;
+  onExitAssemble?: () => void;
 }
 
 export function UnitesFoncieresMap({
@@ -111,6 +121,13 @@ export function UnitesFoncieresMap({
   onUfClick,
   hoverParcelleIdu = null,
   onParcelleHover,
+  pickedIdus = [],
+  assembleMode = false,
+  assembleBusy = false,
+  onToggleParcelle,
+  onAssemble,
+  onClearPick,
+  onExitAssemble,
 }: UnitesFoncieresMapProps) {
   const activeLayers = layerDefs;
   useEffect(() => {
@@ -131,12 +148,18 @@ export function UnitesFoncieresMap({
   onUfClickRef.current = onUfClick;
   const onParcHoverRef = useRef(onParcelleHover);
   onParcHoverRef.current = onParcelleHover;
+  const onToggleParcelleRef = useRef(onToggleParcelle);
+  onToggleParcelleRef.current = onToggleParcelle;
+  const assembleModeRef = useRef(assembleMode);
+  assembleModeRef.current = assembleMode;
 
   const [thematicState, setThematicState] = useState<Record<string, ThematicLayerState>>(
     () => buildInitialThematic(layerDefs),
   );
   const [baseMapMode, setBaseMapMode] = useState<BaseMapMode>("satellite");
   const [solVisible, setSolVisible] = useState(true);
+  const [solLegendCollapsed, setSolLegendCollapsed] = useState(false);
+  const [ufVisible, setUfVisible] = useState(true);
   const [pmSourceVisible, setPmSourceVisible] = useState(false);
   const [pmColorByName, setPmColorByName] = useState(true);
   const [pmGeojson, setPmGeojson] = useState<FeatureCollection | null>(null);
@@ -305,6 +328,12 @@ export function UnitesFoncieresMap({
         paint: { "line-color": FAUNE_COLOR, "line-width": 3 } });
       m.addLayer({ id: PARC.active, type: "line", source: PARC.src, filter: byUf(null),
         paint: { "line-color": "#fde68a", "line-width": 1.6 } });
+      m.addLayer({ id: PARC.pickFill, type: "fill", source: PARC.src,
+        filter: ["in", ["get", "idu"], ["literal", [NONE]]],
+        paint: { "fill-color": PICK_COLOR, "fill-opacity": 0.45 } });
+      m.addLayer({ id: PARC.pick, type: "line", source: PARC.src,
+        filter: ["in", ["get", "idu"], ["literal", [NONE]]],
+        paint: { "line-color": PICK_COLOR, "line-width": 2.5 } });
       m.addLayer({ id: PARC.hover, type: "line", source: PARC.src,
         filter: ["==", ["get", "idu"], NONE], paint: { "line-color": "#facc15", "line-width": 3.5 } });
     }
@@ -336,7 +365,10 @@ export function UnitesFoncieresMap({
         onParcHoverRef.current?.(null);
       });
       m.on("click", PARC.fill, (e) => {
-        const ufId = e.features?.[0]?.properties?.uf_id;
+        const props = e.features?.[0]?.properties;
+        const idu = props?.idu;
+        const ufId = props?.uf_id;
+        if (assembleModeRef.current && idu != null) onToggleParcelleRef.current?.(String(idu));
         if (ufId != null) onUfClickRef.current?.(String(ufId));
       });
       parcHandlersRef.current = true;
@@ -350,11 +382,20 @@ export function UnitesFoncieresMap({
   }, [styleReady, parcelles]);
 
   const { data: solData, loading: solLoading, legend: solLegend } = useOccupationSolLayer(map, styleReady, {
-    key: solVisible && focusUfId ? focusUfId : null,
+    key: solVisible && ufVisible && focusUfId ? focusUfId : null,
     fetcher: (ufId) => fetchUfOccupationSolGeojson(projectId ?? "", ufId),
-    visible: solVisible && !!focusUfId,
+    visible: solVisible && ufVisible && !!focusUfId,
     beforeLayerId: PARC.line,
   });
+
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !styleReady) return;
+    const vis = ufVisible ? "visible" : "none";
+    for (const id of [PARC.fill, PARC.line, PARC.faune, PARC.active, PARC.hover, PARC.pick, PARC.pickFill]) {
+      if (m.getLayer(id)) m.setLayoutProperty(id, "visibility", vis);
+    }
+  }, [styleReady, ufVisible, parcelles]);
 
   // ── Terrain actif : opacité, contours, survol parcelle ──────────────────────
   useEffect(() => {
@@ -366,7 +407,11 @@ export function UnitesFoncieresMap({
     m.setFilter(PARC.active, byUf(activeUfId));
     m.setFilter(PARC.faune, byUfFaune(activeUfId));
     m.setFilter(PARC.hover, ["==", ["get", "idu"], hoverParcelleIdu ?? NONE]);
-  }, [styleReady, activeUfId, hoverParcelleIdu, parcelles, solVisible, solData]);
+    const picked = assembleMode && pickedIdus.length ? pickedIdus : [NONE];
+    const pickFilter = ["in", ["get", "idu"], ["literal", picked]] as maplibregl.FilterSpecification;
+    if (m.getLayer(PARC.pick)) m.setFilter(PARC.pick, pickFilter);
+    if (m.getLayer(PARC.pickFill)) m.setFilter(PARC.pickFill, pickFilter);
+  }, [styleReady, activeUfId, hoverParcelleIdu, parcelles, solVisible, solData, pickedIdus, assembleMode]);
 
   // ── Cadrage sur le terrain sélectionné ──────────────────────────────────────
   useEffect(() => {
@@ -518,29 +563,70 @@ export function UnitesFoncieresMap({
         Occupation du sol de l&apos;UF{solLoading ? " …" : ""}
       </button>
 
-      {focusUfId && (
-        <div style={{
-          position: "absolute", top: 54, left: 10, zIndex: 5, maxWidth: 260, maxHeight: "45%", overflowY: "auto",
-          background: "rgba(255,255,255,0.95)", border: "1px solid #cbd5e1", borderRadius: 6,
-          padding: "6px 8px", fontSize: 11, color: "#0f172a", display: "grid", gap: 3,
-        }}>
-          <strong>Unité foncière sélectionnée</strong>
+      {focusUfId && (solLegendCollapsed ? (
+        <button
+          type="button"
+          className="map-legende map-legende--collapsed uf-focus-legend uf-focus-legend--collapsed"
+          onClick={() => setSolLegendCollapsed(false)}
+          title="Ouvrir la légende d'occupation du sol"
+        >
+          Occupation du sol
+        </button>
+      ) : (
+        <div className="uf-focus-legend">
+          <div className="uf-focus-legend__head">
+            <strong>Unité foncière sélectionnée</strong>
+            <button
+              type="button"
+              className="map-legende__collapse"
+              onClick={() => setSolLegendCollapsed(true)}
+              title="Réduire la légende"
+            >
+              −
+            </button>
+          </div>
           <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ width: 12, height: 0, borderTop: `3px solid ${FAUNE_COLOR}` }} />
             Parcelle proche d&apos;une observation faune du filtre
           </span>
           {solVisible && <OccupationSolLegend legend={solLegend} />}
         </div>
+      ))}
+
+      {assembleMode && (
+        <div className="uf-assemble-bar uf-map-assemble">
+          <strong>
+            {pickedIdus.length > 0
+              ? `${pickedIdus.length} parcelle${pickedIdus.length > 1 ? "s" : ""} sélectionnée${pickedIdus.length > 1 ? "s" : ""}`
+              : "Mode assemblage"}
+          </strong>
+          <span>Cliquez un polygone pour l&apos;ajouter ou le retirer.</span>
+          <button type="button" className={`uf-assemble-confirm-btn${assembleBusy ? " is-busy" : ""}`} disabled={assembleBusy || pickedIdus.length < 2} onClick={onAssemble}>
+            {assembleBusy && <span className="uf-assemble-confirm-spinner" aria-hidden />}
+            {assembleBusy ? "Croisement avec les couches" : "Assembler les parcelles en une nouvelle unité foncière"}
+          </button>
+          <button type="button" className="cz-btn cz-btn--ghost" disabled={assembleBusy} onClick={onClearPick}>
+            Vider
+          </button>
+          <button type="button" className="cz-btn cz-btn--ghost" disabled={assembleBusy} onClick={onExitAssemble}>
+            Quitter
+          </button>
+        </div>
       )}
 
       <div ref={container} className="parcelles-map" style={{ width: "100%", height: "100%" }}
-        title="Unités foncières — parcelles colorées par score ; cliquer pour le détail" />
+        title="Unités foncières — cliquer une parcelle pour la sélectionner, puis assembler" />
       <LegendeMapResultats
         layers={activeLayers}
         layersState={thematicState}
         onToggle={toggleLayer}
         bulkLoading={thematicPreloadLoading}
         onToggleValue={toggleDiscriminantValue}
+        primaryLayer={{
+          label: "Unités foncières",
+          visible: ufVisible,
+          onToggle: () => setUfVisible((v) => !v),
+        }}
         extraLayers={[{
           label: PM_PARCELLES_LABEL,
           visible: pmSourceVisible,

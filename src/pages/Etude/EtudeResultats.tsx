@@ -42,6 +42,7 @@ import {
   computePoolRunUrbanisme,
   addParcellesToPoolRun,
   addManualUniteFonciere,
+  replaceManualUniteFonciere,
   deleteUniteFonciere,
   integrateManualParcelles,
   startUfSearch,
@@ -218,6 +219,10 @@ export function EtudeResultats({
   const [openStudyError, setOpenStudyError] = useState(false);
   const [filterLoadingStage, setFilterLoadingStage] = useState<FilterLoadingStage>("idle");
   const [ufResults, setUfResults] = useState<UfFilterResponse | null>(null);
+  const [ufAssembleUfId, setUfAssembleUfId] = useState<string | null>(null);
+  const [ufPickIdus, setUfPickIdus] = useState<string[]>([]);
+  const [ufEcartees, setUfEcartees] = useState<Record<string, string[]>>({});
+  const [ufAssembleBusy, setUfAssembleBusy] = useState(false);
   const [ufParcellesGeojson, setUfParcellesGeojson] = useState<FeatureCollection<Geometry, GeoJsonProperties> | null>(null);
   const [ufScrollTarget, setUfScrollTarget] = useState<string | null>(null);
   const [ilotsResults, setIlotsResults] = useState<IlotsRpgResponse | null>(null);
@@ -946,9 +951,8 @@ export function EtudeResultats({
     });
   }
 
-  async function handleAddAsUf(idus: string[]) {
+  async function refreshUfPool() {
     if (!projectId) return;
-    const created = await addManualUniteFonciere(projectId, idus);
     const cesbioLibelles =
       lastFilterOptions?.vegetation_hybride?.cesbio_libelles?.filter(Boolean) ?? [
         "Forêts de conifères",
@@ -969,14 +973,138 @@ export function EtudeResultats({
     } catch {
       /* la carte UF se rechargera à l'ouverture de l'onglet */
     }
-    const rejet =
-      created.verdict === false ? ` — ne passe pas le filtre (${created.motif_rejet})` : "";
-    const surface =
-      created.surface_ha == null ? "" : ` (${created.surface_ha.toLocaleString("fr-FR")} ha)`;
+  }
+
+  function noticeUf(
+    created: { nb_parcelles: number; surface_ha: number | null; verdict: boolean | null; motif_rejet: string | null; uf_id: string },
+    lead: string,
+  ) {
+    const rejet = created.verdict === false ? ` — ne passe pas le filtre (${created.motif_rejet})` : "";
+    const surface = created.surface_ha == null ? "" : ` (${created.surface_ha.toLocaleString("fr-FR")} ha)`;
+    setLinkedUfId(created.uf_id);
+    setUfScrollTarget(created.uf_id);
+    setScrollUfTableNonce((n) => n + 1);
     setToolNotice({
       title: "Unité foncière",
-      body: `${created.nb_parcelles} parcelles groupées${surface}. Elles figurent dans le pool des unités foncières.${rejet}`,
+      body: `${lead}${surface}. Les métriques ont été recalculées sur ce groupe.${rejet}`,
     });
+  }
+
+  async function handleAddAsUf(idus: string[]) {
+    if (!projectId) return;
+    const created = await addManualUniteFonciere(projectId, idus);
+    await refreshUfPool();
+    noticeUf(created, `${created.nb_parcelles} parcelles assemblées à la main`);
+  }
+
+  function forgetUfEcartee(idus: string[]) {
+    const drop = new Set(idus);
+    setUfEcartees((prev) => {
+      const next: Record<string, string[]> = {};
+      for (const [ufId, ids] of Object.entries(prev)) {
+        const kept = ids.filter((idu) => !drop.has(idu));
+        if (kept.length) next[ufId] = kept;
+      }
+      return next;
+    });
+  }
+
+  function enterUfAssembleMode(ufId: string) {
+    if (ufAssembleUfId !== ufId) setUfPickIdus([]);
+    setUfAssembleUfId(ufId);
+  }
+
+  function exitUfAssembleMode() {
+    setUfAssembleUfId(null);
+    setUfPickIdus([]);
+  }
+
+  function toggleUfPick(idu: string) {
+    if (!ufAssembleUfId) return;
+    setUfPickIdus((prev) => (prev.includes(idu) ? prev.filter((x) => x !== idu) : [...prev, idu]));
+    forgetUfEcartee([idu]);
+  }
+
+  async function handleAssembleUf() {
+    if (!projectId || ufPickIdus.length < 2) return;
+    setUfAssembleBusy(true);
+    try {
+      await handleAddAsUf(ufPickIdus);
+      setUfPickIdus([]);
+      setUfEcartees({});
+    } catch (e) {
+      setToolNotice({
+        title: "Unité foncière",
+        body: e instanceof Error ? e.message : "Impossible d'assembler ces parcelles.",
+        error: true,
+      });
+    } finally {
+      setUfAssembleBusy(false);
+    }
+  }
+
+  async function handleAddPickToUf(ufId: string) {
+    if (!projectId) return;
+    const uf = ufResults?.unites_foncieres.find((u) => u.uf_id === ufId);
+    if (!uf || uf.source !== "manuel") return;
+    const merged = [...new Set([...(uf.parcelles ?? []).map((p) => p.idu), ...ufPickIdus])];
+    setUfAssembleBusy(true);
+    try {
+      const created = await replaceManualUniteFonciere(projectId, ufId, merged);
+      await refreshUfPool();
+      setUfPickIdus([]);
+      forgetUfEcartee(merged);
+      noticeUf(created, `${created.nb_parcelles} parcelles dans l'unité assemblée`);
+    } catch (e) {
+      setToolNotice({
+        title: "Unité foncière",
+        body: e instanceof Error ? e.message : "Impossible de modifier cette unité.",
+        error: true,
+      });
+    } finally {
+      setUfAssembleBusy(false);
+    }
+  }
+
+  async function handleEcarterUfParcelle(ufId: string, idu: string) {
+    const uf = ufResults?.unites_foncieres.find((u) => u.uf_id === ufId);
+    if (!uf) return;
+    setUfPickIdus((prev) => prev.filter((x) => x !== idu));
+    if (uf.source !== "manuel") {
+      setUfEcartees((prev) => ({
+        ...prev,
+        [ufId]: [...new Set([...(prev[ufId] ?? []), idu])],
+      }));
+      return;
+    }
+    const rest = (uf.parcelles ?? []).map((p) => p.idu).filter((x) => x !== idu);
+    if (rest.length < 2) {
+      if (!window.confirm("Il resterait moins de deux parcelles. Retirer toute cette unité assemblée ? La parcelle n'est pas marquée indésirable.")) return;
+      await handleRemoveUf(ufId);
+      return;
+    }
+    if (!projectId) return;
+    setUfAssembleBusy(true);
+    try {
+      const created = await replaceManualUniteFonciere(projectId, ufId, rest);
+      await refreshUfPool();
+      noticeUf(created, "Parcelle retirée de l'unité assemblée");
+    } catch (e) {
+      setToolNotice({
+        title: "Unité foncière",
+        body: e instanceof Error ? e.message : "Impossible de retirer cette parcelle.",
+        error: true,
+      });
+    } finally {
+      setUfAssembleBusy(false);
+    }
+  }
+
+  function handleReinclureUfParcelle(ufId: string, idu: string) {
+    setUfEcartees((prev) => ({
+      ...prev,
+      [ufId]: (prev[ufId] ?? []).filter((x) => x !== idu),
+    }));
   }
 
   async function handleRemoveUf(ufId: string) {
@@ -1457,6 +1585,13 @@ export function EtudeResultats({
       hoverParcelleIdu={hoverParcelleIdu}
       onUfClick={handleMapUfClick}
       onParcelleHover={setHoverParcelleIdu}
+      pickedIdus={ufPickIdus}
+      assembleMode={!!ufAssembleUfId}
+      assembleBusy={ufAssembleBusy}
+      onToggleParcelle={toggleUfPick}
+      onAssemble={handleAssembleUf}
+      onClearPick={() => setUfPickIdus([])}
+      onExitAssemble={exitUfAssembleMode}
     />
   );
 
@@ -1801,6 +1936,18 @@ export function EtudeResultats({
                       distanceCursorKm,
                       surfaceMinHa,
                     })}
+                    pickedIdus={ufPickIdus}
+                    ecarteesByUf={ufEcartees}
+                    assembleUfId={ufAssembleUfId}
+                    assembleBusy={ufAssembleBusy}
+                    onEnterAssemble={enterUfAssembleMode}
+                    onExitAssemble={exitUfAssembleMode}
+                    onTogglePick={toggleUfPick}
+                    onClearPick={() => setUfPickIdus([])}
+                    onAssemble={handleAssembleUf}
+                    onEcarter={handleEcarterUfParcelle}
+                    onReinclure={handleReinclureUfParcelle}
+                    onAddPickToUf={handleAddPickToUf}
                   />
                   }
                   map={<SplitMapFrame>{ufMapPanel}</SplitMapFrame>}

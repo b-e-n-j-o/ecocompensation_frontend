@@ -2295,3 +2295,179 @@
   background: #2563eb;
   transform: translateY(-1px);
 }
+
+.uf-handmade-badge {
+  background: #e0e7ff;
+  color: #3730a3;
+  border-color: #a5b4fc;
+}
+
+.uf-compose-tools {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.uf-assemble-bar--in-card {
+  margin: 0;
+  width: 100%;
+}
+
+.uf-assemble-start-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  border: 1.5px solid #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.uf-assemble-start-btn.is-on {
+  background: #dbeafe;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.28);
+}
+
+.uf-assemble-start-btn:hover:not(:disabled) {
+  background: #dbeafe;
+  border-color: #1d4ed8;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.22);
+}
+
+.uf-assemble-start-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.uf-assemble-start-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.uf-assemble-confirm-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid #15803d;
+  background: #16a34a;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.uf-assemble-confirm-btn:hover:not(:disabled) {
+  background: #15803d;
+  border-color: #166534;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.35);
+}
+
+.uf-assemble-confirm-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.uf-assemble-confirm-btn.is-busy:disabled {
+  opacity: 1;
+}
+
+.uf-assemble-confirm-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #ffffff;
+  animation: parcelles-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+.uf-compose-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #475569;
+}
+
+.uf-aside-chip {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0;
+  text-decoration: none;
+  color: #9a3412;
+  background: #ffedd5;
+  border: 1px solid #fdba74;
+}
+
+.uf-parcelle-pickable {
+  cursor: pointer;
+}
+
+.uf-parcelle-ecarmee td {
+  color: #94a3b8;
+}
+
+.uf-parcelle-ecarmee .mono {
+  text-decoration: line-through;
+}
+
+.uf-parcelle-actions {
+  width: 88px;
+  text-align: right;
+}
+
+.uf-x-btn {
+  width: 28px;
+  height: 28px;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  background: #fff;
+  color: #b91c1c;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.uf-x-btn:hover:not(:disabled) {
+  background: #fee2e2;
+}
+
+.uf-x-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.uf-assemble-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 12px 0;
+  padding: 8px 10px;
+  border: 1px solid #c7d2fe;
+  border-radius: 8px;
+  background: #eef2ff;
+  color: #312e81;
+  font-size: 12px;
+}
+
+.uf-map-assemble {
+  position: absolute;
+  left: 10px;
+  bottom: 12px;
+  z-index: 6;
+  max-width: min(440px, calc(100% - 20px));
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+}

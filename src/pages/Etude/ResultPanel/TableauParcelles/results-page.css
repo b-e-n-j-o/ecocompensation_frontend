@@ -1035,6 +1035,40 @@
   border-bottom: 1px solid var(--eco-border);
 }
 
+.uf-focus-legend {
+  position: absolute;
+  top: 54px;
+  left: 10px;
+  z-index: 5;
+  max-width: 260px;
+  max-height: 45%;
+  overflow-y: auto;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: #0f172a;
+  display: grid;
+  gap: 3px;
+}
+
+.uf-focus-legend__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.uf-focus-legend--collapsed {
+  top: 54px;
+  left: 10px;
+  right: auto;
+  bottom: auto;
+  max-height: none;
+  overflow: visible;
+}
+
 .map-legende__collapse {
   flex-shrink: 0;
   width: 1.4rem;

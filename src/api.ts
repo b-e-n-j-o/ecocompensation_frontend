@@ -837,6 +837,30 @@ export async function integrateManualParcelles(
   return res.json();
 }
 
+export async function replaceManualUniteFonciere(
+  projectId: string,
+  ufId: string,
+  idus: string[],
+): Promise<{
+  uf_id: string;
+  nb_parcelles: number;
+  idus: string[];
+  surface_ha: number | null;
+  verdict: boolean | null;
+  motif_rejet: string | null;
+}> {
+  const res = await fetch(
+    `${API}/api/projects/${projectId}/uf/${encodeURIComponent(ufId)}/parcelles`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idus }),
+    },
+  );
+  if (!res.ok) await throwHttpError(res);
+  return res.json();
+}
+
 export async function deleteUniteFonciere(
   projectId: string,
   ufId: string,

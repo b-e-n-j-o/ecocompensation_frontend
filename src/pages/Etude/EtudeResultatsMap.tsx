@@ -39,6 +39,13 @@ type UnitesMapPanelProps = SharedMapProps & {
   hoverParcelleIdu?: string | null;
   onUfClick?: (ufId: string) => void;
   onParcelleHover?: (idu: string | null) => void;
+  pickedIdus?: string[];
+  assembleMode?: boolean;
+  assembleBusy?: boolean;
+  onToggleParcelle?: (idu: string) => void;
+  onAssemble?: () => void;
+  onClearPick?: () => void;
+  onExitAssemble?: () => void;
 };
 
 function MapEmpty({ children }: { children: string }) {
@@ -198,6 +205,13 @@ export function EtudeResultatsUnitesMap({
   hoverParcelleIdu = null,
   onUfClick,
   onParcelleHover,
+  pickedIdus = [],
+  assembleMode = false,
+  assembleBusy = false,
+  onToggleParcelle,
+  onAssemble,
+  onClearPick,
+  onExitAssemble,
 }: UnitesMapPanelProps) {
   if (!parcellesGeojson) {
     return <MapEmpty>GeoJSON des unités foncières indisponible.</MapEmpty>;
@@ -216,6 +230,13 @@ export function EtudeResultatsUnitesMap({
       onUfClick={onUfClick}
       hoverParcelleIdu={hoverParcelleIdu}
       onParcelleHover={onParcelleHover}
+      pickedIdus={pickedIdus}
+      assembleMode={assembleMode}
+      assembleBusy={assembleBusy}
+      onToggleParcelle={onToggleParcelle}
+      onAssemble={onAssemble}
+      onClearPick={onClearPick}
+      onExitAssemble={onExitAssemble}
     />
   );
 }

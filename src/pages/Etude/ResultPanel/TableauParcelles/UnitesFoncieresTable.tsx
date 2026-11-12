@@ -2,38 +2,15 @@
  * UnitesFoncieresTable.tsx — résultats UF v2 : une carte par terrain.
  *
  * Un terrain = parcelles contiguës d'une même personne morale qui passent le filtre
- * (après retrait des parcelles exclues). Onglets : Parcelles · Critères · Occupation du sol
- * · Propriétaire. Plus de combinaisons.
+ * (après retrait des parcelles exclues). La composition à la main vit dans UfRankingLine.
  */
 import { useEffect, useMemo, useState } from "react";
 import { ExportEtudeMenu } from "../ExportEtudeMenu";
 import { ResultInfoNote } from "./ResultInfoNote";
-import {
-  CESBIO_LIBELLE_COLORS,
-  type UfCritereDetail,
-  type UfFilterResponse,
-  type UniteFoncieresResult,
-} from "../../../../types";
-import {
-  FilterEnrichBlock,
-  PersonnesMoralesBlock,
-  ScoreBlock,
-  parsePersonnesMoralesPayload,
-  type ParcelScorePayload,
-} from "./RankingLine";
-import { parcelleLabelFromIdu } from "./ufParcelles";
+import { type UfFilterResponse } from "../../../../types";
+import { UfRankingLine } from "./UfRankingLine";
 
 const UF_PAGE_SIZE = 50;
-type UfTab = "parcelles" | "criteres" | "sol" | "proprietaire";
-
-/** Libellés plus lisibles que ceux de l'entonnoir backend. */
-const LABEL_OVERRIDES: Record<string, string> = {
-  cesbio_libelles: "Occupation du sol (classes du filtre)",
-  search_mode: "Hors emprise du projet",
-  surface: "Surface minimale",
-  biodiversite: "Faune / flore",
-  miller: "Compacité (Miller)",
-};
 
 /** Clés de l'entonnoir (diagnostic) -> texte. */
 const DIAG_LABELS: Record<string, string> = {
@@ -56,169 +33,6 @@ const DIAG_LABELS: Record<string, string> = {
   biodiversite: "faune / flore",
   miller: "compacité",
 };
-
-function critereLabel(uf: UniteFoncieresResult, key: string): string {
-  return LABEL_OVERRIDES[key] ?? uf.criteres?.[key]?.label ?? DIAG_LABELS[key] ?? key;
-}
-
-function sortedFauna(fd: Record<string, number> | undefined): [string, number][] {
-  return Object.entries(fd ?? {})
-    .filter(([, d]) => Number.isFinite(d) && d >= 0)
-    .sort((a, b) => a[1] - b[1]);
-}
-
-function topClasses(profile: UniteFoncieresResult["veg_profile"], n = 2): [string, number][] {
-  return Object.entries(profile ?? {})
-    .map(([k, v]) => [k, Number(v?.pct ?? 0)] as [string, number])
-    .filter(([, pct]) => pct > 0)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, n);
-}
-
-const chipStyle: React.CSSProperties = {
-  display: "inline-flex", alignItems: "center", gap: 4, padding: "1px 7px",
-  borderRadius: 999, fontSize: 11, background: "#f1f5f9", color: "#334155",
-  border: "1px solid #e2e8f0", whiteSpace: "nowrap",
-};
-
-/** Résumé d'un coup d'œil sous le titre : faune, occupation dominante, zone humide. */
-function CritereChips({ uf }: { uf: UniteFoncieresResult }) {
-  const fauna = sortedFauna(uf.fauna_distances);
-  const classes = topClasses(uf.veg_profile);
-  const zh = uf.zone_humide_ha ?? 0;
-  if (!fauna.length && !classes.length && zh <= 0) return null;
-  return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-      {fauna.map(([name, d]) => (
-        <span key={name} style={chipStyle} title={`Observation la plus proche du terrain`}>
-          🦎 {name} · {d} m
-        </span>
-      ))}
-      {classes.map(([lib, pct]) => (
-        <span key={lib} style={chipStyle}>
-          <span style={{ width: 8, height: 8, borderRadius: 2, background: CESBIO_LIBELLE_COLORS[lib] ?? "#9ca3af" }} />
-          {lib} {pct.toFixed(0)} %
-        </span>
-      ))}
-      {zh > 0 && <span style={chipStyle}>💧 ZH {zh.toFixed(2)} ha</span>}
-    </div>
-  );
-}
-
-function CritereRow({ uf, k, d }: { uf: UniteFoncieresResult; k: string; d: UfCritereDetail }) {
-  const idus = d.idus ?? [];
-  let detail = "";
-  if (d.type === "surface") detail = `${d.valeur_ha?.toFixed(2)} ha`;
-  else if (d.type === "zh_surface") detail = `${d.valeur_ha?.toFixed(2)} ha de zone humide`;
-  else if (d.type === "forme") detail = `${d.valeur?.toFixed(3)}${d.seuil != null ? ` (seuil ${d.seuil})` : ""}${d.bloquant ? "" : " · indicatif"}`;
-  else if (d.type === "eliminatoire") detail = d.ok ? "aucune parcelle concernée" : `${idus.length} parcelle(s) en cause`;
-  else if (d.type === "combinaison") detail = [d.faune_ok != null ? `faune ${d.faune_ok ? "✓" : "✗"}` : "", d.flore_ok != null ? `flore ${d.flore_ok ? "✓" : "✗"}` : ""].filter(Boolean).join(" · ");
-  else detail = d.ok ? `porté par ${idus.length} parcelle(s)` : "aucune parcelle";
-  const neutral = d.type === "forme" && !d.bloquant;
-  return (
-    <tr className="ranking-row">
-      <td style={{ width: 24, color: neutral ? "#64748b" : d.ok ? "#15803d" : "#b91c1c", fontWeight: 700 }}>
-        {neutral ? "i" : d.ok ? "✓" : "✗"}
-      </td>
-      <td>{critereLabel(uf, k)}</td>
-      <td className="mono" style={{ color: "#475569" }} title={idus.join(", ")}>{detail}</td>
-    </tr>
-  );
-}
-
-function CriteresTab({ uf }: { uf: UniteFoncieresResult }) {
-  const entries = Object.entries(uf.criteres ?? {});
-  if (!entries.length) return <p className="ranking-line-empty">Détail des critères non disponible.</p>;
-  return (
-    <>
-      <p className="filter-enrich-fauna-hint" style={{ margin: "6px 0" }}>
-        {uf.source === "manuel"
-          ? "Unité dessinée à la main : chaque critère du filtre est vérifié sur ses parcelles."
-          : "Les parcelles qui touchaient une exclusion ont été retirées avant de former ce terrain. Les autres critères sont satisfaits dès qu'une parcelle du terrain les remplit."}
-      </p>
-      <table className="ranking-table">
-        <tbody>
-          {entries.map(([k, d]) => <CritereRow key={k} uf={uf} k={k} d={d} />)}
-        </tbody>
-      </table>
-    </>
-  );
-}
-
-function ParcellesTab({ uf, hoverIdu, onHover }: {
-  uf: UniteFoncieresResult; hoverIdu: string | null; onHover?: (idu: string | null) => void;
-}) {
-  const parcelles = uf.parcelles ?? [];
-  return (
-    <table className="ranking-table uf-parcelles-table">
-      <thead>
-        <tr>
-          <th>Parcelle</th>
-          <th className="col-surf">Surface</th>
-          <th title="Critères du filtre que cette parcelle apporte au terrain">Apporte</th>
-          <th title="Parcelle également retenue dans l'onglet Parcelles">Pool</th>
-        </tr>
-      </thead>
-      <tbody>
-        {parcelles.map((p) => {
-          const { label, insee } = parcelleLabelFromIdu(p.idu);
-          return (
-            <tr
-              key={p.idu}
-              className={`ranking-row${hoverIdu === p.idu ? " hovered" : ""}`}
-              onMouseEnter={() => onHover?.(p.idu)}
-              onMouseLeave={() => onHover?.(null)}
-            >
-              <td className="mono" title={p.idu}>
-                {label}{insee ? <span className="unit"> · {insee}</span> : null}
-              </td>
-              <td className="col-surf mono">{p.surface_ha.toFixed(2)}<span className="unit"> ha</span></td>
-              <td>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
-                  {p.criteres_portes.length
-                    ? p.criteres_portes.map((k) => <span key={k} style={chipStyle}>{critereLabel(uf, k)}</span>)
-                    : <span className="na">—</span>}
-                </div>
-              </td>
-              <td className="mono">{p.in_pool ? "oui" : "—"}</td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
-  );
-}
-
-function SolTab({ uf, onShowOnMap }: { uf: UniteFoncieresResult; onShowOnMap?: () => void }) {
-  const payload = { veg_libelles: uf.veg_libelles ?? [], veg_profile: uf.veg_profile, fauna_distances: uf.fauna_distances ?? {} };
-  const hasSol = payload.veg_libelles.length > 0 || Object.keys(uf.veg_profile ?? {}).length > 0;
-  const hasFaune = sortedFauna(uf.fauna_distances).length > 0;
-  return (
-    <>
-      <section className="ranking-metric-block" style={{ marginBottom: 10 }}>
-        <h4 className="ranking-metric-title">Occupation du sol du terrain</h4>
-        <p className="ranking-line-empty" style={{ marginTop: 0 }}>
-          Somme des {uf.nb_parcelles} parcelles.{" "}
-          {onShowOnMap && (
-            <button type="button" className="cz-btn cz-btn--ghost" onClick={onShowOnMap}>Voir sur la carte</button>
-          )}
-        </p>
-        {hasSol ? <FilterEnrichBlock payload={payload} part="sol" /> : <p className="ranking-line-empty">Profil non calculé.</p>}
-      </section>
-      {hasFaune && (
-        <section className="ranking-metric-block" style={{ marginBottom: 10 }}>
-          <FilterEnrichBlock payload={payload} part="faune" />
-        </section>
-      )}
-      {uf.score_eco && (
-        <section className="ranking-metric-block">
-          <h4 className="ranking-metric-title">Score écologique</h4>
-          <ScoreBlock payload={uf.score_eco as unknown as ParcelScorePayload} />
-        </section>
-      )}
-    </>
-  );
-}
 
 /** Entonnoir de construction des terrains (usage interne). */
 function DiagnosticNote({ diag }: { diag?: Record<string, number> }) {
@@ -259,6 +73,18 @@ interface UnitesFoncieresTableProps {
   onParcelleHover?: (idu: string | null) => void;
   onRemoveUf?: (ufId: string) => Promise<void> | void;
   exportJauge?: import("../ExportEtudeMenu").ExportJauge | null;
+  pickedIdus?: string[];
+  ecarteesByUf?: Record<string, string[]>;
+  assembleUfId?: string | null;
+  assembleBusy?: boolean;
+  onEnterAssemble?: (ufId: string) => void;
+  onExitAssemble?: () => void;
+  onTogglePick?: (idu: string) => void;
+  onClearPick?: () => void;
+  onAssemble?: () => void;
+  onEcarter?: (ufId: string, idu: string) => void;
+  onReinclure?: (ufId: string, idu: string) => void;
+  onAddPickToUf?: (ufId: string) => void;
 }
 
 export function UnitesFoncieresTable({
@@ -272,18 +98,27 @@ export function UnitesFoncieresTable({
   onParcelleHover,
   onRemoveUf,
   exportJauge = null,
+  pickedIdus = [],
+  ecarteesByUf = {},
+  assembleUfId = null,
+  assembleBusy = false,
+  onEnterAssemble,
+  onExitAssemble,
+  onTogglePick,
+  onClearPick,
+  onAssemble,
+  onEcarter,
+  onReinclure,
+  onAddPickToUf,
 }: UnitesFoncieresTableProps) {
   const [expandedUfId, setExpandedUfId] = useState<string | null>(null);
   const [visibleUfCount, setVisibleUfCount] = useState(UF_PAGE_SIZE);
-  const [ufTab, setUfTab] = useState<UfTab>("parcelles");
-  const [removingUfId, setRemovingUfId] = useState<string | null>(null);
 
   const ufs = useMemo(() => ufResults.unites_foncieres ?? [], [ufResults]);
 
   useEffect(() => {
     setVisibleUfCount(UF_PAGE_SIZE);
     setExpandedUfId(null);
-    setUfTab("parcelles");
   }, [ufResults]);
 
   useEffect(() => {
@@ -292,7 +127,6 @@ export function UnitesFoncieresTable({
     if (idx < 0) return;
     setVisibleUfCount((c) => Math.max(c, idx + 1));
     setExpandedUfId(scrollToUfId);
-    setUfTab("parcelles");
     const id = scrollToUfId;
     window.setTimeout(() => {
       document.getElementById(`uf-block-${id}`)?.scrollIntoView({ block: "start", behavior: "smooth" });
@@ -314,13 +148,12 @@ export function UnitesFoncieresTable({
           <p>
             Une unité foncière est un terrain d&apos;un seul tenant appartenant à une même société
             (personne morale) : les parcelles qui se touchent et qui ne sont pas exclues par le filtre.
-            C&apos;est ce qu&apos;on peut demander à ce propriétaire.
           </p>
           <p>
-            Une parcelle qui touche une zone d&apos;exclusion (mesure compensatoire existante, ENS,
-            Natura 2000…) ou qui n&apos;a pas l&apos;occupation du sol recherchée est retirée avant de
-            former le terrain. Les critères de proximité (faune, flore, eau) sont remplis dès qu&apos;une
-            parcelle du terrain les remplit : l&apos;onglet « Critères » indique lesquelles.
+            Pour composer un groupe à la main, dépliez une unité puis lancez
+            « Assembler une unité foncière en sélectionnant des parcelles ».
+            L&apos;unité créée est marquée « Assemblée à la main » et ses métriques sont recalculées.
+            La croix rouge écarte une parcelle de cette composition : elle ne part pas dans les indésirables.
           </p>
         </ResultInfoNote>
         <DiagnosticNote diag={ufResults.diagnostic} />
@@ -331,123 +164,31 @@ export function UnitesFoncieresTable({
           <div className="uf-empty-msg">Aucune unité foncière ne passe le filtre.</div>
         ) : (
           <>
-            {visibleUfs.map((uf) => {
-              const isExpanded = expandedUfId === uf.uf_id;
-              const pm = uf.pm_prospect ? parsePersonnesMoralesPayload(uf.pm_prospect as Record<string, unknown>) : null;
-              const isProspect = pm?.compensation_deja_realisee === true;
-              const isManuel = uf.source === "manuel";
-              const fails = uf.verdict === false;
-              const score = uf.score_eco;
-              const nbParc = uf.parcelles?.length ?? uf.nb_parcelles;
-
-              return (
-                <div
-                  key={uf.uf_id}
-                  id={`uf-block-${uf.uf_id}`}
-                  style={{ marginBottom: 12 }}
-                  onMouseEnter={() => onUfHover?.(uf.uf_id)}
-                  onMouseLeave={() => { onUfHover?.(null); onParcelleHover?.(null); }}
-                >
-                  <div style={{
-                    background: "white", border: `1px solid ${fails ? "#fecaca" : "#e2e8f0"}`, borderRadius: 8,
-                    padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
-                  }}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setExpandedUfId(isExpanded ? null : uf.uf_id);
-                        setUfTab("parcelles");
-                        onUfActivate?.(uf.uf_id);
-                      }}
-                      style={{
-                        flex: 1, textAlign: "left", background: "transparent", border: "none", padding: 0,
-                        cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
-                      }}
-                    >
-                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                        <div className="uf-foncier-title">
-                          UF #{uf.rang} · {uf.denomination || uf.uf_id}
-                          {isManuel && <span className="uf-prospect-badge" style={{ background: "#e0e7ff", color: "#3730a3" }}>Ajout manuel</span>}
-                          {fails && (
-                            <span className="uf-prospect-badge" style={{ background: "#fee2e2", color: "#b91c1c" }}
-                              title="Ce terrain ne passe pas le filtre">
-                              Ne passe pas : {uf.motif_rejet ? critereLabel(uf, uf.motif_rejet) : "?"}
-                            </span>
-                          )}
-                          {isProspect && (
-                            <span className="uf-prospect-badge" title="Personne morale ayant déjà compensé (autre foncier)">
-                              Prospect compensation
-                            </span>
-                          )}
-                        </div>
-                        <div className="uf-foncier-meta">
-                          {nbParc} parcelles
-                          {uf.surface_ha != null ? ` · ${uf.surface_ha.toFixed(1)} ha` : ""}
-                          {score ? ` · score éco ${score.total_score}/${score.max_score}` : ""}
-                          {` · ${uf.distance_centre_km.toFixed(1)} km du projet`}
-                        </div>
-                        <CritereChips uf={uf} />
-                        {uf.siren && !isManuel && (
-                          <div className="uf-foncier-pm"><span className="mono">SIREN {uf.siren}</span></div>
-                        )}
-                      </div>
-                      <span className="uf-foncier-toggle">{isExpanded ? "−" : "+"}</span>
-                    </button>
-                    {onRemoveUf && (
-                      <button
-                        type="button"
-                        className="cz-btn cz-btn--ghost"
-                        disabled={removingUfId === uf.uf_id}
-                        title="Retirer cette unité foncière du classement"
-                        onClick={async (ev) => {
-                          ev.stopPropagation();
-                          if (!window.confirm(`Retirer UF #${uf.rang} · ${uf.denomination || uf.uf_id} du classement ?`)) return;
-                          setRemovingUfId(uf.uf_id);
-                          try {
-                            await onRemoveUf(uf.uf_id);
-                            if (expandedUfId === uf.uf_id) setExpandedUfId(null);
-                          } finally {
-                            setRemovingUfId(null);
-                          }
-                        }}
-                      >
-                        {removingUfId === uf.uf_id ? "…" : "Retirer"}
-                      </button>
-                    )}
-                  </div>
-
-                  {isExpanded && (
-                    <div style={{ paddingTop: 8 }}>
-                      <div className="ranking-line-tabs" role="tablist" aria-label="Détail de l'unité foncière">
-                        {([
-                          ["parcelles", `Parcelles (${nbParc})`],
-                          ["criteres", "Critères"],
-                          ["sol", "Occupation du sol"],
-                          ["proprietaire", "Propriétaire"],
-                        ] as [UfTab, string][]).map(([id, label]) => (
-                          <button
-                            key={id}
-                            type="button"
-                            role="tab"
-                            className={`ranking-line-tab${ufTab === id ? " is-active" : ""}`}
-                            aria-selected={ufTab === id}
-                            onClick={() => setUfTab(id)}
-                          >
-                            {label}
-                          </button>
-                        ))}
-                      </div>
-                      {ufTab === "parcelles" && <ParcellesTab uf={uf} hoverIdu={hoverParcelleIdu} onHover={onParcelleHover} />}
-                      {ufTab === "criteres" && <CriteresTab uf={uf} />}
-                      {ufTab === "sol" && <SolTab uf={uf} onShowOnMap={() => onUfActivate?.(uf.uf_id)} />}
-                      {ufTab === "proprietaire" && (pm
-                        ? <div style={{ marginTop: 6 }}><PersonnesMoralesBlock payload={pm} /></div>
-                        : <p className="ranking-line-empty">Informations propriétaire non disponibles.</p>)}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {visibleUfs.map((uf) => (
+              <UfRankingLine
+                key={uf.uf_id}
+                uf={uf}
+                expanded={expandedUfId === uf.uf_id}
+                hoverIdu={hoverParcelleIdu}
+                pickedIdus={pickedIdus}
+                ecartees={ecarteesByUf[uf.uf_id] ?? []}
+                assembleMode={assembleUfId === uf.uf_id}
+                busy={assembleBusy}
+                onEnterAssemble={() => onEnterAssemble?.(uf.uf_id)}
+                onExitAssemble={onExitAssemble}
+                onAssemble={onAssemble}
+                onClearPick={onClearPick}
+                onToggle={() => setExpandedUfId(expandedUfId === uf.uf_id ? null : uf.uf_id)}
+                onHoverUf={onUfHover}
+                onHoverParcelle={onParcelleHover}
+                onActivate={onUfActivate}
+                onTogglePick={(idu) => onTogglePick?.(idu)}
+                onEcarter={(idu) => onEcarter?.(uf.uf_id, idu)}
+                onReinclure={(idu) => onReinclure?.(uf.uf_id, idu)}
+                onAddPick={() => onAddPickToUf?.(uf.uf_id)}
+                onRemoveUf={onRemoveUf}
+              />
+            ))}
             {ufs.length > visibleUfCount && (
               <div className="ranking-load-more" style={{ marginTop: 4, padding: "0 0 4px" }}>
                 <button type="button" className="btn-load-more"

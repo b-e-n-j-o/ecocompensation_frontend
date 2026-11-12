@@ -196,6 +196,7 @@ function AppRail({
       }}
       onMouseLeave={() => {
         ignoreHoverExpand.current = false;
+        if (!collapsed) onCollapse();
       }}
     >
       <NavLink to={ROUTE_ECOCOMPENSATION} className="kerelia-rail__brand" title="KERFoncier">
