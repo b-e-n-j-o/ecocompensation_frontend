@@ -2,7 +2,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { ExportEtudeMenu, exportJaugeFrom } from "../ExportEtudeMenu";
 import type { ParcelleResult, ParcelPoolMetricRow, RankingSortKey } from "../../../../types";
-import type { FilterConfig } from "../../../FiltrageParam/FilterCatalog";
+import type { FilterConfig } from "../../FiltrageParam/FilterCatalog";
 import {
   type FaunaTableEntry,
   compositeBadgeStyle,

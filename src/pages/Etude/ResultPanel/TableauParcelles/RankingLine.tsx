@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { CESBIO_LIBELLE_COLORS, type ParcelPoolMetricRow } from "../../../../types";
 import { exclusionLabel } from "../../../../constants/nationalExclusionLayers";
-import type { FilterConfig } from "../../../FiltrageParam/FilterCatalog";
+import type { FilterConfig } from "../../FiltrageParam/FilterCatalog";
 import {
   type ArrachageVignesMetric,
   type CompositeScoreMetric,
