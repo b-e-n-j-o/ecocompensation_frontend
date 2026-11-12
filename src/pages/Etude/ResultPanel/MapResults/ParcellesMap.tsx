@@ -259,7 +259,6 @@ export function ParcellesMap({
     buildInitialThematic(layerDefs),
   );
   const [parcellesVisible, setParcellesVisible] = useState(true);
-  const [floreVisible, setFloreVisible] = useState(false); // réservé couche réserve foncière hors filtre
   const [baseMapMode, setBaseMapMode] = useState<BaseMapMode>("satellite");
   const scoreColorMode: ScoreColorMode = "ecologique";
   const [mapReady, setMapReady] = useState(false);
@@ -271,7 +270,6 @@ export function ParcellesMap({
     key: solVisible && focusIdu ? focusIdu : null,
     fetcher: (idu) => fetchParcelleOccupationSolGeojson(projectId ?? "", idu),
     visible: solVisible && !!focusIdu,
-    beforeLayerId: "parcelles-outline",
     beforeLayerId: "parcelles-outline",
   });
   const [urbaData, setUrbaData] = useState<UrbaFeatureCollection>(EMPTY_URBA);
@@ -684,68 +682,6 @@ export function ParcellesMap({
   useEffect(() => {
     applyBaseMapMode(map.current, baseMapMode);
   }, [baseMapMode]);
-
-  useEffect(() => {
-    const map = mapInstance;
-    if (!map) return;
-    const ensure = () => {
-      if (!map.getSource("flore-obs")) {
-        map.addSource("flore-obs", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-        const before = map.getLayer("parcelles-fill") ? "parcelles-fill" : undefined;
-        map.addLayer({
-          id: "flore-obs-fill",
-          type: "fill",
-          source: "flore-obs",
-          filter: ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]],
-          paint: { "fill-color": "#2f7d5b", "fill-opacity": 0.25 },
-          layout: { visibility: "none" },
-        }, before);
-        map.addLayer({
-          id: "flore-obs-line",
-          type: "line",
-          source: "flore-obs",
-          filter: ["in", ["geometry-type"], ["literal", ["LineString", "MultiLineString", "Polygon", "MultiPolygon"]]],
-          paint: { "line-color": "#2f7d5b", "line-width": 1.5 },
-          layout: { visibility: "none" },
-        }, before);
-        map.addLayer({
-          id: "flore-obs-circle",
-          type: "circle",
-          source: "flore-obs",
-          filter: ["in", ["geometry-type"], ["literal", ["Point", "MultiPoint"]]],
-          paint: { "circle-color": "#2f7d5b", "circle-radius": 4, "circle-stroke-width": 1, "circle-stroke-color": "#fff" },
-          layout: { visibility: "none" },
-        }, before);
-      }
-      const vis = floreVisible ? "visible" : "none";
-      for (const id of ["flore-obs-fill", "flore-obs-line", "flore-obs-circle"]) {
-        if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", vis);
-      }
-    };
-    if (map.isStyleLoaded()) ensure();
-    else map.once("load", ensure);
-
-    if (!floreVisible) return;
-    let cancelled = false;
-    const load = () => {
-      const b = map.getBounds();
-      const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].join(",");
-      fetch(`${getApiBaseUrl()}/api/reserve-fonciere/flore/observations?bbox=${encodeURIComponent(bbox)}`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => {
-          if (cancelled || !data) return;
-          const src = map.getSource("flore-obs") as maplibregl.GeoJSONSource | undefined;
-          src?.setData(data as FeatureCollection);
-        })
-        .catch(() => undefined);
-    };
-    load();
-    map.on("moveend", load);
-    return () => {
-      cancelled = true;
-      map.off("moveend", load);
-    };
-  }, [mapInstance, floreVisible]);
 
   // ── Visibilité parcelles (toggle légende) ────────────────────────────────
   useEffect(() => {

@@ -79,6 +79,10 @@ function byUf(ufId: string | null): maplibregl.FilterSpecification {
   return ["==", ["get", "uf_id"], ufId ?? NONE];
 }
 
+function byUfFaune(ufId: string | null): maplibregl.FilterSpecification {
+  return ["all", ["==", ["get", "uf_id"], ufId ?? NONE], ["==", ["get", "porte_faune"], true]];
+}
+
 interface UnitesFoncieresMapProps {
   parcellesGeojson: FC | null;
   ufResults?: UfFilterResponse | null;
@@ -297,7 +301,7 @@ export function UnitesFoncieresMap({
       m.addLayer({ id: PARC.line, type: "line", source: PARC.src,
         paint: { "line-color": "#ffffff", "line-width": 0.8, "line-opacity": 0.85 } });
       m.addLayer({ id: PARC.faune, type: "line", source: PARC.src,
-        filter: ["all", byUf(null), ["==", ["get", "porte_faune"], true]],
+        filter: byUfFaune(null),
         paint: { "line-color": FAUNE_COLOR, "line-width": 3 } });
       m.addLayer({ id: PARC.active, type: "line", source: PARC.src, filter: byUf(null),
         paint: { "line-color": "#fde68a", "line-width": 1.6 } });
@@ -360,7 +364,7 @@ export function UnitesFoncieresMap({
       ? ["case", ["==", ["get", "uf_id"], activeUfId], solVisible && solData?.features.length ? 0.08 : 0.55, 0.15]
       : 0.45);
     m.setFilter(PARC.active, byUf(activeUfId));
-    m.setFilter(PARC.faune, ["all", byUf(activeUfId), ["==", ["get", "porte_faune"], true]]);
+    m.setFilter(PARC.faune, byUfFaune(activeUfId));
     m.setFilter(PARC.hover, ["==", ["get", "idu"], hoverParcelleIdu ?? NONE]);
   }, [styleReady, activeUfId, hoverParcelleIdu, parcelles, solVisible, solData]);
 
